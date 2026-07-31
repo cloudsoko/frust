@@ -1,0 +1,223 @@
+---
+tags: [frust, moc]
+created: 2026-07-23
+---
+
+# 🦀 Frust — Project Hub
+
+Rust rewrite of a Frappe-style metadata-driven ERP framework — not a port, an upgrade.
+
+## Vault Structure
+
+```
+00 Research/          competitive & predecessor ERP intel (grounds the vision)
+01 Vision/            why & what
+02 Building Blocks/   the technologies and what each unlocks
+03 Architecture Decisions/   (ADRs — one note per decision)
+04 Build Log/         (dated progress notes)
+05 Work Orders/       (PM-authored, numbered)
+```
+
+## 🏁 v1.0 REACHED (2026-07-26)
+
+> [!success] The founding complaint became the acceptance test.
+> [[v1.0 Pain-Point Scorecard]]: **19 killed · 14 bounded · 1 open** of 34, every verdict vault-linked. 23 work orders, 12 ADRs, 3 adopted pillars, 2 upstream bugs filed + 1 PR merged + 1 open. A correct, secure, observable metadata kernel and platform — a Frappe replacement for the pains that drove the rewrite, honest about the edges it hasn't reached (high-concurrency serve, memory footprint, app-script decimal, batteries). **v1.1 backlog** lives in the scorecard's remainder, led by exposing `decimal.rs` to the script host and building Desk workflow buttons.
+
+## Milestone 3: Production Hardening (in flight)
+
+> [!important] v1.0 proved *correct*; v2.0 proves *deployable*. The scorecard's own edges set the brief: **the lone OPEN is unmeasured memory (P-1.4); concurrency (P-1.1) is bounded only because the serve loop was never load-tested.** A measure-before-claiming project owes numbers on both.
+> **Path (re-sequenced 2026-07-26 after WO-024's finding):** WO-024 Benchmark ✅ → **WO-025 Concurrent Serve Loop** (the #1 production blocker: throughput flat at ~15 req/s, kernel pegs 0.85 of one core — fix it, measured against WO-024's exact before-numbers; DR protects nothing on a runtime that can't serve) → **WO-026 Backup / Restore / DR** (the [[SurrealDB]] risk flagged at adoption, never closed) → v1.1 polish (decimal→scripts, Desk workflow buttons) folded in → **v2.0 gate: scorecard rows re-scored with numbers, no bounded-by-assumption left, throughput a real figure not a ceiling.**
+> **Queued enabling WO:** Topcoat v0.5.0 adoption (non-breaking for us — breaking changes already absorbed; drops 4/9 carried patches; unlocks SSE realtime push-transport for ADR-011, mail for v1.1 batteries) — after WO-025, its own WO.
+>
+> *Why the reversal:* DR was slated next; a 15 req/s ceiling means there's no production load to protect backups *of*. Fix the blocker, then protect what can then actually serve.
+
+## Milestone 2: The Platform ✅ COMPLETE
+
+> [!important] A framework becomes a platform when something real runs on it — installed, not compiled in.
+> **Path (re-sequenced 2026-07-26 after builder audit — manifest-first, and the audit found a 4th unbuilt MUST):**
+> WO-017 sandbox ✅ → WO-019 App Lifecycle ✅ → WO-020 Row-Write Permission ✅ → WO-018 Workflow ✅ → **WO-021 Money Arithmetic** (ACTIVE — REQ-6.2.2; `decimal.rs` can't multiply; seed is `qty × rate`, unbuildable without it) → **WO-022 First Real App** (accounting seed as a bundle — the ERPNext-seed moment) → **v1.0: Pain-Point Scorecard** (34 REQs / 34 P-x.x, killed / **bounded** / open with evidence; P-8.2 bounded 1.4× keeps it honest).
+
+## Milestone: Metadata Kernel — ✅ DELIVERED 2026-07-24
+
+> [!success] **Frust Core v0 exists.** `frust serve` + `surreal.exe` — two processes. Runtime DocTypes through a real migration engine (95/95), one permission compiler serving three consumers byte-equally, two sandboxed hook runtimes in-process, a queue draining with re-derived authority at 1.01 attempts/claim, REQ-6.1 floors as CI gates. All 7 WO-005 exit criteria executed as tests. [[2026-07-24 Module 6 + WO-005 close — frust serve]]
+
+## Next: What the Kernel Unblocks
+
+- ~~WO-006 scale proof~~ ✅ → GA-scale claims certified; [[ADR-010 Materialized Aggregates]] ratified
+- **WO-007 (issued): aggregates ladder implementation** — Tier-1 EVENT counters + Tier-2 worker rollups, the first post-kernel feature build
+- Desk v1 against `frust serve` · P-8.2 resource isolation (REQ-6.4.3 first) · ADR-003 source verification (residue)
+
+## 00 Research
+
+- [[Research Index]] — MOC: competitive/predecessor ERP intel with a **findings→Frust mapping** (each research finding → the WO/ADR that answers it)
+- [[frappe-research-report]] — Frappe ecosystem deep-dive (corroborates + expands [[Frappe Pain Points]])
+- [[odoo-research-report]] — Odoo 19 ecosystem deep-dive (the other major open-source ERP; constraints Frust measured against)
+
+## 01 Vision
+
+- [[Frappe Pain Points]] — *why* we're building this (living document, IDs `P-x.x`)
+- [[SRS]] — *what* we're building (requirements, IDs `REQ-x.x.x`)
+
+## 02 Building Blocks
+
+- [[SurrealDB]] — multi-model data engine; collapses MariaDB + Redis + socket.io into one system
+- [[Topcoat]] — ✅ *adopted for Desk v0* — tokio-rs full-stack web framework; prototype passed all 4 exit criteria
+- [[WASM Component Model]] — ✅ *adopted* — plugin isolation via wasmtime + WIT; spike passed all 3 criteria (13.3 µs hook round-trip)
+- *(next: async runtime, API layer, job queue…)*
+
+## 03 Architecture Decisions
+
+- [[ADR-001 UI Extension Tiers]] — ✅ metadata runtime from v0, sandboxed scripts later, compiled widgets via marketplace
+- [[ADR-002 SurrealDB Lock-In]] — ✅ lock-in accepted; portability lives at the app contract, no DB abstraction layer
+- [[ADR-003 Tenancy Model]] — ✅ platform namespace + database-per-tenant, pluggable strategies (P-8.2 starvation NOT solved)
+- [[ADR-004 Topcoat for Desk v0]] — ✅ adopt behind absolute headless contract; pinned rev; revisit triggers named
+- [[ADR-005 Plugin Isolation]] — ✅ WASM components primary, out-of-process fallback; WIT capability surface deliberately NOT decided (→ ADR-006 after grilling)
+- [[ADR-006 Plugin Capability Surface]] — ✅ structured verbs, no strings; named queries for traversal; decimal in the value variant; identity-captured/authority-re-derived jobs; hook cycle-trap
+- [[ADR-007 Tier-2 Script Architecture]] — ✅ scripts = profile of ADR-006; JS, two hosts, zero bespoke sandboxes; server-script subsystem deleted
+- [[ADR-008 Data Shape]] — ✅ embedded children (immutable flag, storage-agnostic access); binary-authoritative self-hosted meta, fail-closed boot
+- [[ADR-009 Execution Model]] — ✅ logic placement (two-clause test, one EVENT resident) + table-as-queue (bridge-is-the-worker, atomic claim, retention = queue parameter)
+- [[ADR-010 Materialized Aggregates]] — ✅ three-tier ladder: shape rules (period bucketing beats #7432) → EVENT counters (exact, tiny keys) → worker rollups (hops/line-diffs, bounded lag)
+- [[ADR-011 Realtime]] — ✅ per-session LIVE → websocket; live-for-focused-view; ~50/table writer budget; reconnect=refetch; multiplexing rejected in daylight
+
+## 05 Work Orders
+
+- [[WO-001 Script Engine Spike]] — ✅ *completed* — all 4 gates passed (55.7 µs warm), 620 ms corroborated, Boa ratified → ADR-007
+- [[WO-002 Architecture Skeleton]] — ✅ *completed* — exit sentence verbatim, 7.1–8.2 ms submit, DB-enforced permissions, changefeed survives restart; found surrealdb#7433
+- [[WO-003 Engine Integration]] — ⚰️ *dissolved into WO-005* — adapter source was local all along; framework-core demoted to salvage-only; ADR-003 source check survives as residue
+- [[WO-004 Live-Query and Event Fidelity]] — ✅ *completed* — 3,200/3,200 zero-loss, EVENT lattice holds under bursts, at-commit delivery; verdict viable-with-bridge; **no instance #3** (record 2-for-4)
+- [[WO-005 Metadata Kernel v0]] — ✅ *COMPLETED* — the kernel exists; all 7 criteria executed as tests; 15/15 binaries green; Desk folded in as pure REST client
+- [[WO-006 One-Million-Row Scale Proof]] — ✅ *COMPLETED* — 25 ms floor holds at 1 M release-mode; #7432 alive (16×); changefeed +2 ms; aggregates table delivered → ADR-010
+- [[WO-007 Aggregates Ladder Implementation]] — ✅ *COMPLETED* — ~275× monthly read; +0.4 ms/write; zero lost increments; cancel = pure subtract; restart-loses-nothing structural
+- [[WO-008 Identity Hardening]] — ✅ *COMPLETED* — hole closed at 3 depths; posture re-asserts every boot; `E_IDENTITY_UNRESOLVED` typed-fatal; 9-touchpoint sweep; floor untouched
+- [[WO-009 Desk v1]] — ✅ *COMPLETED* — the sentence clicked in a browser; role header dead; Tier-0 rules inexpressible-by-construction; 12–14 ms screens
+- [[WO-010 Observability]] — ✅ *COMPLETED* — one trace reconstructable from logs alone; /metrics; per-tenant attribution proven; floor +0–2 ms; P-8.2 position delivered
+- [[WO-011 Live-Query Scale Spike]] — ✅ *COMPLETED* — zero leaks in 8,800 notifications; the constraint is the writer (~70 µs/sub/write); multiplexing rejected-as-unneeded
+- [[WO-012 Desk Realtime]] — ✅ *COMPLETED* — the list refreshed itself in a browser; budget re-measured → 20; ticks carry no data; Desk relocated; gate split ratified
+- [[WO-013 Tenant Fairness]] — ✅ *COMPLETED* — **P-8.2 has a bound: 1.4×** (vs Frappe's none); A,B,A,B claim proof; fuel = accounting truth; residual contention quantified for ADR-003
+- [[WO-014 Desk v2 Dynamic Forms]] — ✅ *COMPLETED* — behavior-from-metadata, no recompile; 2-request network log; lattice outranks dynamism; compare-never-compute money; PR #203 open
+- [[WO-015 Child-Table Line Editor]] — ✅ *COMPLETED* — browser line edit → Tier-2 rollup (+150.0 exact); A4 line-diff cashed; 2 silent-wrong bugs fixed; f64-rollup escalated
+- [[WO-016 Decimal Rollup Accumulation]] — ✅ *COMPLETED* — no EVENT coercion; root cause: Currency was `TYPE float` everywhere (fixed at mapping); exact reconciliation, epsilons deleted; launder-proof migration
+- [[WO-017 Client Script Sandbox]] — ✅ *COMPLETED* — all 6 criteria; one artifact two hosts; hostile-first at every layer; authoring adds no trust; **ADR-001's three tiers all shipped**
+- [[WO-018 Workflow Engine]] — ✅ *COMPLETED* — REQ-4.1.2: canonical flow end to end (clerk submits own draft, manager approves); both layers proven in isolation; clerk-transitions-stay-at-docstatus-0 design rule
+- [[WO-020 Row-Write Permission]] — ✅ *COMPLETED* — Finding B fixed: owners edit own drafts, managers anytime; clerk save persists in the browser (WO-009 regression closed); ADR-012 ratified; 3-session landmine defused
+- [[ADR-012 Row-Write Permission]] — ✅ update = `(owner AND docstatus=0) OR manager`; invariant split (row=who / lattice=which move); after-state eval probed
+- [[WO-021 Money Arithmetic]] — ✅ *COMPLETED* — decimal mul/div, explicit rounding, half-even vs half-up, DB↔Rust reconciliation as a CI property
+- [[WO-022 Accounting Seed]] — ✅ *COMPLETED* — real accounting app as pure bundle content, zero invented features; 5 findings; live+browser proven
+- [[WO-023 Pain-Point Scorecard]] — ✅ *COMPLETED — v1.0 GATE PASSED* — **19 killed · 14 bounded · 1 open**; [[v1.0 Pain-Point Scorecard]] answers the founding question with a link for every word
+- [[WO-024 Load and Footprint Benchmark]] — ✅ *COMPLETED* — P-1.4 killed (60 MB idle / 76 MB load vs Frappe 300–500/worker); P-1.1 = flat ~15 req/s, single-thread accept loop pegs 0.85 core, named the #1 blocker
+- [[WO-025 Concurrent Serve Loop]] — ✅ *COMPLETED* — 15→48 req/s (3.2×), P-1.1 bounded→KILLED; bottleneck moved to the DB, measured; 1 hazard found+fixed; free background-job win; suite green
+- [[WO-026 SurrealDB Write Concurrency]] — ✅ *COMPLETED* — probe found 3 round-trips/request (bet NOT at its limit); generation-invalidated caches → 48→124 req/s (8.2× arc), submit 5 ms; P-1.2 re-earned KILLED; now DB-bound at ~80% of raw
+- [[WO-028 Full-Document Hooks]] — ✅ *COMPLETED* — P0 killed: hooks see full doc (baseline∪delta, caller's session), persist only changed (diff+MERGE); two-writer race proven shut; CREATE fast-path untouched
+- [[WO-027 Backup Restore DR]] — ✅ *COMPLETED* — round-trip clean; security-P0 restore-path auth-bypass fixed (fail-closed key guard, ADR-013); runbook w/ honest no-PITR RPO; 2 bounds tighter (P-8.1 per-tenant restore, P-7.1 DR-is-procedure)
+- [[WO-029 Topcoat v0.5.0 Adoption]] — ✅ *COMPLETED* — adopted, verified live; a 5th unlabelled breaking change (*the merge is the probe*); SSE + mail in-tree; ledger reconciled
+
+## Milestone 3 spine COMPLETE (2026-07-28)
+
+> [!success] Production-hardening spine done: concurrency (WO-024/025/026, 15→124 req/s, P-1.1 killed), memory (WO-024, 60 MB, P-1.4 killed), two P0s found by the DR probe & fixed (WO-028 data loss, WO-027 auth bypass + ADR-013), DR closed with an honest runbook, Topcoat current (WO-029). **Remaining before v2.0 gate = v1.1 polish**, then re-score the scorecard with numbers.
+
+### v1.1 polish backlog (before the v2.0 gate)
+- [[WO-030 Decimal for Scripts]] — ✅ *COMPLETED* — decimal.rs compiled into the sandbox verbatim; three hosts one answer; **P-3.4 bounded→killed** (22·12·0)
+- [[WO-031 Desk Workflow Buttons]] — ✅ *COMPLETED* — buttons from (state,role) metadata drive real /transition; 18/18 real-browser checks; `state_or_initial` fix (empty workflow_state → initial); c5 overclaim closed
+- [[WO-032 SSE Retire Polling]] — ✅ *COMPLETED* — browser polling retired (1 stream, 0 polls); **Desk concurrency measured with a FAILING control** — 160 subs (10× cores) healthy at 1.07× p50, naive `std::thread::sleep` control stalls at 24; kernel `/events` drain is non-blocking → async-sleep-between-drains costs no pinned thread. Desk-tier concurrency bounded-by-assumption → **CLOSED (measured)**. 2 findings ruled below.
+- [[WO-033 Kernel Hygiene]] — ✅ *COMPLETE (2026-07-28)* — admin `/revoke/{user}` (instant, 22-session live proof, TTL demoted to backstop) + healthy boot 1→0 `lvl:error` (log level only, Result untouched, guard un-blinded); fresh-store perf green
+- [[WO-034 v2.0 Gate]] — ⛔ *DELIVERED — GATE DOES NOT PASS* — all 12 bounds classified (3 measurement / 7 architecture / **3 assumption**); the gate did its job by *failing*. [[v2.0 Deployability Gate]]. M3 stays OPEN until A1–A3 close.
+- [[WO-035 Desk Concurrent Load]] — ✅ *COMPLETE* — **A3 closed: ~135 req/s at 50-concurrent knee, DB-bound not Desk-bound.** The refused 640 req/s arithmetic was wrong 4.7× AND wrong-mechanism (the vindication). Contention clean (SSE + pages, neither starves). Finding → WO-038.
+- [[WO-036 Multi-App Composition and Upgrade Survival]] — ✅ *COMPLETE* — **A1** refused-at-install (no silent last-writer-wins; one-DocType-one-owner = bounded-by-architecture); **A2** the founding P-7.3 pain DRIVEN — installed app survives a major upgrade *with its hook still firing* (bounded-by-measurement). Gate assumption bucket EMPTY.
+- [[WO-038 Desk Admission Control]] — 📋 *queued (M4, NOT a gate blocker)* — WO-035 finding: Desk degrades by erroring (500) not shedding (429/503) past the knee; failure-mode work, throughput ceiling unchanged
+- [[WO-037 Frust UI Foundation]] — ✅ *COMPLETE* — frappe-ui aesthetic Topcoat-native (verbatim tokens, 12 components, light+dark gallery); zero-conflict PM-verified (primary tree untouched). **Finding: Topcoat ceiling is BEHAVIOR not aesthetic** (dialog focus-trap, toast dismiss, combobox — Vue-free-addressable, ADR-004/ADR-001 territory). Re-skin = follow-on after the gate.
+- *then:* WO-034 re-passes when A1–A3 close → **M3 complete, M4 seeded**
+
+## 🏁 v2.0 GATE PASSED · MILESTONE 3 COMPLETE · SEALED (2026-07-28)
+
+> [!success] Production hardening done — *deployable*, and the gate proved it by first FAILING. Sealed on a confirmed suite: **271 passed · 0 failed · 6 ignored · 42 binaries** (WO-036 criterion 4, seen finish — not inferred from three green tests).
+> WO-034 classified all 12 bounds and found **3 held up by nothing but the absence of a test** — it refused to pass. WO-035 (A3: Desk ~135 req/s, DB-bound — the refused 640 arithmetic wrong 4.7× *and* wrong-mechanism), WO-036 (A1: cross-app DocType hooking refused-at-install, not silent; A2: the founding P-7.3 pain driven — app survives a major upgrade with its hook still firing) closed all three. **Final classification: 4 bounded-by-measurement · 8 bounded-by-architecture · 0 bounded-by-assumption.** Every bound now has a number or a named trade. [[v2.0 Deployability Gate]] — *the first-pass failure is kept struck-through, not deleted: a capstone that showed only its green state would hide the reason it exists.*
+> **v2.0 verdict:** deployable single-node / single-DB-tenant, Desk ~135 req/s (bounded at the erroring knee), correct + secure + observable; not-yet for per-tenant restore, PITR, batteries, high-concurrency graceful-shed. Scorecard **22 killed · 12 bounded · 0 open**.
+
+## Milestone 4: The Distribution (seeded 2026-07-28)
+
+> [!important] v2.0 = deployable; M4 = *turnkey & scalable*. Seeded from the gate's honest remainder:
+> - **Multi-DB per-tenant tenancy** (P-8.1 → ADR-003 amendment; the big rock — touches permission compiler + connection model + backup) · unlocks per-tenant restore
+> - **Batteries** — print/PDF, email (mail prototype in-tree) · the ERPNext-parity gap
+> - **Desk admission control** ([[WO-038 Desk Admission Control]] — shed 429/503 not 500) · **DB write ceiling** (WO-026's ~150 w/s — batching/sharding, the architecture conversation)
+> - **Frust UI Desk re-skin** (wire [[WO-037 Frust UI Foundation]] into pages) + the **behavior-layer bridge** (dialog/toast/combobox Vue-free) · **Desk→kernel streaming** (WO-032 F1)
+> - **Cross-app extension model** — is strict one-DocType-one-owner (A1) too rigid vs Frappe's open hooking? An escape hatch via *declared* extension points is the M4 design question — and the A1 refusal message already names the exact constraint such a mechanism would relax, so it's the right starting point.
+>
+> **M4 OPENED (2026-07-28):**
+> - [[WO-039 Multi-DB Tenancy Probe]] — ✅ *COMPLETE, PROBE CLEAN* — **no ADR-003 amendment.** Headline reframe: *a tenant already IS a database* (`Db::tenant()`=`cfg.db`); only routing is unbuilt. Isolation strongest-form (JWT claims pin the session, a caller can't address another tenant's DB); **per-tenant restore proven** (P-8.1 unlock); 2 build findings (Broker `Box`→`Arc`; per-tenant cache keys). Evidence home closed: `wf-proof/` → `frust-e2e/` w/ README. *Near-miss: a fabricated cross-tenant-leak finding caught 2 min from the record — the security-assertion lesson.*
+> - [[WO-040 Multi-Tenant Routing]] — ✅ *COMPLETE — the tenancy arc closed* — one binary, topology a config value (`single`/`db-per-tenant`/`namespace-per-tenant`/`+env`), one guarded seam, one process serving N tenants, per-tenant restore operational. **Chunk C ✅ (2026-07-29): P-8.1 bounded→KILLED** (executed: A exported→dropped→re-imported, B's post-export write intact — the bound WO-027 tightened *against* us, lifted with evidence not argument). Findings: `TYPE RECORD ON NAMESPACE` rejected (all topologies place access ON DATABASE — a security gain for env-isolation); `surreal import` is additive → per-tenant restore = export→drop→import ([[DR Runbook]] corrected). c=10 138 / c=50 147 warm (≥3 samples), footprint flat. **Scorecard 23·11·0.**
+- [[WO-041 Connection Reuse]] — ✅ *COMPLETE* — port ceiling closed: probed first (SurrealDB sends no `Connection: close` — churn was client-side), shared `agent_for(endpoint)` resolved once at construction (no hot-path lock), 3-min soak **TIME_WAIT flat at 0** across ~26k requests (non-vacuous: 22 conns ESTABLISHED), median throughput *improved* 138→143, `broker.rs` bare-ureq fixed not excepted (0 bare `ureq::post` in src/). Reconciles WO-026 (throughput-neutral, resource dimension now measured). Guard: behavioural + structural.
+- [[WO-044 Root JWT Auth]] — ✅ *COMPLETE 2026-07-31* — **the 124 req/s ceiling was an argon2 ceiling**: Basic saturates ~117, JWT **~555 req/s** (arc 15→48→124→~555); 16.53 ms→297 µs/root query (55.6×); notification overhead 48→4.3 ms. ADR-013 held **by design** (root-only retry — a shared retry would have re-authed the keyguard's forged probe and false-alarmed every healthy boot; test pins forged-still-401). Submit floor unmoved (honest negative). → [[2026-07-31 WO-044 root jwt auth]]
+- [[WO-045 Print PDF Spike]] — ✅ *COMPLETE 2026-07-31, no engine adopted* — **criterion 0 reframed the WO: browser print doesn't lack an engine, it lacks a DOCUMENT** (the record page is an editing form — `customer *`, `Total: 15 (computed on save)`). Measured: Chrome pooled-CDP 146 ms/168 MB vs typst 182 ms/21.5 MB/52 MB-binary; both render Arabic correctly, text *layers* differ (Chrome logical-order, typst reversed); `fullbleed` rejected (no HTML parser despite its own description), wkhtmltopdf verified dead. → [[2026-07-31 WO-045 print pdf spike]]
+- [[ADR-014 Print Strategy]] — ✅ *ratified 2026-07-31* — document view + print CSS NOW (zero deps); engine DEFERRED until WO-043's attachment need is pulled; then Chrome-CDP default (consumes the SAME HTML — one dialect, ADR-007's argument), typst the named alternative with its price stated (second dialect + markup-is-a-programming-language = ADR-005 containment re-opened); Tier-2 worker posture either way.
+- [[WO-046 Document View]] — ✅ *COMPLETE 2026-07-31, 24/24 browser-proven* — `/print/{doctype}/{key}` generic (runtime DocTypes print, no recompile — same HTML a future engine consumes); money ruling built + landed in ADR-007 (`15`→`15.00`, over-scale SURFACES never rounds, stored-value-unchanged asserted); one door held (manager 33/clerk 29, vacuity-guarded); spike's form-artifacts asserted ABSENT. **Finding: WO-045's own unscoped `td:last-child` would have eaten the AMOUNT column** — scoped + pinned; the WO-042 CSS-seam guard (71/66/0) caught a second bug and earned promotion. 3 gaps named not hardcoded (document date, display title, per-field scale) → print-metadata vocabulary, deferred with the engine. → [[2026-07-31 WO-046 document view]]
+- [[WO-047 Hygiene Bundle]] — ✅ *COMPLETE 2026-07-31* — **the flake was a KERNEL DEFECT** (unbraced `DEFINE;CREATE` batch + whole-batch conflict-retry = duplicated session row; fixed at root, meta v5→v6, 10/10 parallel green, NOT serialized); **the CSS guard found a live shipped bug before any plant** (`fui-alert--error` doesn't exist → every error flash unstyled + iconless) and its first version passed the planted WO-042 bug TWICE before being made honest; **the census CORRECTS WO-044**: 1 root call/write not ~3, idle 9.0/s from two named tickers not 19/s (instrument flaw: idle baseline subtracted from a loaded window). A second flake found by running the suite in BOTH auth modes for the first time — *a test only ever run one way is unproven the other way.* 53 binaries / 330 / 0 in both modes. → [[2026-07-31 WO-047 hygiene bundle]]
+- [[WO-048 Server-Script Cache]] — ✅ *COMPLETE 2026-07-31* — **the property achieved: ZERO root round trips on the steady-state write path** (trace: `{1:20}`→`{0:20}`; the write path is now exactly one DB call, the write itself, under the caller's session). Corroboration worth more than the number: **basic (324.9) and jwt (338.9 req/s) CONVERGE** — root-auth mode stops mattering for writes, the property restated in a second instrument; basic escape-hatch 4.6× (70→325). Correctness gate bit immediately (the c6 test edited via out-of-band `sql_root` → narrowing STATED not hidden, pinned as a contract test + ADR-007 note); two WO-047 record corrections owned (`/script` route is client_script and never bumped — bump added, landmine defused; no server-script save route exists at all); a churned-store measurement REFUSED (287 vs 552 = WAL churn, not a result); control arm removed as a prod footgun. 53 binaries / 331 / 0, both modes. → [[2026-07-31 WO-048 server script cache]]
+- [[ADR-016 Frontend Posture]] — ✅ *ACCEPTED 2026-07-31 (Boss ratified)* — headless kernel + one SSR Desk, stated not implied; BYO-frontend first-class with the obligation PRICED (documented REST surface, additive-only evolution — **docs = named backlog item, the obligation's first installment**); SSR-native kit = named M5 candidate, **timing coupled to topcoat #275** (watch).
+- [[ADR-015 Cross-App Extension Model]] — ◐ *DIRECTION APPROVED 2026-07-31, ratification gated on the probe* — declared extension as manifest content; the three questions' leans await evidence, **(c) owner evolution the decider** (lean: WO-019 update gate extended cross-app, refusal-names-the-extension-casualty, never silent-disable); (a) entangled with the hook vocabulary (`owns` + `hook != "validate"` are adjacent checks — builder finding).
+- [[WO-049 Extension Probe]] — 🔨 *ACTIVE 2026-07-31* — spike-gates-ADR: (1) vocabulary verification SOURCED (ADR-007 ratified boundary vs unbuilt delivery); (2) composition probe w/ predictions-first (planted bypass in a test build only — pool keying, dispatch order, trace attribution, uninstall-detach observed not guessed); (3) owner-evolution seam identified not built (can the update gate SEE other apps' registered extensions?); (4) position paper → final ADR-015, leans confirmed or overturned by evidence. Then WO-050 = the build, scoped from what the probe touched.
+- [[WO-043 Email Batteries]] — ✅ *COMPLETE 2026-07-30* — email is metadata (a `notification` record via `POST /notification`, validated at the door, fires on the next write, **survives restart because it's a row**), delivery is lettre blocking on its own `std::thread` (Ruling B). **Save floor doesn't track transport health** (healthy 50.9 ms vs *dead* 39.3 ms against a 10 s blocked send); bounded retry→dead-letter typed in `/metrics`; `FRUST_MAIL=file|smtp` refuses a bad boot; lettre's own FileTransport covers CI capture; +9 crates; `surql_monopoly` unwidened. 15/15 browser-proven live. Surfaced the root-auth finding (→ WO-044).
+- [[WO-042 Frust UI Re-skin]] — ✅ *COMPLETE 2026-07-30* — the shipped Desk wears Frust UI, browser-proven on real pages (not the gallery), merged onto post-WO-038 main.rs; `frust_ui.*` confirmed Desk-local (0 in vendored topcoat). **3 behaviors, 0 JS added** (home ships 0 scripts): dialog = CSS `:target`, toast = CSS `animation-delay`, combobox = server-round-trip `<datalist>` (the one interaction that needed rung (b), as predicted). **Ceiling REAL and one-interaction-wide — modal focus-trap+Escape** — ruled: **native `<dialog>`+`showModal()` (ponytail rung 3, above all three listed paths; not a runtime)**, ADR-004 clarified ("no second runtime ≠ no JS"), hand-rolled CSS trap banned. **Zero behavior regression asserted:** WO-031 18/18, WO-032 SSE 8/8, WO-038 shed 135×503, + line tables/dirty-guard/reactive-form/light-dark/row-perms. 3 findings (silent CSS-class seam; evidence harness orphaned by WO-039 rename; 2 instrument failures — browser can't drive the shed, stale selector). Copy retired (RETIRED.md).
+- [[WO-038 Desk Admission Control]] — ✅ *COMPLETE 2026-07-29* — the Desk sheds with intent. Fix (re-ruled): `Semaphore::try_acquire`→`spawn_blocking` on the WO-041 shared Agent — unpinning the worker made the bound VISIBLE (16 invisible workers → **N=64 explicit permits**, N sized from the measured plateau). **`shed` 0→23655, matching the 503 count EXACTLY**; 200/500-rung overload = **all HTTP 503**, zero 500s/timeouts/drops; p99 6666→~950 ms. Realtime recovery **20–60 s → 0 s**. Framework gap fixed in vendored Topcoat trunk (`ServiceUnavailableError` — no 503 constructor existed, sheds fell to 500). A3 re-recorded **~135→~146 req/s** (credit: `spawn_blocking` removing the 16-worker cap, NOT admission — ceiling stays DB-bound). 2nd WO-041-class Agent-per-call defect found+fixed. **The "correct under load" thread is CLOSED** (WO-041 sustained + WO-038 overload). — **Chunk B2 ✅ (2026-07-29): the milestone's core claim executed** — one binary, one process, N tenants, isolation held through the SHIPPED request path. `/login`→tenant→`<TenantId>.<random>`; every request splits the token before any DB call. Exit proof: 48 concurrent HTTP reads, 2 tenants, 1 process, 0 foreign rows; spoof `<B>.<A-secret>`→401 (no shared session table). `main` boots N tenants for real; roster refusal inverted. 299·0, submit 4 ms, 137 req/s warm, footprint flat. Lesson: *plausible bad number > impossible one* (115.8 warm-up sample nearly logged as a 7% regression; converged at 137). **Chunk C (ACTIVE):** namespace topologies (`NamespacePerTenant`/`+Env`), `access_placement`/`provisioning`/`backup`, per-tenant restore operational → **re-score P-8.1**. Boss sequencing satisfied. — **Chunk B ✅ (2026-07-29):** two genuine strategies (`SingleTenant` puts 2 tenants in one DB & reports `tenant_isolated:false`; `DatabasePerTenant` separates); matrix asserts `single`'s tenants return *identical* rows (refuses to imply isolation that doesn't exist); authorization holds under both, kept separate from tenancy; cache coupling gone (`tenant_gen.rs`, per-tenant `Arc<AtomicU64>`, survival proven without counters); boot-refusal on the *shipped binary* (7 cases exit 1); 3 downstream-branch guards; 289·0, submit 4 ms, 136 req/s. **Chunk B2 (ACTIVE):** per-request routing — one process resolves each request's tenant from its token → `scoped_db`, serving N db-per-tenant tenants; isolation provenance-proven under shared-process concurrency. Then **C** namespace topologies + P-8.1 re-score.
+- [[WO-041 Connection Reuse]] — 📋 *queued (production-load ceiling)* — WO-040-B finding: kernel opens ~1 TCP conn/query (WO-026 model) → TIME_WAIT climbs at request rate → port exhaustion under sustained ~50 req/s. Reconciles WO-026 (throughput-neutral, resource-dimension unmeasured). Fix = pool/Agent, must hold 124 req/s + WO-026 caches. Sequence soon (taxes every perf measurement).
+> - **Evidence-harness home (M4 prerequisite, not urgent):** `wf-proof/` now carries **4 committed test artifacts** (workflow spec, SSE spec, SSE bench, Desk load driver) outside any repo with an ad-hoc pnpm install — the evidence behind three gate closures. Give them a real home + a documented `run` before M4 adds more, or they quietly rot.
+
+## 🏁 v1.1 CLOSED (2026-07-28)
+
+> [!success] Production-hardening spine complete + polished. Concurrency 15→124 req/s (P-1.1 killed), memory 60 MB (P-1.4 killed), P-1.2 killed→bounded→killed (caching), P-3.4 killed (decimal in scripts), two P0s found by the DR probe and fixed (WO-028 data loss, WO-027 auth bypass + ADR-013), DR closed with an honest no-PITR runbook, Topcoat v0.5.0 current, SSE + Desk concurrency measured with a *failing control*, kernel hygiene closed. **Scorecard 22 killed · 12 bounded · 0 open.** The v2.0 gate (WO-034) is the capstone: prove no bound is bounded-by-*assumption*.
+
+> [!note] WO-032 findings, ruled (2026-07-28)
+> **F1 — SSE relocates polling, doesn't eliminate it.** Browser has 1 stream, but the kernel `/events` API is drain-based so the *Desk* still polls the kernel per subscriber (async, non-blocking — proven not to stall at 160 subs). True end-to-end push needs a streaming kernel endpoint. **Ruled: backlog optimization, NOT a v2.0 blocker** — the concurrency bound it would improve is already measured-clean (same reasoning as multi-DB: don't build the bigger architecture thing to pass a gate that's already honestly passable). Latency/kernel-load win only; queue for Milestone 4 or a later v1.1 if it earns it.
+> **F2 — WO-014 c5 dirty-guard has no tick source in the shipped Desk.** `__frustOnTick` defined only on `/doc`, called only on `/list` — they never co-occur, so the "a tick must not stomp unsaved input" guard has never fired in production. **Ruled: dormant-and-honest, correctly NOT fixed off-order** — it protects a scenario the current topology can't produce (no tick reaches a form); no data-loss risk now. Coupled to future doc-page-realtime: when/if a form gets ticks, the guard must be proven to **actually fire** (with a control, per the lesson). Do NOT ship doc-page realtime just to exercise dead guard code — that's backwards. Recorded, not a scorecard verdict (no row rides on it; the mechanism was tested in isolation, it's the shipped-topology wiring that's absent — a tested-seam instance, not an overclaim).
+- **Standing methodology ruling (2026-07-28): browser proofs seal on a committed re-runnable artifact** (Playwright spec in-repo, codegen from MCP OK) — MCP-driven-only is an unrepeatable observation, and the WO-031 lineage is "keep the proof, not just witness it."
+- **PM ruling (2026-07-28): multi-DB per-tenant restore (P-8.1) is a Milestone-4 item, NOT a v1.1 blocker** — it's a *measured* architectural bound now (per-DB export, single-DB tenancy), not bounded-by-assumption, so it stays honest at the v2.0 gate. Building multi-DB tenancy (ADR-003 amendment, touches permission compiler + connection model + backup) to satisfy a gate that doesn't require it would be scope creep.
+- **v2.0 gate:** scorecard re-scored, no bounded-*by-assumption* left (measured bounds — P-8.2 1.4×, P-8.1 single-DB-restore — stay honest with their reasons stated).
+- [[ADR-013 Signing-Key Integrity at Boot]] — ✅ fail-closed boot extended meta-version→key-integrity; self-forge detection (introspection blind); no serve-anyway ack; canary-pinned
+- [[WO-019 App Lifecycle]] — ✅ *COMPLETED* — the platform exists: door probe held, manifest reuses the sync gate, honest uninstall, demo app lives its lifecycle in one kernel process; REQ-2.1.1+2.2.2 satisfied
+
+## 04 Build Log
+
+- [[2026-07-23 Topcoat prototype]] — all 4 exit criteria passed; 3 upstream bugs; signals-are-compile-time finding
+- [[2026-07-23 SurrealDB week-1 benchmark]] — report shapes pass at interactive speed on 100 k invoices; compound range index = 30× trap → index hints required
+- [[2026-07-24 WASM isolation spike]] — all 3 criteria passed: 13.3 µs hooks, hostile plugins contained, one-command builds
+- [[2026-07-24 Script engine spike (WO-001)]] — JS-in-WASM: 55.7 µs warm, ~7 ms fresh instance, containment holds through the engine
+- [[2026-07-24 Architecture skeleton (WO-002)]] — every pillar E2E in one flow; 2/1/3-row permission proof; changefeed datetime-SINCE bug → #7433
+- [[2026-07-24 Live-query and event fidelity (WO-004)]] — LIVE+EVENT behave as documented; bridge recovers restart-crossing inserts; THROW aborts transactions
+- [[2026-07-24 Module 3 close — sync engine port + rollback position]] — 95/95 port suite, 5/5 fixes proven, sliver deleted; REQ-6.6 position paper
+- [[2026-07-24 Module 4 close — hook dispatcher fold-in]] — 3 processes → 2; acceptance test unchanged; dynamic doc + decimal across the JS boundary
+- [[2026-07-24 Module 5 close — worker loop]] — exit criteria 5/6/7 executed: 200/200 exactly-once @ 1.01 attempts/claim; rescan recovery; typed Denied terminal
+- [[2026-07-24 Module 6 + WO-005 close — frust serve]] — the kernel delivered: REST as third byte-equal consumer, resident worker, Desk holds zero DB tokens, CI perf gates live
+- [[2026-07-24 WO-006 1M-row scale proof]] — six shapes at 1 M through the kernel; Q3 super-linear flagged; blocking-index disk-fatal finding; the aggregates decision table
+- [[2026-07-24 WO-007 aggregates ladder implementation]] — the ladder built: metadata→EVENT codegen, signed-contribution algebra, cursor-transactional rollups, strict undo applier
+- [[2026-07-24 WO-008 identity hardening]] — identity family closed; guard EVENT + null-safe clauses; churn-degradation caveat; JWT-rotation caveat
+- [[2026-07-25 WO-009 Desk v1]] — Desk on the hardened kernel: sessions as records, month-picker Tier-0, staleness-visible reports, lifecycle affordances; screenshots
+- [[2026-07-25 Topcoat pin moved to upstream main]] — websocket shipped (#195); our 3 Windows fixes merged upstream; pin move ratified
+- [[2026-07-25 Topcoat vendored - 175 signal methods]] — dynamic signals: the ADR-001 constraint's premise dissolved (retroactively logged)
+- [[2026-07-25 Tier-2 six-verb form bridge]] — REQ-2.2.3's mechanism: 5 of 6 verbs zero-round-trip (network log proof); ADR-001 amended; 2 vocabulary gaps
+- [[2026-07-25 WO-010 Observability]] — the kernel explains itself: trace-from-logs-alone proof, tenant-labeled series, machine codes as fields; substrate-probe caveat
+- [[2026-07-25 WO-011 live-query scale spike]] — zero leaks in ~8,800 notifications; the constraint is the writer; multiplexing rejected-as-unneeded
+- [[2026-07-25 WO-012 Desk realtime]] — realtime shipped: hand-rolled WS RPC, per-subscriber JWT to the DB, dataless ticks, focus-scoped lifecycle, split CI gates
+- [[2026-07-25 WO-013 tenant fairness]] — the noisy neighbor bounded: door shaping, cursor round-robin (two structural bugs caught), fuel metering, scratch-DB practice
+- [[2026-07-25 WO-014 Desk v2 dynamic forms]] — behavior is metadata: 4 rules on a runtime DocType, zero round-trips, dirty-guard rule, decimal boundary-exact
+- [[2026-07-25 WO-015 child-table line editor]] — the canonical form complete: reveal-not-clone rows, envelope depth decode, line-diff audit, silent-zero bug killed
+- [[2026-07-26 WO-016 decimal rollup accumulation]] — money decimal end-to-end; the Currency-was-float root cause; 101.305 exact; epsilon deletion; recompute migration
+- [[2026-07-26 WO-017 client script sandbox (partial)]] — the transpile gate opens; same artifact both hosts; 7 escape vectors probed undefined; npm-broken finding
+- [[2026-07-26 WO-017 item 1 browser hosting with lazy-load]] — scriptless = exactly 2 requests; one-artifact hygiene fix lands in both hosts; mixed float/decimal shapes caveat
+- [[2026-07-26 WO-017 item 2 worker watchdog containment]] — hostile-first in the browser: 3 probes killed, breaker, sticky notices; worker-message-drop finding; testkit self-drops
+- [[2026-07-26 WO-017 item 3 decimal NaN-catch]] — corrupted money refused typed, both hosts, one rebuild; the catch stopped a runaway feedback loop; kernel-never-ran-scripts finding → WO-019
+- [[2026-07-26 WO-017 item 4 Desk authoring — WO closed]] — author → contain → recover, all through the UI; hiding is courtesy, kernel is enforcement; no eval anywhere
+- [[2026-07-26 WO-019 criterion 1 the door probe]] — the prediction held: query text un-representable, authority not a parameter, one-compiler as equality; edge-1 fired unprompted
+- [[2026-07-26 WO-019 criterion 2 the manifest]] — gate discipline reused literally; plan/apply one call shape; reserved slot stays reserved; 9 errors in one pass
+- [[2026-07-26 WO-019 criterion 3 the install story]] — install/disable/enable/update proven; refusals name casualties; registry = system of record; meta v3 exercised live, no session loss; 25 s accepting-boot caveat
+- [[2026-07-26 WO-019 criterion 4 routes over REST]] — route==broker survives the full path; plugin routes aren't a throttle bypass; **WAL-bloat finding resolves the realtime-tax escalation** (0.00 ms on a fresh store)
+- [[2026-07-26 WO-019 criteria 5-6 uninstall and server scripts]] — honest uninstall (manifest = the thing forgotten); disabled≡unknown route (same discriminant); server-script delivery by seam, pool compares text; a test panic between mutate/restore poisons later tests
+- [[2026-07-26 WO-019 criterion 7 the demo app end-to-end]] — the platform proven: one kernel lifetime, install→exercise→disable→re-enable→update, step-8 field+rule absent at boot live after update; field envelope reaches plugin routes
+- [[2026-07-26 WO-020 row-write permission]] — two stacked silent bugs (A masked B for 13 WOs, broke closed); clerk save persists in browser; workflow canonical flow green; after-state probe; self-seeding fixtures
+- [[2026-07-26 WO-021 money arithmetic]] — decimal.rs multiplies; rounding never implicit; half-even proven; DB↔Rust money math byte-equal as a CI property
+- [[2026-07-26 WO-022 accounting seed]] — the platform dogfooded: real app as a bundle, zero invented features; 5 findings (script-decimal footgun, serve script-wiring, workflow-button gap)
+
+## Conventions
+
+- Pain points `P-1.1`, requirements `REQ-1.1.1` — reference by ID in ADRs and commits.
+- Every building block note maps its capabilities → pain points killed + requirements served.
+- Every ADR links the pain point + requirement + building block it involves.
+- Open decisions live as `- [ ]` checklists inside notes → promoted to ADRs when decided.

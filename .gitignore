@@ -1,0 +1,52 @@
+# ── Build artifacts ─────────────────────────────────────────────────────────
+# ~36 GB across the workspace. Never committed; always regenerable.
+target/
+**/target/
+node_modules/
+**/node_modules/
+
+# ── Trees deliberately outside the monorepo (2026-07-31 ruling) ─────────────
+# Present on the dev machine, not part of the repo. Each is listed with the
+# reason, so "why isn't X here" is answered without archaeology.
+
+# The script/plugin WASM artifacts + spike. EXCLUDED BY RULING — note the
+# consequence: the kernel loads `script_engine.wasm` and `plugin_demo.wasm`
+# from here at runtime (the FRUST_ARTIFACTS default), so a fresh clone cannot
+# run the kernel until these are built or supplied. See README.
+/wasm-spike/
+
+# WO-006 SurrealDB benchmark harness (~110 MB). Historical evidence; neither
+# builds nor runs anything in this repo.
+/frust-bench/
+
+# The dev deployment: a downloaded surreal.exe plus the LIVE dev database.
+# A database is not source, and a vendored binary is not either.
+/frust-skel/
+
+# The 1 M-row scale fixture (~850 MB), regenerable by the bench harness.
+/frust-scale-data/
+
+# Throwaway spike scratch (WO-045). Probes live here and die here.
+/wo045-spike/
+
+# ── Machine-local run output ────────────────────────────────────────────────
+*.log
+*.err
+/mail-outbox/
+**/mail-capture/
+
+# Obsidian per-machine workspace state — the NOTES are committed, the editor's
+# window layout and caches are not.
+/frust/.obsidian/workspace*
+/frust/.obsidian/cache*
+/frust/.obsidian/plugins/
+/frust/.playwright-mcp/
+/frust/.claudian/
+
+# ── OS / editor ─────────────────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
+*.swp
+
+# Playwright MCP scratch (screenshots/traces from browser-driving sessions)
+/.playwright-mcp/

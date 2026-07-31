@@ -1,0 +1,104 @@
+package frust:plugin;
+
+/// Capabilities the host grants. A plugin reaches the world ONLY through
+/// these (ADR-006: the permission chokepoint is structural).
+interface host-api {
+    log: func(msg: string);
+}
+
+/// WO-019 criterion 1 — THE DOOR.
+///
+/// The verb surface a plugin may call back into, and the whole of it. Note
+/// what these signatures do NOT contain: any way to name a caller, a session,
+/// a connection, or a query. Authority is not a parameter — the host binds it
+/// from the request it is currently serving, so a plugin cannot ask to be
+/// someone else any more than it can ask for a database handle that is not in
+/// its world.
+///
+/// `filter` is the ADR-006 structured filter as JSON *because WIT has no
+/// recursive types* (the same wire-encoding concession as `compound-v`). It is
+/// parsed into the typed `Filter` tree host-side and compiled by the one
+/// permission compiler; it is NOT a query, and query text in it is a parse
+/// error, not an escape.
+interface db-api {
+    db-read: func(doctype: string, filter: string, fields: list<string>) -> result<string, string>;
+}
+
+/// A plugin-declared REST route (REQ-2.2.2). The handler is a WIT export like
+/// any hook — same isolation, same fuel, same epoch deadline. It is reached
+/// only through the broker's door above.
+interface routes {
+    record request {
+        path: string,
+        query: string,
+        body: string,
+    }
+
+    record response {
+        status: u16,
+        body: string,
+    }
+
+    handle: func(req: request) -> response;
+}
+
+/// Document lifecycle hooks (ADR-006 edge 3: typed envelope, dynamic
+/// payload). CANONICAL COPY: `frust-kernel/wit/` — the guests reference this
+/// path; do not fork it.
+interface hooks {
+    /// The dynamic value (ADR-006 edge 3). Every scalar is first-class —
+    /// `decimal-v` carries money as a numeric string, never a float. WIT has
+    /// no recursive types, so nested list/object travel as `compound-v`
+    /// (JSON text): a wire-encoding concession, not a semantic one.
+    variant value {
+        null-v,
+        bool-v(bool),
+        int-v(s64),
+        float-v(f64),
+        decimal-v(string),
+        text-v(string),
+        datetime-v(string),
+        duration-v(string),
+        record-id-v(string),
+        compound-v(string),
+    }
+
+    record entry {
+        key: string,
+        val: value,
+    }
+
+    /// The validate hook: full dynamic doc in, (possibly mutated) doc out,
+    /// or a rejection message.
+    validate: func(doc: list<entry>) -> result<list<entry>, string>;
+
+    /// Hostile exports kept for containment tests (ADR-005 spike parity).
+    spin: func();
+    hog: func();
+}
+
+/// The base world: a hook provider. The script engine and every hook-only
+/// plugin live here.
+///
+/// `db-api` is IMPORTED here too, and the hook host answers every call to it
+/// with `E_NO_DOOR`. That is deliberate: the alternative is a component that
+/// links under one host and not the other, and "your plugin loads as a route
+/// but not as a hook" is a worse failure to explain than an explicit refusal.
+/// A hook is handed its document; it has no door because it needs none.
+world plugin {
+    import host-api;
+    import db-api;
+    export hooks;
+}
+
+/// WO-019: a plugin that ALSO declares REST routes. Kept as a separate world
+/// rather than widened into `plugin`, because declaring a route is a distinct
+/// capability claim: a hook-only component should not have to name the door
+/// to be loadable, and the host should not have to pretend it exports one.
+/// This is ADR-006 edge 1's additive-evolution rule applied to worlds.
+world route-plugin {
+    import host-api;
+    import db-api;
+    export hooks;
+    export routes;
+}

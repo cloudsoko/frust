@@ -1,0 +1,33 @@
+﻿[package]
+name = "frust-kernel"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+frust-orm = { path = "../orm" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tiny_http = "0.12"
+ureq = { workspace = true, features = ["json"] }
+base64 = "0.22"
+# WO-043 (PM ruling B): lettre DIRECTLY, blocking, never `topcoat-mail`.
+# `topcoat-mail::Transport::send` needs a Topcoat web-request `Cx` (it renders
+# `Mail::html` as a `View`), so wiring it would pull topcoat-core+topcoat-view
+# into the kernel — ADR-004's headless boundary, for +45 crates. lettre's
+# blocking `SmtpTransport` is UNGATED (`mod transport;` has no cfg), so
+# default-features = false keeps tokio out of the mail path entirely.
+# `file-transport` + `-envelope` are the CI capture (eml + envelope json) —
+# no second file transport needed.
+lettre = { version = "0.11", default-features = false, features = [
+    "builder", "smtp-transport", "rustls-tls", "file-transport", "file-transport-envelope",
+] }
+hmac = "0.12"
+sha2 = "0.10"
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }
+
+[[bin]]
+name = "frust"
+path = "src/main.rs"
+

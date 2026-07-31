@@ -1,0 +1,17 @@
+{
+  "name": "frust-e2e",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end evidence harnesses: browser proofs and load benches that drive the running Frust stack.",
+  "scripts": {
+    "workflow": "node workflow.spec.mjs",
+    "sse": "node sse.spec.mjs",
+    "mail": "node mail.spec.mjs",
+    "print": "node print.spec.mjs",
+    "sse-bench": "node sse-bench.mjs 160",
+    "desk-load": "node desk-load.mjs",
+    "desk-load:sweep": "node desk-load.mjs sweep",
+    "desk-load:contention": "node desk-load.mjs contention"
+  },
+  "devDependencies": { "playwright": "^1.62.0" }
+}
