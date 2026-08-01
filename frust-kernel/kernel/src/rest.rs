@@ -212,8 +212,28 @@ impl Rest {
             .field("path", url.split('?').next().unwrap_or(&url).to_string())
             .field("tenant", tenant);
 
+        // **A body that is not UTF-8 says so.** `read_to_string` fails on
+        // invalid UTF-8 and leaves the buffer EMPTY, and the discarded error
+        // used to turn that into "missing field `manifest_version`" — an
+        // operator reading that goes looking at their manifest's shape, which
+        // is not the problem. WO-054: name the actual fault.
         let mut body = String::new();
-        let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
+        if std::io::Read::read_to_string(req.as_reader(), &mut body).is_err() {
+            let e = BrokerError::InvalidValue {
+                detail: "request body is not valid UTF-8".into(),
+            };
+            let response = tiny_http::Response::from_string(
+                serde_json::json!({ "error": e }).to_string(),
+            )
+            .with_status_code(400)
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap(),
+            );
+            let _ = req.respond(response);
+            span.field("status", 400).err(&e);
+            return;
+        }
 
         // metrics: Prometheus text, no auth, no shell (REQ-6.4.2)
         if url.split('?').next() == Some("/metrics") {
