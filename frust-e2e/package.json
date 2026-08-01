@@ -8,6 +8,8 @@
     "sse": "node sse.spec.mjs",
     "mail": "node mail.spec.mjs",
     "print": "node print.spec.mjs",
+    "extension": "node extension.spec.mjs",
+    "docs": "node docs.spec.mjs",
     "sse-bench": "node sse-bench.mjs 160",
     "desk-load": "node desk-load.mjs",
     "desk-load:sweep": "node desk-load.mjs sweep",
