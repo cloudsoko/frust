@@ -12,6 +12,8 @@ $ArtifactLock = Get-Content -Raw -LiteralPath $ArtifactLockPath | ConvertFrom-Js
 $WasmPackage = Get-Content -Raw -LiteralPath (Join-Path $WasmRoot "package.json") | ConvertFrom-Json
 $RustVersion = $ArtifactLock.rust
 $WasmTarget = $ArtifactLock.target
+$RustBuilderImage = $ArtifactLock.builders.rust
+$NodeBuilderImage = $ArtifactLock.builders.node
 $PnpmVersion = $WasmPackage.packageManager.Split("@")[1]
 $SurrealVersion = "3.2.0"
 $script:Failures = 0
@@ -61,6 +63,52 @@ function Invoke-Native {
     if ($LASTEXITCODE -ne 0) {
         throw "$FailureMessage (exit $LASTEXITCODE)"
     }
+}
+
+function Build-ArtifactsInContainers {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        throw "Docker is required to build canonical runtime artifacts on non-Linux hosts"
+    }
+    if (-not $RustBuilderImage -or -not $NodeBuilderImage) {
+        throw "wasm-spike/artifacts.lock.json must pin the Rust and Node builder images"
+    }
+
+    $repoMount = "${RepoRoot}:/frust-source"
+    $rustBuild = @"
+rustup target add $WasmTarget &&
+RUSTFLAGS='--remap-path-prefix=/frust-source=/frust-source' cargo build --locked --release --target $WasmTarget --manifest-path wasm-spike/script-engine/Cargo.toml &&
+RUSTFLAGS='--remap-path-prefix=/frust-source=/frust-source' cargo build --locked --release --target $WasmTarget --manifest-path wasm-spike/plugin-demo/Cargo.toml &&
+mkdir -p wasm-spike/artifacts &&
+cp wasm-spike/script-engine/target/$WasmTarget/release/script_engine.wasm wasm-spike/artifacts/script_engine.wasm &&
+cp wasm-spike/plugin-demo/target/$WasmTarget/release/plugin_demo.wasm wasm-spike/artifacts/plugin_demo.wasm
+"@
+    Invoke-Native docker @(
+        "run", "--rm",
+        "--volume", $repoMount,
+        "--mount", "type=volume,source=frust-script-engine-target,target=/frust-source/wasm-spike/script-engine/target",
+        "--mount", "type=volume,source=frust-plugin-demo-target,target=/frust-source/wasm-spike/plugin-demo/target",
+        "--workdir", "/frust-source",
+        $RustBuilderImage,
+        "bash", "-c", $rustBuild
+    ) "containerized Rust artifact build failed"
+
+    $nodeBuild = @"
+corepack enable &&
+corepack install --global pnpm@$PnpmVersion &&
+pnpm --dir wasm-spike install --frozen-lockfile &&
+mkdir -p .frust/build/browser-engine &&
+pnpm --dir wasm-spike exec jco transpile /frust-source/wasm-spike/artifacts/script_engine.wasm -o /frust-source/.frust/build/browser-engine --quiet &&
+cp .frust/build/browser-engine/script_engine.core.wasm frust-desk/assets/engine/script_engine.core.wasm &&
+cp .frust/build/browser-engine/script_engine.js frust-desk/assets/engine/script_engine.js
+"@
+    Invoke-Native docker @(
+        "run", "--rm",
+        "--volume", $repoMount,
+        "--mount", "type=volume,source=frust-wasm-node-modules,target=/frust-source/wasm-spike/node_modules",
+        "--workdir", "/frust-source",
+        $NodeBuilderImage,
+        "bash", "-c", $nodeBuild
+    ) "containerized browser artifact build failed"
 }
 
 function Test-ArtifactSet {
@@ -135,39 +183,7 @@ function Invoke-Doctor {
 }
 
 function Build-Artifacts {
-    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-        throw "cargo is missing; install rustup from https://rustup.rs"
-    }
-    if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
-        throw "pnpm is missing; enable Corepack and run: corepack install --global pnpm@$PnpmVersion"
-    }
-    $actualPnpm = ((& pnpm --version) -join "").Trim()
-    if ($actualPnpm -ne $PnpmVersion) {
-        throw "pnpm $PnpmVersion is required, found $actualPnpm; run: corepack install --global pnpm@$PnpmVersion"
-    }
-
-    $installedToolchain = Get-PinnedToolchain
-    if (-not $installedToolchain) {
-        throw "Rust $RustVersion is not installed; run: pwsh ./scripts/frust.ps1 bootstrap"
-    }
-    $cargoToolchain = "+$installedToolchain"
-    Invoke-Native cargo @($cargoToolchain, "build", "--locked", "--release", "--target", $WasmTarget, "--manifest-path", (Join-Path $WasmRoot "script-engine/Cargo.toml")) "script-engine build failed"
-    Invoke-Native cargo @($cargoToolchain, "build", "--locked", "--release", "--target", $WasmTarget, "--manifest-path", (Join-Path $WasmRoot "plugin-demo/Cargo.toml")) "plugin-demo build failed"
-
-    $artifactDir = Join-Path $WasmRoot "artifacts"
-    New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
-    Copy-Item -Force -LiteralPath (Join-Path $WasmRoot "script-engine/target/$WasmTarget/release/script_engine.wasm") -Destination (Join-Path $artifactDir "script_engine.wasm")
-    Copy-Item -Force -LiteralPath (Join-Path $WasmRoot "plugin-demo/target/$WasmTarget/release/plugin_demo.wasm") -Destination (Join-Path $artifactDir "plugin_demo.wasm")
-
-    Invoke-Native pnpm @("--dir", $WasmRoot, "install", "--frozen-lockfile") "pnpm install failed"
-    $browserBuild = Join-Path $RepoRoot ".frust/build/browser-engine"
-    New-Item -ItemType Directory -Force -Path $browserBuild | Out-Null
-    Invoke-Native pnpm @("--dir", $WasmRoot, "exec", "jco", "transpile", (Join-Path $artifactDir "script_engine.wasm"), "-o", $browserBuild, "--quiet") "jco transpile failed"
-
-    $deskEngine = Join-Path $RepoRoot "frust-desk/assets/engine"
-    Copy-Item -Force -LiteralPath (Join-Path $browserBuild "script_engine.core.wasm") -Destination (Join-Path $deskEngine "script_engine.core.wasm")
-    Copy-Item -Force -LiteralPath (Join-Path $browserBuild "script_engine.js") -Destination (Join-Path $deskEngine "script_engine.js")
-
+    Build-ArtifactsInContainers
     $script:Failures = 0
     Test-ArtifactSet
     if ($script:Failures -gt 0) {

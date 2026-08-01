@@ -13,6 +13,10 @@ from the same source and checked against `artifacts.lock.json`:
 pwsh ./scripts/frust.ps1 build-artifacts
 ```
 
+Every host, including CI, uses the digest-pinned Linux Rust and Node builder
+images recorded in the artifact lock. This removes checkout-path, distribution,
+and host code-generation differences from the committed checksums.
+
 `artifacts/`, `browser-engine/`, `node_modules/`, and Cargo target directories
 are generated and ignored. `artifacts-old-world/` is deliberately tracked: its
 binaries are compatibility fixtures proving that the current host still loads
