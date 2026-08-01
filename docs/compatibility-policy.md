@@ -16,6 +16,7 @@ workspace version, the Rust toolchain pin, and the WASM artifact lock.
 | WASI target | `wasm32-wasip2` | Exact component build target |
 | WIT package | `frust:plugin` | Current worlds are listed in the manifest |
 | pnpm / JCO | `11.1.2` / `1.25.2` | Exact artifact-build inputs |
+| Artifact builders | Digest-pinned Linux containers | Prevents host-specific WASM output |
 
 Only combinations listed in a release's compatibility file are supported. A
 dependency version being semver-compatible is not evidence that Frust supports
