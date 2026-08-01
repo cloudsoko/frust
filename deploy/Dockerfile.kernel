@@ -3,6 +3,10 @@
 ARG RUST_VERSION=1.96.0
 FROM rust:${RUST_VERSION}-bookworm AS build
 
+ENV CARGO_NET_RETRY=10 \
+    CARGO_HTTP_MULTIPLEXING=false \
+    CARGO_HTTP_TIMEOUT=600
+
 WORKDIR /src/frust-kernel
 COPY . .
 

@@ -39,8 +39,21 @@ jobs:
           workspaces: frust-kernel
           key: measured-gates
 
-      - name: Verify runtime inputs
-        run: python .github/scripts/release-preflight.py
+      - name: Install pinned Node and pnpm
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+          cache-dependency-path: wasm-spike/pnpm-lock.yaml
+
+      - name: Activate pnpm
+        run: corepack enable && corepack install --global pnpm@11.1.2
+
+      - name: Rebuild and verify runtime inputs
+        shell: pwsh
+        run: |
+          ./scripts/frust.ps1 build-artifacts
+          python .github/scripts/release-preflight.py
 
       - name: Start pinned SurrealDB
         run: |
@@ -51,6 +64,7 @@ jobs:
             if [ "$attempt" = 60 ]; then docker logs frust-surreal; exit 1; fi
             sleep 1
           done
+          test "$(curl --fail --silent http://127.0.0.1:8899/version)" = "surrealdb-3.2.0"
 
       - name: Run release-mode ignored measurement gates
         run: |

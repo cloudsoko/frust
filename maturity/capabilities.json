@@ -1,0 +1,426 @@
+{
+  "schema_version": 1,
+  "status_vocabulary": [
+    "planned",
+    "experimental",
+    "pilot",
+    "production-ready"
+  ],
+  "capabilities": [
+    {
+      "id": "kernel.verbs",
+      "name": "Permission-enforced document verbs",
+      "surface": "Kernel",
+      "status": "pilot",
+      "implementation": "implemented",
+      "operational_proof": "automated-only",
+      "owner": "kernel",
+      "evidence": [
+        { "path": "frust-kernel/kernel/src/rest.rs", "kind": "source" },
+        { "path": "frust-kernel/kernel/tests/rest_surface.rs", "kind": "automated-test" },
+        { "path": "frust-kernel/kernel/tests/refused_create.rs", "kind": "automated-test" }
+      ],
+      "verification": [
+        {
+          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-kernel --test rest_surface --test refused_create",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "No production operations runbook or recorded production exercise exists.",
+        "The full document verb matrix is not published as a versioned compatibility contract."
+      ]
+    },
+    {
+      "id": "security.authentication",
+      "name": "Root and session authentication",
+      "surface": "Authentication",
+      "status": "pilot",
+      "implementation": "implemented",
+      "operational_proof": "automated-only",
+      "owner": "kernel-security",
+      "evidence": [
+        { "path": "frust-kernel/kernel/src/keyguard.rs", "kind": "source" },
+        { "path": "frust-kernel/kernel/tests/root_jwt_auth.rs", "kind": "automated-test" },
+        { "path": "frust-kernel/kernel/tests/session_cache_revocation.rs", "kind": "automated-test" }
+      ],
+      "verification": [
+        {
+          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-kernel --test root_jwt_auth --test session_cache_revocation",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "Key rotation, incident response, and credential recovery are not backed by an exercised runbook.",
+        "No external security audit evidence is recorded."
+      ]
+    },
+    {
+      "id": "tenancy.isolation",
+      "name": "Tenant routing and isolation",
+      "surface": "Tenancy",
+      "status": "pilot",
+      "implementation": "implemented",
+      "operational_proof": "automated-only",
+      "owner": "kernel-tenancy",
+      "evidence": [
+        { "path": "frust-kernel/kernel/src/tenancy.rs", "kind": "source" },
+        { "path": "frust-kernel/kernel/tests/tenant_isolation_concurrent.rs", "kind": "automated-test" },
+        { "path": "frust-kernel/kernel/tests/tenancy_strategy_matrix.rs", "kind": "automated-test" }
+      ],
+      "verification": [
+        {
+          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-kernel --test tenant_isolation_concurrent --test tenancy_strategy_matrix",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "Isolation has automated coverage but no production topology certification or incident drill.",
+        "Capacity and noisy-neighbor limits remain environment-dependent."
+      ]
+    },
+    {
+      "id": "database.migrations",
+      "name": "Schema migrations and fleet rollout",
+      "surface": "Migrations",
+      "status": "experimental",
+      "implementation": "partial",
+      "operational_proof": "automated-only",
+      "owner": "orm",
+      "evidence": [
+        { "path": "frust-kernel/orm/src/fleet.rs", "kind": "automated-test" },
+        { "path": "frust-kernel/orm/src/schema.rs", "kind": "source" },
+        { "path": "frust-kernel/docs/evolution-policy.md", "kind": "contract" }
+      ],
+      "verification": [
+        {
+          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-orm fleet",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "Fleet canary, resume, and rollback behavior has not been proven in a production topology.",
+        "Destructive and long-running data changes need operator-facing rehearsal guidance."
+      ]
+    },
+    {
+      "id": "kernel.hooks",
+      "name": "Sandboxed document hooks",
+      "surface": "Hooks",
+      "status": "pilot",
+      "implementation": "implemented",
+      "operational_proof": "automated-only",
+      "owner": "kernel-runtime",
+      "evidence": [
+        { "path": "frust-kernel/kernel/src/hooks.rs", "kind": "source" },
+        { "path": "frust-kernel/kernel/tests/hook_dispatch.rs", "kind": "automated-test" },
+        { "path": "frust-kernel/kernel/tests/fuel_overhead.rs", "kind": "automated-test" }
+      ],
+      "verification": [
+        {
+          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-kernel --test hook_dispatch --test fuel_overhead",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "Hook compatibility and resource-limit changes lack a production upgrade runbook.",
+        "Untrusted third-party hooks have not been externally security reviewed."
+      ]
+    },
+    {
+      "id": "apps.lifecycle",
+      "name": "Application install, upgrade, disable, and remove",
+      "surface": "Applications",
+      "status": "pilot",
+      "implementation": "implemented",
+      "operational_proof": "automated-only",
+      "owner": "kernel-apps",
+      "evidence": [
+        { "path": "frust-kernel/kernel/src/app.rs", "kind": "source" },
+        { "path": "frust-kernel/kernel/tests/app_lifecycle.rs", "kind": "automated-test" },
+        { "path": "frust-kernel/kernel/tests/app_composition_and_upgrade.rs", "kind": "automated-test" }
+      ],
+      "verification": [
+        {
+          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-kernel --test app_lifecycle --test app_composition_and_upgrade",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "Compatibility policy is not yet backed by a multi-version upgrade certification matrix.",
+        "Marketplace trust, signing, and revocation policy is not established."
+      ]
+    },
+    {
+      "id": "http.rest",
+      "name": "Typed REST contract and method routing",
+      "surface": "REST",
+      "status": "pilot",
+      "implementation": "implemented",
+      "operational_proof": "automated-only",
+      "owner": "kernel-http",
+      "evidence": [
+        { "path": "frust-kernel/kernel/src/http_contract.rs", "kind": "automated-test" },
+        { "path": "frust-kernel/kernel/tests/rest_surface.rs", "kind": "automated-test" },
+        { "path": "frust-kernel/docs/rest-api.md", "kind": "contract" }
+      ],
+      "verification": [
+        {
+          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-kernel http_contract",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "The public API has no published OpenAPI artifact or automated compatibility gate.",
+        "Load, abuse, and proxy interoperability are not operationally certified."
+      ]
+    },
+    {
+      "id": "realtime.events",
+      "name": "Realtime event streaming",
+      "surface": "Realtime",
+      "status": "experimental",
+      "implementation": "implemented",
+      "operational_proof": "automated-only",
+      "owner": "kernel-realtime",
+      "evidence": [
+        { "path": "frust-kernel/kernel/src/realtime.rs", "kind": "source" },
+        { "path": "frust-kernel/kernel/tests/realtime_e2e.rs", "kind": "automated-test" },
+        { "path": "frust-e2e/sse-recovery.mjs", "kind": "automated-test" }
+      ],
+      "verification": [
+        {
+          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-kernel --test realtime_e2e",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "Reconnect, backpressure, and event-retention behavior is not certified at production scale.",
+        "There is no operations playbook for lag, fanout overload, or dropped subscribers."
+      ]
+    },
+    {
+      "id": "jobs.worker",
+      "name": "Durable background jobs and worker fairness",
+      "surface": "Jobs",
+      "status": "experimental",
+      "implementation": "implemented",
+      "operational_proof": "automated-only",
+      "owner": "kernel-worker",
+      "evidence": [
+        { "path": "frust-kernel/kernel/src/worker.rs", "kind": "automated-test" },
+        { "path": "frust-kernel/kernel/tests/worker_queue.rs", "kind": "automated-test" },
+        { "path": "frust-kernel/kernel/tests/tenant_fairness.rs", "kind": "automated-test" }
+      ],
+      "verification": [
+        {
+          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-kernel --test worker_queue --test tenant_fairness",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "Queue saturation, poison jobs, and replay recovery are not covered by an exercised runbook.",
+        "Service-level objectives and capacity limits are not published."
+      ]
+    },
+    {
+      "id": "mail.delivery",
+      "name": "Transactional mail delivery",
+      "surface": "Mail",
+      "status": "experimental",
+      "implementation": "implemented",
+      "operational_proof": "automated-only",
+      "owner": "kernel-mail",
+      "evidence": [
+        { "path": "frust-kernel/kernel/src/mail.rs", "kind": "automated-test" },
+        { "path": "frust-kernel/kernel/tests/mail_notifications.rs", "kind": "automated-test" },
+        { "path": "frust-e2e/mail.spec.mjs", "kind": "automated-test" }
+      ],
+      "verification": [
+        {
+          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-kernel --test mail_notifications",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "Provider failover, bounce handling, suppression, and reputation operations are incomplete.",
+        "No production deliverability evidence is recorded."
+      ]
+    },
+    {
+      "id": "desk.ui",
+      "name": "Metadata-driven Desk",
+      "surface": "Desk",
+      "status": "pilot",
+      "implementation": "implemented",
+      "operational_proof": "automated-only",
+      "owner": "desk",
+      "evidence": [
+        { "path": "frust-desk/src/main.rs", "kind": "source" },
+        { "path": "frust-e2e/docs.spec.mjs", "kind": "automated-test" },
+        { "path": "frust-e2e/workflow.spec.mjs", "kind": "automated-test" }
+      ],
+      "verification": [
+        {
+          "command": "pnpm --dir frust-e2e exec playwright test docs.spec.mjs workflow.spec.mjs",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "Accessibility, browser support, and responsive behavior lack a published certification baseline.",
+        "No production support or rollback runbook is recorded."
+      ]
+    },
+    {
+      "id": "operations.deployment",
+      "name": "Containerized deployment package",
+      "surface": "Deployment",
+      "status": "experimental",
+      "implementation": "partial",
+      "operational_proof": "none",
+      "owner": "operations",
+      "evidence": [
+        { "path": "deploy/compose.yaml", "kind": "source" },
+        { "path": "deploy/README.md", "kind": "runbook" }
+      ],
+      "verification": [
+        {
+          "command": "docker compose --env-file deploy/.env.example -f deploy/compose.yaml config --quiet",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": "deploy/README.md",
+      "known_gaps": [
+        "The image build and multi-service startup have not been recorded as passing in this ledger.",
+        "High availability, upgrades, external secret management, and off-host backup remain operator work."
+      ]
+    },
+    {
+      "id": "operations.recovery",
+      "name": "Verified backup and destructive restore",
+      "surface": "Recovery",
+      "status": "experimental",
+      "implementation": "partial",
+      "operational_proof": "none",
+      "owner": "operations",
+      "evidence": [
+        { "path": "frust-kernel/kernel/src/recovery.rs", "kind": "automated-test" },
+        { "path": "frust-kernel/kernel/tests/tenant_restore_ops.rs", "kind": "automated-test" }
+      ],
+      "verification": [
+        {
+          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-kernel recovery",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "No repository-owned recovery runbook or timed restore drill is recorded.",
+        "Off-host storage, retention policy, encryption, and restore objectives are not implemented end to end."
+      ]
+    },
+    {
+      "id": "engineering.release",
+      "name": "Versioned and attestable releases",
+      "surface": "Release engineering",
+      "status": "planned",
+      "implementation": "partial",
+      "operational_proof": "none",
+      "owner": "release-engineering",
+      "evidence": [
+        { "path": ".github/workflows/release.yml", "kind": "ci-workflow" },
+        { "path": "docs/release-policy.md", "kind": "contract" },
+        { "path": "release/compatibility.toml", "kind": "contract" }
+      ],
+      "verification": [
+        {
+          "command": "python .github/scripts/release-preflight.py --require-license",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "The project has no approved root license, which blocks a legitimate public release.",
+        "No signed release, provenance attestation, or consumer installation exercise is recorded."
+      ]
+    },
+    {
+      "id": "engineering.test-tooling",
+      "name": "Hermetic test lanes and diagnostics",
+      "surface": "Test tooling",
+      "status": "experimental",
+      "implementation": "partial",
+      "operational_proof": "automated-only",
+      "owner": "developer-infrastructure",
+      "evidence": [
+        { "path": "scripts/test.ps1", "kind": "source" },
+        { "path": "test/lanes.json", "kind": "contract" },
+        { "path": ".github/workflows/ci.yml", "kind": "ci-workflow" }
+      ],
+      "verification": [
+        {
+          "command": "powershell -NoProfile -File scripts/test.ps1 -Lane check",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "Live-database suites are not fully hermetic or proven stable across supported environments.",
+        "Flake ownership, quarantine rules, and historical timing budgets are not established."
+      ]
+    },
+    {
+      "id": "developer.app-sdk",
+      "name": "Application SDK, scaffold, validation, and packaging",
+      "surface": "SDK and CLI",
+      "status": "experimental",
+      "implementation": "partial",
+      "operational_proof": "none",
+      "owner": "developer-experience",
+      "evidence": [
+        { "path": "frust-kernel/app-sdk/src/lib.rs", "kind": "automated-test" },
+        { "path": "frust-kernel/app-sdk/src/main.rs", "kind": "source" },
+        { "path": "frust-kernel/app-sdk/README.md", "kind": "contract" },
+        { "path": "frust-kernel/wit/plugin.wit", "kind": "contract" }
+      ],
+      "verification": [
+        {
+          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-app-sdk",
+          "automated": true,
+          "result": "unknown"
+        }
+      ],
+      "operations_artifact": null,
+      "known_gaps": [
+        "Generated application compatibility has not been certified across released kernel versions.",
+        "Package signing, publishing, upgrade guidance, and long-term SDK support policy are incomplete."
+      ]
+    }
+  ]
+}
