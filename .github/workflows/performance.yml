@@ -1,0 +1,79 @@
+name: Performance and destructive drills
+
+on:
+  schedule:
+    - cron: "17 2 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: performance-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "2"
+  FRUST_ROOT_AUTH: jwt
+  FRUST_DB_ENDPOINT: http://127.0.0.1:8899
+  FRUST_DB_ROOT_USER: root
+  FRUST_DB_ROOT_PASS: root
+
+jobs:
+  measured-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out recorded source and submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Cache Rust build outputs
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: frust-kernel
+          key: measured-gates
+
+      - name: Verify runtime inputs
+        run: python .github/scripts/release-preflight.py
+
+      - name: Start pinned SurrealDB
+        run: |
+          docker run --detach --name frust-surreal --publish 127.0.0.1:8899:8000 \
+            surrealdb/surrealdb:v3.2.0 start --user root --pass root memory
+          for attempt in {1..60}; do
+            curl --fail --silent http://127.0.0.1:8899/health >/dev/null && break
+            if [ "$attempt" = 60 ]; then docker logs frust-surreal; exit 1; fi
+            sleep 1
+          done
+
+      - name: Run release-mode ignored measurement gates
+        run: |
+          set -o pipefail
+          cargo test --manifest-path frust-kernel/Cargo.toml --release --test fuel_overhead --locked -- --ignored --nocapture --test-threads=1 2>&1 | tee fuel-overhead.log
+          cargo test --manifest-path frust-kernel/Cargo.toml --release --test live_tax_curve --locked -- --ignored --nocapture --test-threads=1 2>&1 | tee live-tax-curve.log
+          cargo test --manifest-path frust-kernel/Cargo.toml --release --test mail_notifications --locked -- --ignored --nocapture --test-threads=1 2>&1 | tee mail-notifications.log
+          cargo test --manifest-path frust-kernel/Cargo.toml --release --test tenant_fairness --locked -- --ignored --nocapture --test-threads=1 2>&1 | tee tenant-fairness.log
+
+      - name: Capture SurrealDB diagnostics
+        if: always()
+        run: docker logs frust-surreal > surrealdb.log 2>&1
+
+      - name: Upload measurement evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: performance-evidence-${{ github.run_id }}
+          path: |
+            fuel-overhead.log
+            live-tax-curve.log
+            mail-notifications.log
+            tenant-fairness.log
+            surrealdb.log
+          if-no-files-found: warn
+          retention-days: 30

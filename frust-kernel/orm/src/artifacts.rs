@@ -11,6 +11,8 @@ use crate::{FieldChangeReport, FieldClass, MigrationReport};
 
 const NONE: &[String] = &[];
 
+type ArtifactEntry<'a> = (i64, &'a str, &'a [String], &'a [String], &'a FieldChangeReport);
+
 /// Write reviewable `.surql` artifacts for every migration in `report` under
 /// `out_dir/<scope>/`. Returns the written paths (ordered by version, then
 /// resource name).
@@ -20,7 +22,7 @@ const NONE: &[String] = &[];
 /// nothing and creates no directory.
 pub fn write_artifacts(report: &MigrationReport, out_dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     // (version, name, statements, destructive, classifications) per migration.
-    let mut entries: Vec<(i64, &str, &[String], &[String], &FieldChangeReport)> = Vec::new();
+    let mut entries: Vec<ArtifactEntry<'_>> = Vec::new();
     for p in &report.planned {
         entries.push((
             p.next_version,

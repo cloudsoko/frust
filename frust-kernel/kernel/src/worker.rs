@@ -1,4 +1,4 @@
-﻿//! Module 5: the job worker (ADR-009 Half 2, verbatim).
+//! Module 5: the job worker (ADR-009 Half 2, verbatim).
 //!
 //! The loop: replay-from-cursor (versionstamp changefeed) -> LIVE tail ->
 //! advance cursor. LIVE is a latency optimization over a changefeed-backed
@@ -17,6 +17,20 @@ use crate::broker::{Broker, Caller, HookChain};
 use crate::contract::{BrokerError, Value, WriteOp};
 use crate::db::Db;
 
+/// A job's current, exclusive execution right.
+///
+/// `token` is the fencing value: every completion, retry, and renewal is
+/// conditional on it. A worker whose lease was reclaimed can still finish its
+/// local effect, but it cannot overwrite the newer owner's queue state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobLease {
+    pub claimed_by: String,
+    pub token: String,
+    /// One-based execution attempt, incremented atomically at claim time.
+    pub attempt: u32,
+    pub expires_at: String,
+}
+
 /// A claimed job, decoded from the queue.
 #[derive(Debug, Clone)]
 pub struct Job {
@@ -27,6 +41,7 @@ pub struct Job {
     /// The originating trace (stamped at enqueue) â€” adopted at run so one
     /// trace spans REST -> enqueue -> claim -> job effect (REQ-6.4.1).
     pub trace: Option<String>,
+    pub lease: JobLease,
 }
 
 /// Outcome of running one job. `Denied` is the criterion-5 hard case:
@@ -48,6 +63,100 @@ const MAX_TENANTS_PER_ROUND: usize = 32;
 /// Jobs fetched per tenant to build the round. Only the head matters â€”
 /// fairness is about who goes next, not about draining anyone.
 const HEAD_PER_TENANT: usize = 10;
+/// A single broker job is one bounded database operation. Five minutes leaves
+/// ample room for normal tail latency while still recovering crashed workers.
+pub const JOB_LEASE_SECONDS: u32 = 300;
+/// Retryable work gets a finite execution budget. The fifth transient failure
+/// is terminal; a worker crash during the fifth attempt is dead-lettered when
+/// its lease expires.
+pub const MAX_JOB_ATTEMPTS: u32 = 5;
+
+fn next_claim_token() -> String {
+    static CLAIM_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = CLAIM_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    format!("{nanos:032x}-{:08x}-{sequence:016x}", std::process::id())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaimSource {
+    Queued,
+    ExpiredLease,
+}
+
+impl ClaimSource {
+    fn predicate(self) -> String {
+        match self {
+            Self::Queued => {
+                format!("status = 'queued' AND (attempts = NONE OR attempts < {MAX_JOB_ATTEMPTS})")
+            }
+            Self::ExpiredLease => format!(
+                "status = 'running' AND lease_expires_at != NONE AND \
+                 lease_expires_at <= time::now() AND attempts < {MAX_JOB_ATTEMPTS}"
+            ),
+        }
+    }
+}
+
+fn eligible_predicate() -> String {
+    format!(
+        "((status = 'queued' AND (attempts = NONE OR attempts < {MAX_JOB_ATTEMPTS})) OR \
+         (status = 'running' AND lease_expires_at != NONE AND \
+          lease_expires_at <= time::now() AND attempts < {MAX_JOB_ATTEMPTS}))"
+    )
+}
+
+fn claim_sql(
+    job_id: &str,
+    worker_id: &str,
+    token: &str,
+    source: ClaimSource,
+) -> Result<String, BrokerError> {
+    let rid = crate::surql::render_value(&Value::RecordId(job_id.to_string()))?;
+    Ok(format!(
+        "UPDATE {rid} SET status = 'running', claimed_by = '{}', claim_token = '{}', \
+         claimed_at = time::now(), lease_expires_at = time::now() + {JOB_LEASE_SECONDS}s, \
+         attempts = IF attempts = NONE {{ 1 }} ELSE {{ attempts + 1 }} \
+         WHERE {};",
+        crate::surql::escape_str(worker_id),
+        crate::surql::escape_str(token),
+        source.predicate()
+    ))
+}
+
+fn fenced_update_sql(job: &Job, set: &str) -> Result<String, BrokerError> {
+    let rid = crate::surql::render_value(&Value::RecordId(job.id.clone()))?;
+    Ok(format!(
+        "UPDATE {rid} SET {set} WHERE status = 'running' AND claimed_by = '{}' \
+         AND claim_token = '{}';",
+        crate::surql::escape_str(&job.lease.claimed_by),
+        crate::surql::escape_str(&job.lease.token)
+    ))
+}
+
+fn retry_update(attempt: u32, detail: &str) -> (bool, String) {
+    if attempt >= MAX_JOB_ATTEMPTS {
+        return (
+            true,
+            format!(
+                "status = 'dead', terminal_reason = 'attempts_exhausted', last_error = '{}', \
+                 finished_at = time::now(), claimed_by = NONE, claim_token = NONE, \
+                 lease_expires_at = NONE",
+                crate::surql::escape_str(detail)
+            ),
+        );
+    }
+    (
+        false,
+        format!(
+            "status = 'queued', claimed_by = NONE, claim_token = NONE, claimed_at = NONE, \
+             lease_expires_at = NONE, last_error = '{}'",
+            crate::surql::escape_str(detail)
+        ),
+    )
+}
 
 pub struct Worker<'a> {
     pub db: &'a Db,
@@ -59,37 +168,120 @@ pub struct Worker<'a> {
 
 impl<'a> Worker<'a> {
     pub fn new(db: &'a Db, broker: &'a Broker, worker_id: impl Into<String>) -> Self {
-        Self { db, broker: Some(broker), worker_id: worker_id.into() }
+        Self {
+            db,
+            broker: Some(broker),
+            worker_id: worker_id.into(),
+        }
     }
 
     /// A worker that can claim/rescan but not run effects â€” for isolating
     /// the serialization point under contention.
     pub fn claim_only(db: &'a Db, worker_id: impl Into<String>) -> Self {
-        Self { db, broker: None, worker_id: worker_id.into() }
+        Self {
+            db,
+            broker: None,
+            worker_id: worker_id.into(),
+        }
     }
 
-    /// The atomic conditional claim â€” the ONLY serialization point (ADR-009
-    /// ruling #1). `UPDATE ... WHERE status='queued'` is atomic in SurrealDB;
-    /// exactly one contender flips the row, the losers match zero rows and
-    /// move on. Returns the claimed job, or None if another worker won it.
+    /// The atomic conditional claim - the ONLY serialization point (ADR-009
+    /// ruling #1). A queued job is preferred; if it is not queued, the same id
+    /// may be reclaimed only when its lease has expired. Both paths are
+    /// conditional `UPDATE`s, so exactly one contender receives a row.
     pub fn try_claim(&self, job_id: &str) -> Result<Option<Job>, BrokerError> {
-        let rid = crate::surql::render_value(&Value::RecordId(job_id.to_string()))?;
-        let q = format!(
-            "UPDATE {rid} SET status = 'running', claimed_by = '{}', claimed_at = time::now() \
-             WHERE status = 'queued';",
-            crate::surql::escape_str(&self.worker_id)
-        );
-        let out = self.db.sql_root(&q)?;
+        if let Some(job) = self.try_claim_from(job_id, ClaimSource::Queued)? {
+            return Ok(Some(job));
+        }
+        self.try_claim_from(job_id, ClaimSource::ExpiredLease)
+    }
+
+    fn try_claim_from(
+        &self,
+        job_id: &str,
+        source: ClaimSource,
+    ) -> Result<Option<Job>, BrokerError> {
+        let token = next_claim_token();
+        let out = self
+            .db
+            .sql_root(&claim_sql(job_id, &self.worker_id, &token, source)?)?;
         let rows = out.as_array().cloned().unwrap_or_default();
-        // WHERE matched nothing (already claimed) -> empty result -> not ours
         let won = !rows.is_empty();
         crate::telemetry::inc(
             "frust_job_claim_attempts_total",
-            &[("tenant", self.db.tenant_id()), ("won", if won { "true" } else { "false" })],
+            &[
+                ("tenant", self.db.tenant_id()),
+                (
+                    "source",
+                    if source == ClaimSource::Queued {
+                        "queued"
+                    } else {
+                        "expired"
+                    },
+                ),
+                ("won", if won { "true" } else { "false" }),
+            ],
             1,
         );
-        let Some(row) = rows.into_iter().next() else { return Ok(None) };
+        if won && source == ClaimSource::ExpiredLease {
+            crate::telemetry::inc(
+                "frust_job_stale_claims_recovered_total",
+                &[("tenant", self.db.tenant_id())],
+                1,
+            );
+        }
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(None);
+        };
         Ok(Some(decode_job(&row)?))
+    }
+
+    /// Extend a claim before a handler enters a known long-running section.
+    /// The update is fenced; a superseded worker cannot revive its old lease.
+    pub fn renew_lease(&self, job: &Job) -> Result<bool, BrokerError> {
+        let q = fenced_update_sql(
+            job,
+            &format!("lease_expires_at = time::now() + {JOB_LEASE_SECONDS}s"),
+        )?;
+        let renewed = self
+            .db
+            .sql_root(&q)?
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty());
+        if !renewed {
+            self.note_fence_rejection("renew");
+        }
+        Ok(renewed)
+    }
+
+    /// Terminalize claims that consumed their last attempt and then crashed.
+    /// The predicate is fail-safe: a renewed or reclaimed lease no longer
+    /// matches, and a queued record is dead-lettered only at the same budget.
+    fn reap_exhausted(&self) -> Result<(), BrokerError> {
+        let q = format!(
+            "UPDATE job SET status = 'dead', terminal_reason = 'attempts_exhausted', \
+             last_error = 'claim lease expired after final attempt', finished_at = time::now(), \
+             claimed_by = NONE, claim_token = NONE, lease_expires_at = NONE \
+             WHERE attempts >= {MAX_JOB_ATTEMPTS} AND \
+             (status = 'queued' OR (status = 'running' AND lease_expires_at != NONE AND \
+              lease_expires_at <= time::now()));"
+        );
+        let dead = self
+            .db
+            .sql_root(&q)?
+            .as_array()
+            .map_or(0, std::vec::Vec::len);
+        if dead > 0 {
+            crate::telemetry::inc(
+                "frust_job_dead_letter_total",
+                &[
+                    ("tenant", self.db.tenant_id()),
+                    ("reason", "attempts_exhausted"),
+                ],
+                dead as u64,
+            );
+        }
+        Ok(())
     }
 
     /// Claim the next queued job by scanning the queue (cold-start / rescan
@@ -105,11 +297,13 @@ impl<'a> Worker<'a> {
     /// FIFO with extra steps. Asking per tenant costs 1 + T queries and is
     /// correct at any backlog size.
     pub fn claim_next(&self) -> Result<Option<Job>, BrokerError> {
+        self.reap_exhausted()?;
+        let eligible = eligible_predicate();
         // tenants with queued work (v3.2.0: a GROUP BY idiom must appear in
         // the projection â€” the sibling of the ORDER BY rule)
-        let tenants = self
-            .db
-            .sql_root("SELECT tenant FROM job WHERE status = 'queued' GROUP BY tenant;")?;
+        let tenants = self.db.sql_root(&format!(
+            "SELECT tenant FROM job WHERE {eligible} GROUP BY tenant;"
+        ))?;
         let tenants: Vec<String> = tenants
             .as_array()
             .map(|a| {
@@ -124,24 +318,33 @@ impl<'a> Worker<'a> {
             })
             .unwrap_or_default();
 
-        let mut queued: Vec<(String, String)> = Vec::new();
+        let mut eligible_jobs: Vec<(String, String)> = Vec::new();
+        let mut sources = std::collections::HashMap::new();
         for tenant in tenants.iter().take(MAX_TENANTS_PER_ROUND) {
             let esc = crate::surql::escape_str(tenant);
             let rows = self.db.sql_root(&format!(
-                "SELECT id, enqueued_at FROM job WHERE status = 'queued' AND tenant = '{esc}' \
+                "SELECT id, enqueued_at, status FROM job WHERE {eligible} AND tenant = '{esc}' \
                  ORDER BY enqueued_at LIMIT {HEAD_PER_TENANT};"
             ))?;
             if let Some(arr) = rows.as_array() {
                 for r in arr {
                     if let Some(id) = r.get("id").and_then(|i| i.as_str()) {
-                        queued.push((id.to_string(), tenant.clone()));
+                        let source = if r.get("status").and_then(|s| s.as_str()) == Some("running")
+                        {
+                            ClaimSource::ExpiredLease
+                        } else {
+                            ClaimSource::Queued
+                        };
+                        eligible_jobs.push((id.to_string(), tenant.clone()));
+                        sources.insert(id.to_string(), source);
                     }
                 }
             }
         }
 
-        for id in crate::fairness::fair_round(&queued) {
-            if let Some(job) = self.try_claim(&id)? {
+        for id in crate::fairness::fair_round(&eligible_jobs) {
+            let source = sources.get(&id).copied().unwrap_or(ClaimSource::Queued);
+            if let Some(job) = self.try_claim_from(&id, source)? {
                 return Ok(Some(job));
             }
         }
@@ -193,8 +396,11 @@ impl<'a> Worker<'a> {
         let caller = match resolve.caller_for(&job.requested_by) {
             Some(c) => c,
             None => {
-                self.finish(&job.id, "denied");
-                return JobOutcome::Denied(format!("principal '{}' no longer exists", job.requested_by));
+                self.finish(job, "denied");
+                return JobOutcome::Denied(format!(
+                    "principal '{}' no longer exists",
+                    job.requested_by
+                ));
             }
         };
 
@@ -208,15 +414,19 @@ impl<'a> Worker<'a> {
         };
 
         match &outcome {
-            JobOutcome::Done => self.finish(&job.id, "done"),
-            JobOutcome::Denied(msg) => self.finish_with(&job.id, "denied", msg),
-            JobOutcome::Retry(msg) => self.requeue(&job.id, msg),
+            JobOutcome::Done => self.finish(job, "done"),
+            JobOutcome::Denied(msg) => self.finish_with(job, "denied", msg),
+            JobOutcome::Retry(msg) => self.requeue(job, msg),
         }
         outcome
     }
 
     fn run_create_doc(&self, job: &Job, caller: &Caller) -> JobOutcome {
-        let doctype = job.payload.get("doctype").and_then(|v| v.as_str()).unwrap_or("");
+        let doctype = job
+            .payload
+            .get("doctype")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let fields = job.payload.get("doc").and_then(|v| v.as_object());
         let Some(fields) = fields else {
             return JobOutcome::Denied("payload.doc missing".into());
@@ -243,27 +453,77 @@ impl<'a> Worker<'a> {
         }
     }
 
-    fn finish(&self, job_id: &str, status: &str) {
-        self.finish_with(job_id, status, "");
+    fn finish(&self, job: &Job, status: &str) {
+        self.finish_with(job, status, "");
     }
 
-    fn finish_with(&self, job_id: &str, status: &str, detail: &str) {
-        if let Ok(rid) = crate::surql::render_value(&Value::RecordId(job_id.to_string())) {
-            let _ = self.db.sql_root(&format!(
-                "UPDATE {rid} SET status = '{}', detail = '{}', finished_at = time::now();",
-                crate::surql::escape_str(status),
-                crate::surql::escape_str(detail)
-            ));
+    fn finish_with(&self, job: &Job, status: &str, detail: &str) {
+        let set = format!(
+            "status = '{}', detail = '{}', terminal_reason = '{}', \
+             finished_at = time::now(), claimed_by = NONE, claim_token = NONE, \
+             lease_expires_at = NONE",
+            crate::surql::escape_str(status),
+            crate::surql::escape_str(detail),
+            crate::surql::escape_str(status)
+        );
+        self.apply_fenced(job, "finish", &set);
+    }
+
+    fn requeue(&self, job: &Job, detail: &str) {
+        let (dead, set) = retry_update(job.lease.attempt, detail);
+        if dead {
+            if self.apply_fenced(job, "dead_letter", &set) {
+                crate::telemetry::inc(
+                    "frust_job_dead_letter_total",
+                    &[
+                        ("tenant", self.db.tenant_id()),
+                        ("reason", "attempts_exhausted"),
+                    ],
+                    1,
+                );
+            }
+            return;
+        }
+
+        if self.apply_fenced(job, "requeue", &set) {
+            crate::telemetry::inc(
+                "frust_job_retries_total",
+                &[("tenant", self.db.tenant_id())],
+                1,
+            );
         }
     }
 
-    fn requeue(&self, job_id: &str, detail: &str) {
-        if let Ok(rid) = crate::surql::render_value(&Value::RecordId(job_id.to_string())) {
-            let _ = self.db.sql_root(&format!(
-                "UPDATE {rid} SET status = 'queued', claimed_by = NONE, last_error = '{}';",
-                crate::surql::escape_str(detail)
-            ));
+    fn apply_fenced(&self, job: &Job, action: &str, set: &str) -> bool {
+        let result = fenced_update_sql(job, set).and_then(|q| self.db.sql_root(&q));
+        let applied = result
+            .as_ref()
+            .ok()
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|rows| !rows.is_empty());
+        if !applied {
+            self.note_fence_rejection(action);
+            if let Err(error) = result {
+                crate::telemetry::emit(
+                    crate::telemetry::Level::Error,
+                    "job_state_transition_failed",
+                    &[
+                        ("job", serde_json::json!(job.id)),
+                        ("action", serde_json::json!(action)),
+                        ("error", serde_json::json!(error.to_string())),
+                    ],
+                );
+            }
         }
+        applied
+    }
+
+    fn note_fence_rejection(&self, action: &str) {
+        crate::telemetry::inc(
+            "frust_job_fence_rejections_total",
+            &[("tenant", self.db.tenant_id()), ("action", action)],
+            1,
+        );
     }
 }
 
@@ -297,12 +557,20 @@ impl AuthorityResolver for AppUserResolver<'_> {
             .ok()?;
         let rec = v.as_array()?.first()?;
         // disabled/suspended users are revoked
-        if rec.get("status").and_then(|s| s.as_str()).is_some_and(|s| s != "active") {
+        if rec
+            .get("status")
+            .and_then(|s| s.as_str())
+            .is_some_and(|s| s != "active")
+        {
             return None;
         }
         let role = rec.get("role").and_then(|r| r.as_str())?.to_string();
         // the run credential is derived, not stored (see note above)
-        Some(Caller { user: requested_by.to_string(), pass: run_pass(requested_by), role })
+        Some(Caller {
+            user: requested_by.to_string(),
+            pass: run_pass(requested_by),
+            role,
+        })
     }
 }
 
@@ -383,7 +651,9 @@ impl MailWorker<'_> {
         );
         let mut sent = 0;
         for id in ids {
-            let Some(row) = self.try_claim_mail(&id)? else { continue };
+            let Some(row) = self.try_claim_mail(&id)? else {
+                continue;
+            };
             if self.send_one(&row) {
                 sent += 1;
             }
@@ -421,19 +691,41 @@ impl MailWorker<'_> {
              WHERE status = 'queued';",
             crate::surql::escape_str(&self.worker_id)
         ))?;
-        let Some(row) = out.as_array().and_then(|a| a.first()) else { return Ok(None) };
+        let Some(row) = out.as_array().and_then(|a| a.first()) else {
+            return Ok(None);
+        };
         Ok(Some(MailRow {
             id: id.to_string(),
-            notification: row.get("notification").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            notification: row
+                .get("notification")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
             to: row
                 .get("to")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|v| v.as_str()).map(str::to_string).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(str::to_string)
+                        .collect()
+                })
                 .unwrap_or_default(),
-            subject: row.get("subject").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-            body: row.get("body").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            subject: row
+                .get("subject")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            body: row
+                .get("body")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
             attempts: row.get("attempts").and_then(|v| v.as_i64()).unwrap_or(0),
-            trace: row.get("trace").and_then(|v| v.as_str()).map(str::to_string),
+            trace: row
+                .get("trace")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
         }))
     }
 
@@ -551,12 +843,53 @@ impl MailWorker<'_> {
 }
 
 fn decode_job(row: &serde_json::Value) -> Result<Job, BrokerError> {
+    let required_string = |field: &str| {
+        row.get(field)
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| BrokerError::Db {
+                detail: format!("claimed job is missing lease field '{field}'"),
+            })
+    };
+    let attempt = row
+        .get("attempts")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|n| u32::try_from(n).ok())
+        .filter(|n| *n > 0)
+        .ok_or_else(|| BrokerError::Db {
+            detail: "claimed job has invalid attempt count".into(),
+        })?;
     Ok(Job {
-        id: row.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-        kind: row.get("kind").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-        requested_by: row.get("requested_by").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-        payload: row.get("payload").cloned().unwrap_or(serde_json::Value::Null),
-        trace: row.get("trace").and_then(|v| v.as_str()).map(str::to_string),
+        id: row
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        kind: row
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        requested_by: row
+            .get("requested_by")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        payload: row
+            .get("payload")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        trace: row
+            .get("trace")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        lease: JobLease {
+            claimed_by: required_string("claimed_by")?,
+            token: required_string("claim_token")?,
+            attempt,
+            expires_at: required_string("lease_expires_at")?,
+        },
     })
 }
 
@@ -564,14 +897,121 @@ fn json_to_value(v: &serde_json::Value) -> Value {
     match v {
         serde_json::Value::Null => Value::Null,
         serde_json::Value::Bool(b) => Value::Bool(*b),
-        serde_json::Value::Number(n) => {
-            n.as_i64().map(Value::Int).unwrap_or_else(|| Value::Float(n.as_f64().unwrap_or(0.0)))
-        }
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(Value::Int)
+            .unwrap_or_else(|| Value::Float(n.as_f64().unwrap_or(0.0))),
         serde_json::Value::String(s) => Value::Text(s.clone()),
         serde_json::Value::Array(a) => Value::List(a.iter().map(json_to_value).collect()),
-        serde_json::Value::Object(o) => {
-            Value::Object(o.iter().map(|(k, v)| (k.clone(), json_to_value(v))).collect())
-        }
+        serde_json::Value::Object(o) => Value::Object(
+            o.iter()
+                .map(|(k, v)| (k.clone(), json_to_value(v)))
+                .collect(),
+        ),
     }
 }
 
+#[cfg(test)]
+mod lease_tests {
+    use super::*;
+
+    fn leased_job(attempt: u32) -> Job {
+        Job {
+            id: "job:alpha".into(),
+            kind: "create_doc".into(),
+            requested_by: "user".into(),
+            payload: serde_json::Value::Null,
+            trace: None,
+            lease: JobLease {
+                claimed_by: "worker-a".into(),
+                token: "token-a".into(),
+                attempt,
+                expires_at: "2026-08-01T00:05:00Z".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn queued_and_expired_claims_are_atomic_and_attempt_bounded() {
+        let queued = claim_sql("job:alpha", "worker-a", "token-a", ClaimSource::Queued).unwrap();
+        assert!(queued.starts_with("UPDATE type::record('job:alpha')"));
+        assert!(queued.contains(" SET status = 'running'"));
+        assert!(queued.contains("claim_token = 'token-a'"));
+        assert!(queued.contains("lease_expires_at = time::now() + 300s"));
+        assert!(queued.contains("attempts = IF attempts = NONE { 1 } ELSE { attempts + 1 }"));
+        assert!(queued.contains("status = 'queued' AND (attempts = NONE OR attempts < 5)"));
+
+        let expired = claim_sql(
+            "job:alpha",
+            "worker-a",
+            "token-b",
+            ClaimSource::ExpiredLease,
+        )
+        .unwrap();
+        assert!(expired.contains("status = 'running'"));
+        assert!(expired.contains("lease_expires_at <= time::now()"));
+        assert!(expired.contains("attempts < 5"));
+    }
+
+    #[test]
+    fn every_state_transition_is_fenced_by_owner_and_token() {
+        let sql = fenced_update_sql(&leased_job(1), "status = 'done'").unwrap();
+        assert!(sql.contains("WHERE status = 'running'"));
+        assert!(sql.contains("claimed_by = 'worker-a'"));
+        assert!(sql.contains("claim_token = 'token-a'"));
+        assert!(!sql.contains("lease_expires_at > time::now()"));
+    }
+
+    #[test]
+    fn fifth_retry_dead_letters_instead_of_requeueing() {
+        let (dead, fifth) = retry_update(MAX_JOB_ATTEMPTS, "transport failed");
+        assert!(dead);
+        assert!(fifth.contains("status = 'dead'"));
+        assert!(fifth.contains("terminal_reason = 'attempts_exhausted'"));
+
+        let (dead, fourth) = retry_update(MAX_JOB_ATTEMPTS - 1, "transport failed");
+        assert!(!dead);
+        assert!(fourth.contains("status = 'queued'"));
+        assert!(fourth.contains("claim_token = NONE"));
+    }
+
+    #[test]
+    fn eligibility_keeps_expired_leases_in_the_fair_tenant_round() {
+        let predicate = eligible_predicate();
+        assert!(predicate.contains("status = 'queued'"));
+        assert!(predicate.contains("status = 'running'"));
+        assert!(predicate.contains("lease_expires_at <= time::now()"));
+        assert_eq!(predicate.matches("attempts < 5").count(), 2);
+    }
+
+    #[test]
+    fn claimed_rows_require_complete_typed_lease_state() {
+        let row = serde_json::json!({
+            "id": "job:alpha",
+            "kind": "create_doc",
+            "requested_by": "user",
+            "payload": {},
+            "claimed_by": "worker-a",
+            "claim_token": "token-a",
+            "attempts": 2,
+            "lease_expires_at": "2026-08-01T00:05:00Z"
+        });
+        assert_eq!(decode_job(&row).unwrap().lease.attempt, 2);
+
+        let mut incomplete = row;
+        incomplete.as_object_mut().unwrap().remove("claim_token");
+        assert!(decode_job(&incomplete)
+            .unwrap_err()
+            .to_string()
+            .contains("claim_token"));
+    }
+
+    #[test]
+    fn sql_builders_escape_worker_tokens_and_error_details() {
+        let claim = claim_sql("job:alpha", "worker'one", "token'two", ClaimSource::Queued).unwrap();
+        assert!(claim.contains("claimed_by = 'worker\\'one'"));
+        assert!(claim.contains("claim_token = 'token\\'two'"));
+        let (_, retry) = retry_update(1, "relay's down");
+        assert!(retry.contains("last_error = 'relay\\'s down'"));
+    }
+}

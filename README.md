@@ -24,36 +24,37 @@ Every claim in the code traces to a linked ADR / Work Order / build log in
 numbers, and `05 Work Orders/` holds the order each piece of work was built
 against, including what it refused to do.
 
-## ⚠️ A fresh clone cannot run the kernel yet
+## Bootstrap
 
-**`wasm-spike/` is deliberately outside this repo.** The kernel loads
-`script_engine.wasm` (the Tier-2 Boa script host) and `plugin_demo.wasm` from
-it at runtime — the `FRUST_ARTIFACTS` default points at
-`../../wasm-spike/artifacts`. Without those artifacts the kernel refuses to
-boot with `hooks_unavailable`.
+The repository pins Rust 1.96.0, `wasm32-wasip2`, JCO 1.25.2, and pnpm 11.1.2.
+Install Git, rustup, Node/Corepack, and PowerShell, then run from the repository
+root:
 
-Supply them by either building the spike or pointing at an existing copy:
-
-```bash
-export FRUST_ARTIFACTS=/path/to/wasm-spike/artifacts
+```powershell
+pwsh ./scripts/frust.ps1 bootstrap
+pwsh ./scripts/frust.ps1 doctor
 ```
 
-Also outside the repo, each for a stated reason (see `.gitignore`): the
-benchmark harness, the dev SurrealDB deployment and its live data, and the 1 M-row
-scale fixture.
+On Windows PowerShell, use `powershell` in place of `pwsh`. Bootstrap initializes
+the recorded submodules, installs the pinned Rust target, builds both runtime
+guests, transpiles the same script engine for the browser, verifies every
+artifact checksum, and builds the kernel and Desk with locked dependencies.
+`doctor` is read-only and reports exact remediation for missing tools, stale
+artifacts, uninitialized submodules, and an unavailable store.
 
-**One deliberate asymmetry:** the Desk's browser-side engine artifact
-(`frust-desk/assets/engine/script_engine.core.wasm`, 4.1 MB) *is* committed,
-while the kernel's are not. Both come from the same source — the script engine is
-one source with two builds, a wasip2 component for the kernel and a jco-transpiled
-core for the browser — but the browser build is a **served asset** living inside
-the Desk it belongs to, so omitting it would break the Desk from a clone. The
-kernel's artifacts live in the excluded tree instead. Rebuild both together or
-they diverge silently.
+The guest sources now live in `wasm-spike/`. Generated kernel artifacts remain
+ignored at `wasm-spike/artifacts/`; the Desk's browser core is committed as a
+served asset. `wasm-spike/artifacts.lock.json` binds both outputs to one source
+build so they cannot silently diverge. The old-world components are tracked
+compatibility fixtures, not current runtime artifacts.
+
+The benchmark harness, development database and its live data, and the 1 M-row
+scale fixture remain machine-local for the reasons documented in `.gitignore`.
 
 ## Running it
 
-Three processes:
+Three processes are required. Use SurrealDB 3.2.0; the kernel's stored queries
+and authentication behavior are tested against that version.
 
 ```bash
 # 1. the store
@@ -64,6 +65,14 @@ cd frust-kernel && cargo run --release --bin frust -- serve
 
 # 3. the Desk    (:3000)
 cd frust-desk && cargo run --release
+```
+
+Or run the development store in Docker:
+
+```bash
+docker run --rm --name frust-surreal -p 127.0.0.1:8899:8000 \
+  -v frust-surreal-data:/data surrealdb/surrealdb:v3.2.0 \
+  start --user root --pass root rocksdb:/data/frust.db
 ```
 
 Notable environment switches, all fail-closed on an unrecognised value:

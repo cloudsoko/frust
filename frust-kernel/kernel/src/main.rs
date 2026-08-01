@@ -26,10 +26,37 @@ fn refuse(evt: &str, detail: String) -> ! {
     std::process::exit(1);
 }
 
+fn report_recovery(report: String) {
+    telemetry::emit(
+        telemetry::Level::Info,
+        "recovery_complete",
+        &[("report", serde_json::json!(report))],
+    );
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    let recovery = match frust_kernel::recovery::parse(&args[1..]) {
+        Ok(command) => command,
+        Err(e) => refuse("recovery_refused", e.to_string()),
+    };
     let serve = args.iter().any(|a| a == "serve");
     let accept = args.iter().any(|a| a == "--accept-meta-migrations");
+
+    // Integrity verification is deliberately offline: it needs neither root
+    // credentials nor a topology, and remains usable during a DB outage.
+    if matches!(
+        &recovery,
+        Some(frust_kernel::recovery::RecoveryCommand::Verify { .. })
+    ) {
+        match frust_kernel::recovery::run(recovery.expect("matched verify"), None) {
+            Ok(report) => {
+                report_recovery(report);
+                return;
+            }
+            Err(e) => refuse("recovery_refused", e.to_string()),
+        }
+    }
 
     // The topology is chosen HERE, once, from validated config — and a config
     // this binary cannot honour refuses the boot rather than quietly serving a
@@ -41,7 +68,13 @@ fn main() {
     // than it names is the silent misbehaviour this whole seam exists against.
     let roster = std::env::var("FRUST_TENANTS")
         .or_else(|_| std::env::var("FRUST_TENANT"))
-        .unwrap_or_else(|_| frust_kernel::tenancy::DEFAULT_TENANT.to_string());
+        .unwrap_or_else(|_| {
+            recovery
+                .as_ref()
+                .and_then(frust_kernel::recovery::RecoveryCommand::tenant)
+                .unwrap_or(frust_kernel::tenancy::DEFAULT_TENANT)
+                .to_string()
+        });
     let slugs: Vec<&str> = roster.split(',').map(str::trim).collect();
     if slugs.iter().any(|s| s.is_empty()) {
         refuse("tenancy_refused", format!("FRUST_TENANTS has an empty entry: {roster:?}"));
@@ -58,6 +91,19 @@ fn main() {
     // deterministic order, so logs and the sole-tenant case read the same way
     // on every boot
     targets.sort_by(|a, b| a.tenant_id().as_str().cmp(b.tenant_id().as_str()));
+
+    // Recovery uses the same validated registry and strategy as serving, but
+    // never boots hooks/workers or opens the REST listener. Restore has its
+    // own post-import keyguard and cannot fall through to ordinary boot.
+    if let Some(command) = recovery {
+        match frust_kernel::recovery::run(command, Some(&tenancy)) {
+            Ok(report) => {
+                report_recovery(report);
+                return;
+            }
+            Err(e) => refuse("recovery_refused", e.to_string()),
+        }
+    }
 
     // ── ONE engine for the whole process (WO-040 criterion 2) ──
     //

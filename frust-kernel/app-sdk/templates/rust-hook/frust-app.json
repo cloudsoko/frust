@@ -1,0 +1,26 @@
+{
+  "manifest_version": 1,
+  "name": "{{app_name}}",
+  "version": "0.1.0",
+  "label": "{{app_label}}",
+  "doctypes": [
+    {
+      "name": "{{app_name}}_item",
+      "app": "{{app_name}}",
+      "submittable": false,
+      "fields": [
+        {
+          "fieldname": "title",
+          "fieldtype": "Data",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "client_scripts": [],
+  "server_scripts": [],
+  "routes": [],
+  "components": [],
+  "workflows": [],
+  "extends": []
+}

@@ -1,0 +1,5 @@
+node_modules/
+scratch/frust.exe
+scratch/*.log
+scratch/history.txt
+scratch/mail-outbox/

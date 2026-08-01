@@ -75,6 +75,9 @@
 //! table keyed by a stable hash of the tenant-scoped resource schemas. A crash
 //! mid-fan-out resumes cleanly: re-running with the same schemas computes the
 //! same `run_id`, skips already-`done` tenants, and continues.
+//! [`ResourceMigrator::migrate_fleet_rollout`] adds an explicit canary stage and
+//! refuses fleet-wide promotion until that deterministic cohort has durable
+//! checkpoints for the exact target resource set.
 //!
 //! [`detect_drift_tenant`]: ResourceMigrator::detect_drift_tenant
 //!
@@ -104,7 +107,9 @@ pub use field::{
     classify_field_change, FieldChange, FieldChangeClassification, FieldClass, FieldSnapshot,
     SurrealType,
 };
-pub use fleet::{FleetFailure, FleetReport};
+pub use fleet::{
+    FleetFailure, FleetReport, FleetRolloutOptions, FleetRolloutPlan, FleetStage,
+};
 pub use schema::{DroppedObject, ObjectKind, SchemaDiff, SchemaObject, SchemaSnapshot};
 
 pub mod resource;
@@ -980,7 +985,7 @@ fn load_full_history(
     // Query is globally version-DESC, so per-name lists already descend; sort
     // defensively in case the storage layer ever reorders.
     for versions in map.values_mut() {
-        versions.sort_by(|a, b| b.0.cmp(&a.0));
+        versions.sort_by_key(|item| std::cmp::Reverse(item.0));
     }
     Ok(map)
 }
@@ -1085,7 +1090,7 @@ fn toposort_keys<'a>(nodes: &[(&'a str, Vec<&'a str>)]) -> Vec<&'a str> {
     let mut dependents: HashMap<&str, Vec<&str>> = HashMap::new();
 
     for (n, deps) in nodes {
-        let n: &str = *n;
+        let n: &str = n;
         let real: Vec<&str> = deps
             .iter()
             .copied()

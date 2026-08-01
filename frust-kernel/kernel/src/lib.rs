@@ -9,11 +9,13 @@ pub mod db;
 pub mod decimal;
 pub mod fairness;
 pub mod hooks;
+mod http_contract;
 pub mod keyguard;
 pub mod mail;
 pub mod meta;
 pub mod provision;
 pub mod realtime;
+pub mod recovery;
 pub mod rest;
 pub mod router;
 pub mod routes;
@@ -25,6 +27,5 @@ pub mod tenant_gen;
 pub mod worker;
 pub mod workflow;
 pub mod wsrpc;
-
 
 

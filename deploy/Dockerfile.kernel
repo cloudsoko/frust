@@ -1,0 +1,44 @@
+# syntax=docker/dockerfile:1.7
+
+ARG RUST_VERSION=1.96.0
+FROM rust:${RUST_VERSION}-bookworm AS build
+
+WORKDIR /src/frust-kernel
+COPY . .
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/src/frust-kernel/target,sharing=locked \
+    cargo build --locked --release --package frust-kernel && \
+    install -Dm0755 target/release/frust /out/frust
+
+FROM debian:bookworm-slim AS runtime
+
+ARG FRUST_VERSION=0.1.0
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.title="Frust kernel" \
+      org.opencontainers.image.description="Frust metadata kernel and REST service" \
+      org.opencontainers.image.version="${FRUST_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="https://github.com/AmeinEskinder/frust"
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --gid 10001 frust && \
+    useradd --uid 10001 --gid frust --home-dir /var/lib/frust --create-home --shell /usr/sbin/nologin frust && \
+    install -d -o frust -g frust /opt/frust/artifacts /var/lib/frust/mail-outbox
+
+COPY --from=build /out/frust /usr/local/bin/frust
+COPY --from=artifacts --chown=frust:frust . /opt/frust/artifacts/
+COPY --from=deploy --chmod=0755 bin/kernel-entrypoint.sh /usr/local/bin/kernel-entrypoint
+
+USER 10001:10001
+WORKDIR /var/lib/frust
+ENV FRUST_ADDR=0.0.0.0:8790 \
+    FRUST_ARTIFACTS=/opt/frust/artifacts \
+    FRUST_MAIL=file \
+    FRUST_MAIL_DIR=/var/lib/frust/mail-outbox
+EXPOSE 8790
+
+ENTRYPOINT ["kernel-entrypoint"]
+CMD ["serve"]

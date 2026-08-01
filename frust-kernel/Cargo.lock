@@ -642,6 +642,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "frust-app-sdk"
+version = "0.1.0"
+dependencies = [
+ "frust-kernel",
+ "serde",
+ "serde_json",
+ "sha2",
+ "wasmtime",
+]
+
+[[package]]
 name = "frust-kernel"
 version = "0.1.0"
 dependencies = [

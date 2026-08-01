@@ -7,9 +7,9 @@ use std::sync::Arc;
 use frust_kernel::broker::{Broker, Caller};
 use frust_kernel::contract::Value;
 use frust_kernel::db::scoped_db;
-use frust_kernel::tenancy::{single_tenant, ResolvedTenant};
 use frust_kernel::hooks::WasmHooks;
-use frust_kernel::worker::{AuthorityResolver, JobOutcome, Worker};
+use frust_kernel::tenancy::{single_tenant, ResolvedTenant};
+use frust_kernel::worker::{AuthorityResolver, Job, JobLease, JobOutcome, Worker};
 
 fn artifacts() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../wasm-spike/artifacts")
@@ -19,9 +19,13 @@ fn artifacts() -> &'static str {
 fn setup(name: &str) -> ResolvedTenant {
     let cfg = single_tenant(&name.to_string()).expect("tenancy");
     let db = scoped_db(&cfg);
-    db.sql_root_ns(&format!("REMOVE DATABASE IF EXISTS {name}; DEFINE DATABASE {name};")).unwrap();
+    db.sql_root_ns(&format!(
+        "REMOVE DATABASE IF EXISTS {name}; DEFINE DATABASE {name};"
+    ))
+    .unwrap();
     // queue table with a short changefeed for the retention test
-    db.sql_root("DEFINE TABLE job SCHEMALESS CHANGEFEED 1h;").unwrap();
+    db.sql_root("DEFINE TABLE job SCHEMALESS CHANGEFEED 1h;")
+        .unwrap();
     // record auth so job effects run under a real (re-derived) principal,
     // exactly as production would — not root
     db.sql_root(
@@ -48,7 +52,10 @@ fn setup(name: &str) -> ResolvedTenant {
 }
 
 fn broker(cfg: &ResolvedTenant) -> Broker {
-    Broker::new(scoped_db(&cfg), Box::new(WasmHooks::load(artifacts()).unwrap()))
+    Broker::new(
+        scoped_db(&cfg),
+        Box::new(WasmHooks::load(artifacts()).unwrap()),
+    )
 }
 
 /// Resolver that maps any requested_by to a root-ish caller, EXCEPT a
@@ -62,7 +69,11 @@ impl AuthorityResolver for TestResolver {
             return None;
         }
         // re-derive a live record-user session (the seeded 'worker')
-        Some(Caller { user: "worker".into(), pass: "pw".into(), role: "manager".into() })
+        Some(Caller {
+            user: "worker".into(),
+            pass: "pw".into(),
+            role: "manager".into(),
+        })
     }
 }
 
@@ -82,7 +93,12 @@ fn criterion6_exactly_one_winner_per_job_under_burst() {
                  requested_by = 'u', enqueued_at = time::now(), n = {i};"
             ))
             .unwrap();
-        ids.push(out.as_array().unwrap()[0]["id"].as_str().unwrap().to_string());
+        ids.push(
+            out.as_array().unwrap()[0]["id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
     }
 
     const WORKERS: usize = 6;
@@ -118,7 +134,10 @@ fn criterion6_exactly_one_winner_per_job_under_burst() {
          conflict-retries={total_retries} (attempts-per-claim ~ {:.2})",
         1.0 + total_retries as f64 / 200.0
     );
-    assert_eq!(double, 0, "NO job may be claimed twice — the serialization point holds");
+    assert_eq!(
+        double, 0,
+        "NO job may be claimed twice — the serialization point holds"
+    );
     assert_eq!(claimed, 200, "every job claimed exactly once");
 }
 
@@ -132,7 +151,11 @@ fn criterion7_coldstart_rescan_drains_queue() {
     let b = broker(&cfg);
     let db = scoped_db(&cfg);
     // enqueue 10 create_doc jobs
-    let caller = Caller { user: "root".into(), pass: "root".into(), role: "manager".into() };
+    let caller = Caller {
+        user: "root".into(),
+        pass: "root".into(),
+        role: "manager".into(),
+    };
     for i in 0..10 {
         b.enqueue(
             &caller,
@@ -157,10 +180,20 @@ fn criterion7_coldstart_rescan_drains_queue() {
     }
     assert_eq!(ran, 10, "cold-start rescan recovered every queued job");
     // queue drained: nothing left queued, and the effects landed
-    let left = db.sql_root("SELECT VALUE id FROM job WHERE status = 'queued';").unwrap();
-    assert_eq!(left.as_array().map(std::vec::Vec::len).unwrap_or(0), 0, "queue empty");
+    let left = db
+        .sql_root("SELECT VALUE id FROM job WHERE status = 'queued';")
+        .unwrap();
+    assert_eq!(
+        left.as_array().map(std::vec::Vec::len).unwrap_or(0),
+        0,
+        "queue empty"
+    );
     let things = db.sql_root("SELECT count() FROM thing GROUP ALL;").unwrap();
-    assert_eq!(things.as_array().unwrap()[0]["count"].as_u64(), Some(10), "all effects applied");
+    assert_eq!(
+        things.as_array().unwrap()[0]["count"].as_u64(),
+        Some(10),
+        "all effects applied"
+    );
 }
 
 /// EXIT CRITERION 5 (hardest clause): identity captured, authority re-derived
@@ -170,24 +203,36 @@ fn criterion5_revoked_authority_is_nonretryable_deny() {
     let cfg = setup("wq_revoke");
     let b = broker(&cfg);
     let db = scoped_db(&cfg);
-    let caller = Caller { user: "ghost".into(), pass: "x".into(), role: "clerk".into() };
+    let caller = Caller {
+        user: "ghost".into(),
+        pass: "x".into(),
+        role: "clerk".into(),
+    };
     b.enqueue(
         &caller,
         "create_doc",
         &[
             ("doctype".into(), Value::Text("thing".into())),
-            ("doc".into(), Value::Object(vec![("title".into(), Value::Text("revoked".into()))])),
+            (
+                "doc".into(),
+                Value::Object(vec![("title".into(), Value::Text("revoked".into()))]),
+            ),
         ],
     )
     .unwrap();
 
     let wk = Worker::new(&db, &b, "w");
     // 'ghost' has been revoked between enqueue and run
-    let resolver = TestResolver { revoked: vec!["ghost".into()] };
+    let resolver = TestResolver {
+        revoked: vec!["ghost".into()],
+    };
     let job = wk.claim_next().unwrap().expect("a job to run");
     let outcome = wk.run(&job, &resolver);
 
-    assert!(matches!(outcome, JobOutcome::Denied(_)), "revoked authority -> denied, got {outcome:?}");
+    assert!(
+        matches!(outcome, JobOutcome::Denied(_)),
+        "revoked authority -> denied, got {outcome:?}"
+    );
     // and the job is terminal 'denied', NOT requeued (non-retryable)
     let status = db
         .sql_root("SELECT VALUE status FROM job LIMIT 1;")
@@ -200,6 +245,73 @@ fn criterion5_revoked_authority_is_nonretryable_deny() {
     assert_eq!(status, "denied", "denied job is terminal, never requeued");
 }
 
+/// A crashed worker's expired claim is recoverable, and its claim token loses
+/// all authority once the new owner commits a fenced claim.
+#[test]
+fn expired_claim_recovery_fences_old_worker() {
+    let cfg = setup("wq_expired_lease");
+    let db = scoped_db(&cfg);
+    let seeded = db
+        .sql_root(
+            "CREATE job SET kind = 'unknown', payload = {}, status = 'running', \
+             requested_by = 'u', tenant = 'A', enqueued_at = time::now() - 10s, \
+             claimed_by = 'old-worker', claim_token = 'old-token', attempts = 1, \
+             claimed_at = time::now() - 10m, lease_expires_at = time::now() - 1s;",
+        )
+        .unwrap();
+    let id = seeded.as_array().unwrap()[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let new_worker = Worker::claim_only(&db, "new-worker");
+    let new_job = new_worker
+        .try_claim(&id)
+        .unwrap()
+        .expect("expired lease is reclaimed");
+    assert_eq!(new_job.lease.claimed_by, "new-worker");
+    assert_eq!(new_job.lease.attempt, 2);
+    assert_ne!(new_job.lease.token, "old-token");
+
+    let old_job = Job {
+        id: id.clone(),
+        kind: "unknown".into(),
+        requested_by: "u".into(),
+        payload: serde_json::json!({}),
+        trace: None,
+        lease: JobLease {
+            claimed_by: "old-worker".into(),
+            token: "old-token".into(),
+            attempt: 1,
+            expires_at: "expired".into(),
+        },
+    };
+    assert!(matches!(
+        new_worker.run(&old_job, &TestResolver { revoked: vec![] }),
+        JobOutcome::Denied(_)
+    ));
+
+    let rid = frust_kernel::surql::render_value(&Value::RecordId(id)).unwrap();
+    let current = db.sql_root(&format!("SELECT * FROM {rid};")).unwrap();
+    let current = &current.as_array().unwrap()[0];
+    assert_eq!(current["status"].as_str(), Some("running"));
+    assert_eq!(current["claimed_by"].as_str(), Some("new-worker"));
+    assert_eq!(
+        current["claim_token"].as_str(),
+        Some(new_job.lease.token.as_str())
+    );
+
+    assert!(matches!(
+        new_worker.run(&new_job, &TestResolver { revoked: vec![] }),
+        JobOutcome::Denied(_)
+    ));
+    let terminal = db.sql_root(&format!("SELECT status FROM {rid};")).unwrap();
+    assert_eq!(
+        terminal.as_array().unwrap()[0]["status"].as_str(),
+        Some("denied")
+    );
+}
+
 /// A job handler writing through the broker fires hooks end-to-end (the
 /// re-entrant-write carry-forward): the large-draft job comes out
 /// 'Needs Approval', proving hooks ran inside the job effect.
@@ -208,7 +320,11 @@ fn job_effect_fires_hooks() {
     let cfg = setup("wq_hooks");
     let b = broker(&cfg);
     let db = scoped_db(&cfg);
-    let caller = Caller { user: "root".into(), pass: "root".into(), role: "manager".into() };
+    let caller = Caller {
+        user: "root".into(),
+        pass: "root".into(),
+        role: "manager".into(),
+    };
     b.enqueue(
         &caller,
         "create_doc",
@@ -227,8 +343,17 @@ fn job_effect_fires_hooks() {
     .unwrap();
     let wk = Worker::new(&db, &b, "w");
     let job = wk.claim_next().unwrap().unwrap();
-    assert_eq!(wk.run(&job, &TestResolver { revoked: vec![] }), JobOutcome::Done);
+    assert_eq!(
+        wk.run(&job, &TestResolver { revoked: vec![] }),
+        JobOutcome::Done
+    );
     // the plugin hook flagged the large draft inside the job's write
-    let status = db.sql_root("SELECT VALUE status FROM thing LIMIT 1;").unwrap();
-    assert_eq!(status.as_array().unwrap()[0].as_str(), Some("Needs Approval"), "hooks fired inside the job effect");
+    let status = db
+        .sql_root("SELECT VALUE status FROM thing LIMIT 1;")
+        .unwrap();
+    assert_eq!(
+        status.as_array().unwrap()[0].as_str(),
+        Some("Needs Approval"),
+        "hooks fired inside the job effect"
+    );
 }

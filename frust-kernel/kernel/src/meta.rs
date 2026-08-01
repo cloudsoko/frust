@@ -20,7 +20,10 @@
 /// v7: cross-app extension (WO-050) — `doctype.server_script` becomes a LIST of
 /// `{app, script}` so more than one app can contribute a hook. See
 /// `meta_data_migrations`.
-pub const META_SCHEMA_VERSION: i64 = 8;
+/// v9: crash-safe background jobs - typed lease/fencing fields plus scheduling
+/// and lease-expiry indexes. Existing SCHEMALESS rows get defaults when next
+/// claimed, so no record rewrite is required.
+pub const META_SCHEMA_VERSION: i64 = 9;
 
 /// Version + application log records live here.
 pub const META_TABLE: &str = "_frust_meta";
@@ -133,6 +136,29 @@ pub fn workflow_ddl() -> String {
     "DEFINE TABLE OVERWRITE workflow SCHEMALESS PERMISSIONS NONE".to_string()
 }
 
+/// The kernel job queue. It remains SCHEMALESS for handler-owned payloads, but
+/// its scheduling and ownership envelope is typed and binary-authoritative.
+/// The two indexes serve the only two queue scans: fair tenant heads and
+/// expired-lease recovery.
+pub fn job_ddl() -> String {
+    [
+        "DEFINE TABLE OVERWRITE job SCHEMALESS CHANGEFEED 1d PERMISSIONS NONE".to_string(),
+        "DEFINE FIELD OVERWRITE status ON job TYPE string DEFAULT 'queued'".to_string(),
+        "DEFINE FIELD OVERWRITE attempts ON job TYPE int DEFAULT 0".to_string(),
+        "DEFINE FIELD OVERWRITE claimed_by ON job TYPE option<string>".to_string(),
+        "DEFINE FIELD OVERWRITE claim_token ON job TYPE option<string>".to_string(),
+        "DEFINE FIELD OVERWRITE claimed_at ON job TYPE option<datetime>".to_string(),
+        "DEFINE FIELD OVERWRITE lease_expires_at ON job TYPE option<datetime>".to_string(),
+        "DEFINE FIELD OVERWRITE finished_at ON job TYPE option<datetime>".to_string(),
+        "DEFINE FIELD OVERWRITE terminal_reason ON job TYPE option<string>".to_string(),
+        "DEFINE INDEX OVERWRITE job_schedule ON TABLE job FIELDS status, tenant, enqueued_at"
+            .to_string(),
+        "DEFINE INDEX OVERWRITE job_lease_expiry ON TABLE job FIELDS status, lease_expires_at"
+            .to_string(),
+    ]
+    .join(";\n")
+}
+
 /// WO-043: notification rules are metadata, exactly like workflows — same
 /// SCHEMALESS + PERMISSIONS NONE posture, same reason (the kernel validates the
 /// shape on the way in and reads it through its own door). This table is what
@@ -200,6 +226,10 @@ pub fn meta_data_migrations() -> String {
         // population was all-arrays, so every row matched and the guard was
         // never asked to do anything.
         "UPDATE doctype SET server_script = IF type::is_array(server_script) {            server_script.map(|$s|              IF $s.hook = NONE { object::from_entries(object::entries($s).append(['hook', 'validate'])) }              ELSE { $s })          } ELSE { server_script }",
+        // v9: pre-lease workers could leave `running` forever after a crash.
+        // A live v9 claim always has `lease_expires_at`, so this selects only
+        // legacy ownership state and is idempotent after the first requeue.
+        "UPDATE job SET status = 'queued', claimed_by = NONE, claimed_at = NONE, claim_token = NONE, lease_expires_at = NONE, attempts = IF attempts = NONE { 0 } ELSE { attempts }, last_error = 'legacy running claim recovered during v9 migration' WHERE status = 'running' AND lease_expires_at = NONE",
     ]
     .join("; ")
 }
@@ -217,7 +247,7 @@ pub fn meta_ddl() -> String {
         // the DocType metadata store — the self-hosting table
         "DEFINE TABLE OVERWRITE doctype SCHEMALESS PERMISSIONS NONE".to_string(),
         // the job queue (ADR-009): jobs are records; queue state is data
-        "DEFINE TABLE OVERWRITE job SCHEMALESS CHANGEFEED 1d PERMISSIONS NONE".to_string(),
+        job_ddl(),
         // WO-047: the session store. It is ephemeral state rather than
         // schema — which is exactly why it used to be created lazily by the
         // login batch — but a `DEFINE` sharing a statement batch with a
@@ -235,4 +265,21 @@ pub fn meta_ddl() -> String {
         access_ddl(),
     ]
     .join(";\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn job_schema_types_the_lease_envelope_and_indexes_both_scans() {
+        let ddl = job_ddl();
+        assert!(ddl.contains("claim_token ON job TYPE option<string>"));
+        assert!(ddl.contains("lease_expires_at ON job TYPE option<datetime>"));
+        assert!(ddl.contains("attempts ON job TYPE int DEFAULT 0"));
+        assert!(ddl.contains("job_schedule ON TABLE job FIELDS status, tenant, enqueued_at"));
+        assert!(ddl.contains("job_lease_expiry ON TABLE job FIELDS status, lease_expires_at"));
+        assert!(meta_ddl().contains(&ddl));
+        assert!(meta_data_migrations().contains("legacy running claim recovered"));
+    }
 }

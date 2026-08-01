@@ -1,0 +1,39 @@
+# syntax=docker/dockerfile:1.7
+
+ARG RUST_VERSION=1.96.0
+FROM rust:${RUST_VERSION}-bookworm AS build
+
+WORKDIR /src
+COPY --from=topcoat . /src/topcoat
+COPY . /src/frust-desk
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/src/frust-desk/target,sharing=locked \
+    cargo build --locked --release --manifest-path /src/frust-desk/Cargo.toml && \
+    install -Dm0755 /src/frust-desk/target/release/frust-desk /out/frust-desk
+
+FROM debian:bookworm-slim AS runtime
+
+ARG FRUST_VERSION=0.1.0
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.title="Frust Desk" \
+      org.opencontainers.image.description="Frust server-rendered Desk" \
+      org.opencontainers.image.version="${FRUST_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="https://github.com/AmeinEskinder/frust"
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --gid 10001 frust && \
+    useradd --uid 10001 --gid frust --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin frust
+
+COPY --from=build /out/frust-desk /usr/local/bin/frust-desk
+
+USER 10001:10001
+ENV HOST=0.0.0.0 \
+    PORT=3000 \
+    FRUST_KERNEL=http://kernel:8790
+EXPOSE 3000
+
+ENTRYPOINT ["frust-desk"]

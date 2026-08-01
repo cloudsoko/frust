@@ -190,6 +190,7 @@ impl Rest {
 
     fn handle(&self, mut req: tiny_http::Request) {
         let url = req.url().to_string();
+        let method = req.method().as_str().to_string();
         // the trace is born at the edge â€” or adopted from the caller so a
         // client-side flow (Desk action -> follow-on request) stays one trace
         let trace = crate::telemetry::TraceId::parse(&header(&req, "X-Trace-Id"))
@@ -210,7 +211,64 @@ impl Rest {
         let _trace_ctx = crate::telemetry::enter(trace, &tenant);
         let span = crate::telemetry::Span::begin("rest_request")
             .field("path", url.split('?').next().unwrap_or(&url).to_string())
+            .field("method", method.clone())
             .field("tenant", tenant);
+
+        // Method policy is an edge concern: reject a wrong verb before body
+        // parsing, authentication, database work, or a stateful GET can run.
+        match crate::http_contract::gate(&method, &url) {
+            crate::http_contract::MethodGate::Dispatch
+            | crate::http_contract::MethodGate::UnknownRoute => {}
+            crate::http_contract::MethodGate::Options(policy) => {
+                let response = tiny_http::Response::empty(204)
+                    .with_header(
+                        tiny_http::Header::from_bytes(
+                            &b"Allow"[..],
+                            policy.allow_header().as_bytes(),
+                        )
+                        .unwrap(),
+                    )
+                    .with_header(no_store_header());
+                let _ = req.respond(response);
+                span.field("status", 204).ok();
+                return;
+            }
+            crate::http_contract::MethodGate::MethodNotAllowed(policy) => {
+                let payload = serde_json::json!({
+                    "error": {
+                        "kind": "method-not-allowed",
+                        "method": method,
+                        "path": url.split('?').next().unwrap_or(&url),
+                        "allowed_methods": policy.allowed(),
+                    }
+                });
+                let response = tiny_http::Response::from_string(payload.to_string())
+                    .with_status_code(405)
+                    .with_header(
+                        tiny_http::Header::from_bytes(
+                            &b"Content-Type"[..],
+                            &b"application/json"[..],
+                        )
+                        .unwrap(),
+                    )
+                    .with_header(
+                        tiny_http::Header::from_bytes(
+                            &b"Allow"[..],
+                            policy.allow_header().as_bytes(),
+                        )
+                        .unwrap(),
+                    )
+                    .with_header(no_store_header());
+                let _ = req.respond(response);
+                let e = BrokerError::InvalidValue {
+                    detail: format!(
+                        "FRUST:E_METHOD_NOT_ALLOWED: {method} is not allowed for {url}"
+                    ),
+                };
+                span.field("status", 405).err(&e);
+                return;
+            }
+        }
 
         // **A body that is not UTF-8 says so.** `read_to_string` fails on
         // invalid UTF-8 and leaves the buffer EMPTY, and the discarded error
@@ -229,7 +287,8 @@ impl Rest {
             .with_header(
                 tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
                     .unwrap(),
-            );
+            )
+            .with_header(no_store_header());
             let _ = req.respond(response);
             span.field("status", 400).err(&e);
             return;
@@ -246,7 +305,8 @@ impl Rest {
                         &b"text/plain; version=0.0.4"[..],
                     )
                     .unwrap(),
-                );
+                )
+                .with_header(no_store_header());
             let _ = req.respond(response);
             span.field("status", 200).ok();
             return;
@@ -262,7 +322,8 @@ impl Rest {
             .with_status_code(code)
             .with_header(
                 tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
-            );
+            )
+            .with_header(no_store_header());
         let _ = req.respond(response);
 
         let span = span.field("status", code);
@@ -1707,6 +1768,10 @@ fn header(req: &tiny_http::Request, name: &str) -> String {
         .find(|h| h.field.as_str().as_str().eq_ignore_ascii_case(name))
         .map(|h| h.value.as_str().to_string())
         .unwrap_or_default()
+}
+
+fn no_store_header() -> tiny_http::Header {
+    tiny_http::Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]).unwrap()
 }
 
 fn status_for(e: &BrokerError) -> u16 {

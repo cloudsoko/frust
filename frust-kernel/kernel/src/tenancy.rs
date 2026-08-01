@@ -841,6 +841,23 @@ pub fn single_tenant(slug: &str) -> Result<ResolvedTenant, BrokerError> {
 }
 
 #[cfg(test)]
+pub(crate) fn test_tenancy(
+    strategy: &str,
+    database: Option<&str>,
+) -> Result<Tenancy, BrokerError> {
+    Tenancy::from_config(
+        ConnConfig::default(),
+        TenancyConfig {
+            strategy,
+            namespace: None,
+            database,
+            environment: None,
+            tenants: &[DEFAULT_TENANT],
+        },
+    )
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

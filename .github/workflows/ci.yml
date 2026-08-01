@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CARGO_BUILD_JOBS: "2"
+
+jobs:
+  quality:
+    name: Static, unit, and reproducibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out recorded source and submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Cache Rust build outputs
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: |
+            frust-kernel
+            frust-desk
+            wasm-spike/script-engine
+            wasm-spike/plugin-demo
+
+      - name: Install pinned Node and pnpm
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+          cache-dependency-path: wasm-spike/pnpm-lock.yaml
+
+      - name: Activate pnpm
+        run: corepack enable && corepack install --global pnpm@11.1.2
+
+      - name: Validate release metadata and checked-in artifacts
+        run: python .github/scripts/release-preflight.py
+
+      - name: Rebuild and compare runtime artifacts
+        shell: pwsh
+        run: ./scripts/frust.ps1 build-artifacts
+
+      - name: Refuse generated artifact drift
+        run: git diff --exit-code -- wasm-spike/artifacts frust-desk/assets/engine wasm-spike/artifacts.lock.json
+
+      - name: Check kernel formatting
+        run: cargo fmt --manifest-path frust-kernel/Cargo.toml --all -- --check
+
+      - name: Lint kernel workspace
+        run: cargo clippy --manifest-path frust-kernel/Cargo.toml --workspace --all-targets --locked -- -D warnings
+
+      - name: Run database-free kernel unit tests
+        run: cargo test --manifest-path frust-kernel/Cargo.toml --workspace --lib --locked --jobs 2
+
+      - name: Check Desk formatting
+        run: cargo fmt --manifest-path frust-desk/Cargo.toml -- --check
+
+      - name: Lint Desk
+        run: cargo clippy --manifest-path frust-desk/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Run Desk unit tests
+        run: cargo test --manifest-path frust-desk/Cargo.toml --locked --jobs 2
+
+  live-integration:
+    name: Live integration (${{ matrix.root-auth }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        root-auth: [jwt, basic]
+    env:
+      FRUST_ROOT_AUTH: ${{ matrix.root-auth }}
+      FRUST_DB_ENDPOINT: http://127.0.0.1:8899
+      FRUST_DB_ROOT_USER: root
+      FRUST_DB_ROOT_PASS: root
+    steps:
+      - name: Check out recorded source and submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Cache Rust build outputs
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: frust-kernel
+          key: integration-${{ matrix.root-auth }}
+
+      - name: Verify runtime inputs
+        run: python .github/scripts/release-preflight.py
+
+      - name: Start pinned SurrealDB
+        run: |
+          docker run --detach --name frust-surreal --publish 127.0.0.1:8899:8000 \
+            surrealdb/surrealdb:v3.2.0 start --user root --pass root memory
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:8899/health >/dev/null; then
+              break
+            fi
+            if [ "$attempt" = 60 ]; then
+              docker logs frust-surreal
+              exit 1
+            fi
+            sleep 1
+          done
+          test "$(curl --fail --silent http://127.0.0.1:8899/version)" = "surrealdb-3.2.0"
+
+      - name: Provide the pinned Surreal CLI to restore tests
+        run: |
+          mkdir -p frust-skel
+          docker cp frust-surreal:/surreal frust-skel/surreal.exe
+          chmod +x frust-skel/surreal.exe
+
+      - name: Run the complete non-ignored kernel suite
+        run: cargo test --manifest-path frust-kernel/Cargo.toml --workspace --locked --jobs 2
+
+      - name: Capture SurrealDB diagnostics
+        if: always()
+        run: docker logs frust-surreal > surrealdb-${{ matrix.root-auth }}.log 2>&1
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-${{ matrix.root-auth }}-diagnostics
+          path: surrealdb-${{ matrix.root-auth }}.log
+          if-no-files-found: error
+          retention-days: 14

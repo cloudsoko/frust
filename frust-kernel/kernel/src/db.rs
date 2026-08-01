@@ -26,12 +26,55 @@ pub struct ConnConfig {
 
 impl Default for ConnConfig {
     fn default() -> Self {
+        Self::from_env(|key| std::env::var(key).ok())
+    }
+}
+
+impl ConnConfig {
+    fn from_env(read: impl Fn(&str) -> Option<String>) -> Self {
         Self {
-            endpoint: "http://127.0.0.1:8899".into(),
-            root_user: "root".into(),
-            root_pass: "root".into(),
-            access: "account".into(),
+            endpoint: read("FRUST_DB_ENDPOINT")
+                .unwrap_or_else(|| "http://127.0.0.1:8899".into()),
+            root_user: read("FRUST_DB_ROOT_USER").unwrap_or_else(|| "root".into()),
+            root_pass: read("FRUST_DB_ROOT_PASS").unwrap_or_else(|| "root".into()),
+            access: read("FRUST_DB_ACCESS").unwrap_or_else(|| "account".into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod conn_config_tests {
+    use super::ConnConfig;
+
+    #[test]
+    fn connection_defaults_preserve_the_development_contract() {
+        let config = ConnConfig::from_env(|_| None);
+
+        assert_eq!(config.endpoint, "http://127.0.0.1:8899");
+        assert_eq!(config.root_user, "root");
+        assert_eq!(config.root_pass, "root");
+        assert_eq!(config.access, "account");
+    }
+
+    #[test]
+    fn connection_coordinates_can_come_from_the_environment() {
+        let config = ConnConfig::from_env(|key| {
+            Some(
+                match key {
+                    "FRUST_DB_ENDPOINT" => "http://database:8000",
+                    "FRUST_DB_ROOT_USER" => "operator",
+                    "FRUST_DB_ROOT_PASS" => "not-a-default-password",
+                    "FRUST_DB_ACCESS" => "employees",
+                    other => panic!("unexpected setting {other}"),
+                }
+                .to_string(),
+            )
+        });
+
+        assert_eq!(config.endpoint, "http://database:8000");
+        assert_eq!(config.root_user, "operator");
+        assert_eq!(config.root_pass, "not-a-default-password");
+        assert_eq!(config.access, "employees");
     }
 }
 

@@ -5,15 +5,29 @@ target/
 node_modules/
 **/node_modules/
 
+# ── Runtime guest sources and generated outputs ─────────────────────────────
+# The two guest crates and historical compatibility fixtures are source/test
+# inputs. Current artifacts and exploratory host/browser outputs are generated.
+/wasm-spike/*
+!/wasm-spike/README.md
+!/wasm-spike/package.json
+!/wasm-spike/pnpm-lock.yaml
+!/wasm-spike/artifacts.lock.json
+!/wasm-spike/script-engine/
+!/wasm-spike/script-engine/**
+!/wasm-spike/plugin-demo/
+!/wasm-spike/plugin-demo/**
+!/wasm-spike/artifacts-old-world/
+!/wasm-spike/artifacts-old-world/**
+/wasm-spike/script-engine/target/
+/wasm-spike/plugin-demo/target/
+
+# Bootstrap output: current WASM components and jco browser transpiles.
+/.frust/
+
 # ── Trees deliberately outside the monorepo (2026-07-31 ruling) ─────────────
 # Present on the dev machine, not part of the repo. Each is listed with the
 # reason, so "why isn't X here" is answered without archaeology.
-
-# The script/plugin WASM artifacts + spike. EXCLUDED BY RULING — note the
-# consequence: the kernel loads `script_engine.wasm` and `plugin_demo.wasm`
-# from here at runtime (the FRUST_ARTIFACTS default), so a fresh clone cannot
-# run the kernel until these are built or supplied. See README.
-/wasm-spike/
 
 # WO-006 SurrealDB benchmark harness (~110 MB). Historical evidence; neither
 # builds nor runs anything in this repo.
@@ -35,6 +49,8 @@ node_modules/
 /mail-outbox/
 **/mail-outbox/
 **/mail-capture/
+__pycache__/
+*.py[cod]
 
 # Obsidian per-machine workspace state — the NOTES are committed, the editor's
 # window layout and caches are not.

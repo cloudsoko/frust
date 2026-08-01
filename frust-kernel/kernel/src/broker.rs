@@ -885,6 +885,25 @@ impl Broker {
                     record.unwrap_or("?")
                 ),
             }),
+            // WO-057: the CREATE half of the same finding. WO-020 wrote this
+            // guard for UPDATE and CREATE fell through the catch-all below, so
+            // a create the database refused came back as `Ok(Null)` - and the
+            // REST door dressed it up as `{"action":"created","record":null}`.
+            // A write that persisted nothing must never report success.
+            //
+            // A CREATE returning no row has ONE meaning, unlike UPDATE's two:
+            // the insert was refused. The table is write-closed (ADR-010
+            // rollups, and the kernel-owned registries that share the pattern)
+            // or this role may not create in it. There is no legitimate
+            // zero-row create to confuse it with - a create that succeeds
+            // always returns its record.
+            (WriteOp::Create, None) => Err(BrokerError::PermissionDenied {
+                detail: format!(
+                    "E_WRITE_NO_ROWS: create in {} stored nothing: the table is write-closed \
+                     (maintained by the kernel, not by record users), or your role may not create in it",
+                    meta.name
+                ),
+            }),
             _ => {
                 let stored = row.unwrap_or(serde_json::Value::Null);
                 // ── WO-043: the lifecycle events, AFTER the write committed ──

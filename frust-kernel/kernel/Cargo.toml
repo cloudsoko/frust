@@ -2,6 +2,10 @@
 name = "frust-kernel"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Permission-enforcing, metadata-driven application kernel for Frust"
 
 [dependencies]
 anyhow = { workspace = true }
@@ -30,4 +34,3 @@ wasmtime-wasi = { workspace = true }
 [[bin]]
 name = "frust"
 path = "src/main.rs"
-
