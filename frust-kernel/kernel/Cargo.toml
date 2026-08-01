@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "frust-kernel"
 version.workspace = true
 edition.workspace = true
@@ -27,7 +27,7 @@ lettre = { version = "0.11", default-features = false, features = [
     "builder", "smtp-transport", "rustls-tls", "file-transport", "file-transport-envelope",
 ] }
 hmac = "0.12"
-sha2 = "0.10"
+sha2 = "0.11"
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 
