@@ -5,7 +5,7 @@ upgrade*. Three processes: the metadata kernel, SurrealDB, and a server-rendered
 Desk.
 
 ```
-git clone --recurse-submodules git@github.com:AmeinEskinder/frust.git
+git clone --recurse-submodules git@github.com:cloudsoko/frust.git
 ```
 
 ## Layout
@@ -17,7 +17,7 @@ git clone --recurse-submodules git@github.com:AmeinEskinder/frust.git
 | `frust-e2e/` | the browser evidence harness (`pnpm workflow` / `sse` / `mail` / `print`) | source |
 | `frust/` | the vault: vision, ADRs, Work Orders, dated build logs — **the decision record** | source |
 | `topcoat/` | **submodule** → `topcoat-vendored` — the vendored web framework trunk with our carried patches | submodule |
-| `frust-desk-ui/` | **submodule** → retired WO-037 UI foundation, kept for its history | submodule |
+| `frust-ui/` | **submodule** -> retired WO-037 UI foundation, kept for its history | submodule |
 
 Every claim in the code traces to a linked ADR / Work Order / build log in
 `frust/`. That is deliberate: `04 Build Log/` holds dated evidence with real
