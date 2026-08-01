@@ -89,6 +89,23 @@ fn post(url: &str, token: Option<&str>, body: serde_json::Value) -> (u16, serde_
     (code, r.body_mut().read_json().unwrap_or(serde_json::json!({})))
 }
 
+fn get(url: &str, token: Option<&str>) -> (u16, serde_json::Value) {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let mut req = agent.get(format!("http://{ADDR}{url}"));
+    if let Some(t) = token {
+        req = req.header("Authorization", &format!("Bearer {t}"));
+    }
+    let mut r = req.call().expect("http");
+    let code = r.status().as_u16();
+    (
+        code,
+        r.body_mut().read_json().unwrap_or(serde_json::json!({})),
+    )
+}
+
 fn login(user: &str, pass: &str) -> String {
     let (_, out) = post("/login", None, serde_json::json!({ "user": user, "pass": pass }));
     out["token"].as_str().unwrap_or_default().to_string()
@@ -238,7 +255,8 @@ fn the_demo_app_lives_its_whole_life_without_a_restart() {
     assert_eq!(n, 3, "v1 data survived the update");
 
     // â”€â”€ 7. The registry tells the whole story â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    let (_, apps) = post("/app", Some(&mgr), serde_json::json!({}));
+    let (code, apps) = get("/app", Some(&mgr));
+    assert_eq!(code, 200, "list apps: {apps}");
     assert_eq!(apps["apps"][0]["version"], serde_json::json!("2.0.0"));
     assert_eq!(apps["apps"][0]["enabled"], serde_json::json!(true));
 
@@ -251,4 +269,3 @@ fn the_demo_app_lives_its_whole_life_without_a_restart() {
     println!("STEP 9 registry at v2, {entries} audited lifecycle actions");
     assert!(entries >= 4, "install + disable + enable + update all audited: {entries}");
 }
-
