@@ -15,8 +15,8 @@ serde = "1"
 serde_json = "1"
 tokio = "1"
 ureq = "3.3"
-wasmtime = "37"
-wasmtime-wasi = "37"
+wasmtime = "47.0.3"
+wasmtime-wasi = "47.0.3"
 
 [profile.dev]
 debug = 0
