@@ -24,11 +24,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Check out recorded source and submodules
+      - name: Check out recorded source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: recursive
           fetch-depth: 0
+
+      - name: Check out recorded submodules
+        uses: ./.github/actions/private-submodules
+        with:
+          frust-desk-key: ${{ secrets.FRUST_DESK_CI_DEPLOY_KEY }}
+          frust-ui-key: ${{ secrets.FRUST_UI_CI_DEPLOY_KEY }}
 
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
@@ -46,8 +51,6 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.17.0
-          cache: pnpm
-          cache-dependency-path: wasm-spike/pnpm-lock.yaml
 
       - name: Activate pnpm
         run: corepack enable && corepack install --global pnpm@11.1.2
@@ -117,10 +120,14 @@ jobs:
       FRUST_DB_ROOT_USER: root
       FRUST_DB_ROOT_PASS: root
     steps:
-      - name: Check out recorded source and submodules
+      - name: Check out recorded source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check out recorded submodules
+        uses: ./.github/actions/private-submodules
         with:
-          submodules: recursive
+          frust-desk-key: ${{ secrets.FRUST_DESK_CI_DEPLOY_KEY }}
+          frust-ui-key: ${{ secrets.FRUST_UI_CI_DEPLOY_KEY }}
 
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain

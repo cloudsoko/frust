@@ -70,7 +70,7 @@ Consumers should verify both mechanisms:
 
 ```text
 sha256sum --check frust-vX.Y.Z-linux-x86_64.zip.sha256
-gh attestation verify frust-vX.Y.Z-linux-x86_64.zip --repo AmeinEskinder/frust
+gh attestation verify frust-vX.Y.Z-linux-x86_64.zip --repo cloudsoko/frust
 ```
 
 GitHub provenance establishes which workflow produced an artifact. It is not a
