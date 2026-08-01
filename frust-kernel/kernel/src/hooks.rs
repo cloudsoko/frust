@@ -344,7 +344,12 @@ impl WasmHooks {
 /// and configuration in practice.
 struct ScriptSource {
     db: Db,
-    pool: Mutex<HashMap<(String, String), (String, HookInstance)>>,
+    /// **WO-050: keyed `(tenant, doctype, app)`.** It was `(tenant, doctype)`,
+    /// which held exactly one instance per DocType — the shape WO-049 proved
+    /// turns a second contributor into a silent replacement of the first. The
+    /// app in the key is what lets the owner's instance and an extension's
+    /// coexist instead of evicting each other.
+    pool: Mutex<HashMap<(String, String, String, crate::contract::HookClass), (String, HookInstance)>>,
     /// **WO-048: the script text, generation-cached.**
     ///
     /// WO-047's trace census found this module's `load_server_script` to be the
@@ -360,34 +365,33 @@ struct ScriptSource {
     /// is what keeps ADR-007's live-mutability true: the invalidation this
     /// cache relies on is the invalidation the doctype cache already relies on,
     /// so the two cannot drift apart.
-    script_cache: Mutex<HashMap<(String, String), (u64, Option<String>)>>,
+    script_cache: Mutex<HashMap<(String, String), (u64, crate::sync::HookPlan)>>,
     /// This tenant's generation counters, resolved once at construction.
     gens: crate::tenant_gen::TenantGenerations,
 }
 
 impl ScriptSource {
-    /// The script for `doctype`, from cache when the generation still matches.
-    fn script_for(&self, doctype: &str) -> Result<Option<String>, BrokerError> {
+    /// Every app's script for `doctype`, owner first, from cache when the
+    /// generation still matches (WO-048's machinery, now carrying a list).
+    fn scripts_for(&self, doctype: &str) -> Result<crate::sync::HookPlan, BrokerError> {
         let gen = self.gens.meta.load(std::sync::atomic::Ordering::Acquire);
         let key = (self.db.tenant_id().to_string(), doctype.to_string());
-        if let Some((cached_gen, text)) = self
+        if let Some((cached_gen, plan)) = self
             .script_cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&key)
         {
             if *cached_gen == gen {
-                return Ok(text.clone());
+                return Ok(plan.clone());
             }
         }
-        // The lookup still lives in `sync.rs` — this module dispatches hooks,
-        // it does not assemble query text (`surql_monopoly`).
-        let text = crate::sync::load_server_script(&self.db, doctype)?;
+        let plan = crate::sync::load_server_scripts(&self.db, doctype)?;
         self.script_cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(key, (gen, text.clone()));
-        Ok(text)
+            .insert(key, (gen, plan.clone()));
+        Ok(plan)
     }
 }
 
@@ -430,46 +434,128 @@ impl WasmHooks {
     /// must mean *no script runs*, not *the default runs*. A DocType silently
     /// inheriting someone else's validation is the WO-017 finding in a new
     /// costume.
+    /// **WO-050: the owner-first chain.**
+    ///
+    /// Every app that contributes a `validate` to this DocType runs, in order,
+    /// each seeing the previous one's output. The owner is first and cannot be
+    /// displaced — WO-049 measured the alternative: with one slot, a second app
+    /// silently *replaced* the owner's hook and its invariant stopped running
+    /// with no error and no trace. That is P-2.2, and the ordering here plus the
+    /// per-app pool key is what makes it unreachable rather than merely refused.
+    ///
+    /// An extension may REJECT (ADR-015's ruled veto): its `Err` fails the write
+    /// and names the rejecting app. It may not skip, reorder or replace anyone.
     fn dispatch_doctype_script(
         &self,
+        class: crate::contract::HookClass,
         doctype: &str,
         doc: &[(String, Value)],
     ) -> Result<Option<Vec<(String, Value)>>, BrokerError> {
         let Some(src) = &self.scripts else { return Ok(None) };
-
-        let Some(text) = src.script_for(doctype)? else {
+        let plan = src.scripts_for(doctype)?;
+        // **WO-053: the class selects who runs.** A script subscribes to one
+        // event; the others are not its business. Filtering here rather than
+        // inside the loop keeps the empty case cheap — the overwhelmingly
+        // common shape is a doctype with one `validate` and nothing else, and
+        // it must not pay for a vocabulary it does not use.
+        let entries: Vec<&crate::sync::ScriptEntry> = plan.entries.iter().filter(|e| e.hook == class).collect();
+        if entries.is_empty() {
             return Ok(None);
-        };
-
-        let key = (src.db.tenant_id().to_string(), doctype.to_string());
-        let mut pool = src.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let slot = pool.entry(key).or_insert_with(|| {
-            let mut inst = HookInstance::new(&self.engine, self.script_pre.clone());
-            inst.script = Some(text.clone());
-            (text.clone(), inst)
-        });
-        // live-mutable: an edited script replaces its pooled instance, so a
-        // Desk edit takes effect on the next write with no restart
-        if slot.0 != text {
-            let mut inst = HookInstance::new(&self.engine, self.script_pre.clone());
-            inst.script = Some(text.clone());
-            *slot = (text.clone(), inst);
         }
 
-        let span = crate::telemetry::Span::begin("hook_dispatch")
-            .field("runtime", "server_script")
-            .field("doctype", doctype);
-        let result = slot.1.validate(doc);
-        crate::telemetry::observe_ms(
-            "frust_hook_duration_ms",
-            &[("runtime", "server_script"), ("tenant", &crate::telemetry::current_tenant())],
-            span.elapsed_ms(),
-        );
-        match &result {
-            Ok(_) => span.ok(),
-            Err(e) => span.err(e),
+        let tenant = src.db.tenant_id().to_string();
+        let mut current = doc.to_vec();
+        for entry in entries {
+            // `app` is part of the KEY, so the owner's instance and each
+            // extension's are separate pooled contexts — no eviction, no shared
+            // globals between apps.
+            let app_key = entry.app.clone().unwrap_or_default();
+            // the CLASS is part of the key: one app may subscribe to several
+            // events on one doctype, and each is different script text
+            let key = (tenant.clone(), doctype.to_string(), app_key.clone(), class);
+            let out = {
+                let mut pool = src.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let slot = pool.entry(key).or_insert_with(|| {
+                    let mut inst = HookInstance::new(&self.engine, self.script_pre.clone());
+                    inst.script = Some(entry.script.clone());
+                    (entry.script.clone(), inst)
+                });
+                // live-mutable: an edited script replaces its pooled instance
+                if slot.0 != entry.script {
+                    let mut inst = HookInstance::new(&self.engine, self.script_pre.clone());
+                    inst.script = Some(entry.script.clone());
+                    *slot = (entry.script.clone(), inst);
+                }
+
+                // **WO-050 criterion 4: attribution.** "Which app changed this
+                // behaviour" is a log field, not an archaeology exercise —
+                // P-2.2's complaint answered where it is checkable.
+                let span = crate::telemetry::Span::begin("hook_dispatch")
+                    .field("runtime", "server_script")
+                    .field("doctype", doctype)
+                    .field("hook", class.wire())
+                    .field("app", if app_key.is_empty() { "-".to_string() } else { app_key.clone() })
+                    .field("owner", entry.is_owner);
+                let result = slot.1.validate(&current);
+                crate::telemetry::observe_ms(
+                    "frust_hook_duration_ms",
+                    &[("runtime", "server_script"), ("tenant", &crate::telemetry::current_tenant())],
+                    span.elapsed_ms(),
+                );
+                match &result {
+                    Ok(_) => span.ok(),
+                    Err(e) => span.err(e),
+                }
+                result
+            };
+
+            match out {
+                Ok((next, _fuel)) => {
+                    // **Criterion 6: undeclared writes are LOUD.** WO-049 lost
+                    // an hour to this: an app wrote a field its manifest never
+                    // declared, WO-009's envelope filter dropped it in silence,
+                    // and the run looked exactly like the hook never executing.
+                    // Declare-or-lose-your-data with no error is the silent-wrong
+                    // class; refusing by name is the house answer.
+                    //
+                    // Checked per app, right after its own hook returns, because
+                    // that is the only moment the culprit is still known.
+                    if !plan.declared.is_empty() {
+                        if let Some((bad, _)) = next.iter().find(|(k, _)| {
+                            !plan.declared.iter().any(|d| d == k)
+                                && k != "id"
+                                && k != "docstatus"
+                                && !current.iter().any(|(ck, _)| ck == k)
+                        }) {
+                            let who = entry.app.clone().unwrap_or_else(|| "the doctype's own script".into());
+                            return Err(BrokerError::HookRejected {
+                                stage: "envelope".into(),
+                                message: format!(
+                                    "FRUST:E_FIELD_UNDECLARED: '{who}' wrote field '{bad}' on                                      '{doctype}', which no app declares. Declare it in the                                      manifest (extensions must namespace their fields) — it                                      would otherwise be dropped without a word."
+                                ),
+                            });
+                        }
+                    }
+                    current = next;
+                }
+                // **Criterion 5: the veto, typed and NAMED.** A rejection that
+                // did not say which app rejected would be the archaeology this
+                // whole mechanism exists to end.
+                Err(BrokerError::HookRejected { stage, message }) => {
+                    let who = entry
+                        .app
+                        .clone()
+                        .map_or_else(|| "the doctype's own script".to_string(), |a| format!("app '{a}'"));
+                    let role = if entry.is_owner { "owner" } else { "extension" };
+                    return Err(BrokerError::HookRejected {
+                        stage,
+                        message: format!("{message} (rejected by the {role}, {who})"),
+                    });
+                }
+                Err(e) => return Err(e),
+            }
         }
-        result.map(|(d, _fuel)| Some(d))
+        Ok(Some(current))
     }
 }
 
@@ -480,12 +566,42 @@ impl HookDispatch for WasmHooks {
         // than running after it â€” two scripts silently chained is a debugging
         // nightmare nobody asked for. With a script source attached and no
         // script declared, nothing runs.
-        match self.dispatch_doctype_script(doctype, &after_plugin)? {
+        match self.dispatch_doctype_script(crate::contract::HookClass::Validate, doctype, &after_plugin)? {
             Some(out) => return Ok(out),
             None if self.scripts.is_some() => return Ok(after_plugin),
             None => {}
         }
         self.dispatch_one("script", &self.script, &after_plugin)
+    }
+
+    /// **WO-053: the rest of REQ-2.2.1.**
+    ///
+    /// The resident plugin is deliberately NOT consulted here. It is built
+    /// against `world plugin`, which exports `hooks` and nothing else — and
+    /// ADR-006 edge-1, measured in this WO, says a component receives exactly
+    /// the events it exports. Handing it a lifecycle event it never declared
+    /// would be the host inventing a subscription on the guest's behalf.
+    ///
+    /// Server scripts need no such thing: the engine is a *text runner*, so
+    /// which script runs for which event is a host-side routing decision, and
+    /// the vocabulary reaches scripts without the engine changing world at all.
+    fn fire(
+        &self,
+        class: crate::contract::HookClass,
+        doctype: &str,
+        doc: &[(String, Value)],
+    ) -> Result<Vec<(String, Value)>, BrokerError> {
+        let out = self.dispatch_doctype_script(class, doctype, doc)?;
+        match (out, class.may_mutate()) {
+            // a mutating class takes the document back
+            (Some(next), true) => Ok(next),
+            // **a non-mutating class does not.** on_submit/on_cancel fire on a
+            // docstatus edge where ADR-009's lattice owns the value; they may
+            // refuse (their Err propagates and blocks the write) but what they
+            // hand back is discarded HOST-side, so the contract holds even for
+            // a script that ignores it.
+            (Some(_), false) | (None, _) => Ok(doc.to_vec()),
+        }
     }
 }
 

@@ -412,7 +412,13 @@ impl Rest {
                 ctx.broker.db.sql_root(&format!("CREATE doctype:{} CONTENT {content};", dt.name))?;
                 crate::broker::invalidate_meta(ctx.broker.db.tenant_id()); // WO-026: new doctype visible immediately
                 let applied = sync.sync(&ctx.broker.db)?;
-                Ok(serde_json::json!({ "created": dt.name, "applied": applied }))
+                Ok(serde_json::json!({
+                    "created": dt.name,
+                    "applied": applied.applied,
+                    // WO-052: if this sync left orphans, say so here too — the
+                    // operator making the change is the right person to know.
+                    "orphan_columns": applied.orphans,
+                }))
             }
 
             // WO-017 item 4: attach/replace/clear a DocType's Tier-2 client
@@ -489,6 +495,108 @@ impl Rest {
                 // write to that doctype re-reads the rules and this one fires
                 crate::broker::invalidate_meta(ctx.broker.db.tenant_id());
                 Ok(serde_json::json!({ "created": rule.name, "doctype": rule.doctype, "event": rule.event }))
+            }
+
+            // **WO-052 criterion 4: reclaiming an orphan is an EXPLICIT act.**
+            //
+            // An orphan column belongs to no manifest, so no app update can
+            // reclaim it — there is nothing to re-publish. It gets its own
+            // named act instead, with the REQ-6.6.2 acknowledgment shape: the
+            // refusal names the column AND how many rows still hold data in it,
+            // because "drop a column" and "drop 4,000 values" are the same
+            // action described at two very different levels of honesty.
+            //
+            // Deliberately NOT a boot flag. Drift is now an orphan, so boot
+            // never faces an unacknowledged destructive plan — and an
+            // `allow_destructive` startup switch would be the ADR-013 footgun
+            // shape: a flag whose casual use is silent data loss.
+            ["doctype", doctype, "reclaim"] => {
+                require_manager(caller)?;
+                ident(doctype)?;
+                let column = json
+                    .get("column")
+                    .and_then(|c| c.as_str())
+                    .ok_or_else(|| BrokerError::InvalidValue {
+                        detail: "reclaim needs a 'column'".into(),
+                    })?;
+                ident(column)?;
+                let acknowledge =
+                    json.get("acknowledge").and_then(serde_json::Value::as_bool).unwrap_or(false);
+
+                // refuse to reclaim something the metadata still declares —
+                // that is not an orphan, it is a field, and dropping it belongs
+                // to its app's update
+                let declared = ctx.broker.db.sql_root(&format!(
+                    "SELECT fields FROM doctype WHERE name = '{doctype}' LIMIT 1;"
+                ))?;
+                let is_declared = declared
+                    .as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|r| r["fields"].as_array())
+                    .is_some_and(|f| f.iter().any(|x| x["fieldname"] == column));
+                if is_declared {
+                    return Err(BrokerError::InvalidValue {
+                        detail: format!(
+                            "'{column}' is a DECLARED field of '{doctype}', not an orphan — \
+                             remove it through the owning app's update, which is where its \
+                             acknowledgement belongs"
+                        ),
+                    });
+                }
+
+                let with_data = ctx
+                    .broker
+                    .db
+                    .sql_root(&format!(
+                        "SELECT count() FROM {doctype} WHERE {column} != NONE GROUP ALL;"
+                    ))
+                    .ok()
+                    .and_then(|v| {
+                        v.as_array().and_then(|a| a.first()).and_then(|r| r["count"].as_u64())
+                    })
+                    .unwrap_or(0);
+
+                if !acknowledge {
+                    return Err(BrokerError::InvalidValue {
+                        detail: format!(
+                            "refused: reclaiming orphan column '{doctype}.{column}' DROPS IT AND \
+                             ITS DATA — {with_data} row(s) still hold a value. Re-send with \
+                             \"acknowledge\": true if that is what you mean."
+                        ),
+                    });
+                }
+                // through the migrator, not by hand: it drops the column AND
+                // records the snapshot, so the next boot agrees the orphan is
+                // gone instead of reporting a phantom
+                let sync = ctx.sync.as_ref().ok_or_else(|| BrokerError::Db {
+                    detail: "no schema sync engine — cannot reclaim".into(),
+                })?;
+                sync.reclaim(&ctx.broker.db, doctype, column)?;
+                ctx.broker
+                    .db
+                    .sql_root(&format!("UPDATE {doctype} SET {column} = NONE;"))?;
+                crate::broker::invalidate_meta(ctx.broker.db.tenant_id());
+                // /metrics is the enumeration seam, so it has to stop naming a
+                // column that no longer exists
+                let remaining = sync.sync(&ctx.broker.db)?;
+                crate::boot::publish_orphans(
+                    ctx.broker.db.tenant_id(),
+                    &remaining.orphans,
+                    Some(&format!("{doctype}.{column}")),
+                );
+                crate::telemetry::emit(
+                    crate::telemetry::Level::Info,
+                    "orphan_reclaimed",
+                    &[
+                        ("doctype", serde_json::json!(doctype)),
+                        ("column", serde_json::json!(column)),
+                        ("rows_with_data", serde_json::json!(with_data)),
+                    ],
+                );
+                Ok(serde_json::json!({
+                    "doctype": doctype, "column": column,
+                    "reclaimed": true, "rows_cleared": with_data
+                }))
             }
 
             // The outbox, read-only, manager-only: "did it send?" answered
@@ -1001,6 +1109,11 @@ impl Rest {
             ctx.broker.db.sql_root(&format!("DELETE workflow WHERE name = '{wn}';"))?;
         }
 
+        // **WO-050:** and its contributions to OTHER apps' DocTypes. Those rows
+        // are not this app's to delete, so the fields and chain link it added
+        // are removed surgically and the owner's DocType is left standing.
+        self.detach_extensions(ctx, name)?;
+
         let n = surql::escape_str(name);
         ctx.broker
             .db
@@ -1114,6 +1227,31 @@ impl Rest {
         }
 
         // APPLY â€” same call shape, different options.
+        // ---- WO-050 criterion 8: OWNER EVOLUTION ----
+        //
+        // ADR-015's question (c), and the one that decides whether this beats
+        // Frappe or merely adds a customs post: install-time gating catches the
+        // install and says nothing about the owner's NEXT release. An extension
+        // reads `Y.z`; owner v2 removes it; both apps' CI is green; the
+        // extension dies quietly. A silently-disabled extension is P-2.2 reborn,
+        // so the refusal names the casualty and its app.
+        //
+        // WO-049 found this seam already exists with no new storage: every
+        // app's manifest is on record verbatim. So it is one call, not a
+        // subsystem.
+        let casualties = self.extension_casualties(ctx, manifest, &destructive)?;
+        if !casualties.is_empty() && !acknowledge {
+            return Err(BrokerError::InvalidValue {
+                detail: format!(
+                    "FRUST:E_BREAKS_EXTENSION: refused - this update breaks what other apps \
+                     declared against it:\n- {}\n\
+                     Acknowledge to proceed (their extensions stop working), or ship a version \
+                     that keeps the surface.",
+                    casualties.join("\n- ")
+                ),
+            });
+        }
+
         let mut opts = frust_orm::MigrationOptions::default_for_dev();
         opts.allow_destructive = acknowledge;
         opts.acknowledge = acknowledge;
@@ -1167,16 +1305,270 @@ impl Rest {
             }
             // criterion 6: the server script lives on the DocType record, which
             // is where hook dispatch reads it from per call
-            if let Some(s) = manifest.server_scripts.iter().find(|s| s.doctype == dt.name) {
-                value["server_script"] = serde_json::json!(s.script);
+            // WO-050: the LIST shape. The owner's entry carries its own app name
+            // so the dispatcher can put it first and keep it there.
+            // WO-053: every declared script, each carrying its hook class.
+            // `find` used to take the FIRST match and drop the rest, which was
+            // invisible while only one class existed and would have silently
+            // eaten a second subscription the moment one could be written.
+            let mine: Vec<serde_json::Value> = manifest
+                .server_scripts
+                .iter()
+                .filter(|s| s.doctype == dt.name)
+                .map(|s| serde_json::json!({
+                    "app": manifest.name, "script": s.script, "hook": s.hook
+                }))
+                .collect();
+            if !mine.is_empty() {
+                value["server_script"] = serde_json::json!(mine);
             }
-            let content = surql::render_value(&infer_value(&value))?;
             let n = surql::escape_str(&dt.name);
+
+            // **WO-050: preserve other apps' contributions across an owner
+            // update.** This is a whole-record `CONTENT` upsert built from the
+            // OWNER'S manifest, which knows nothing about extensions — so
+            // without this, publishing owner v2 would silently delete every
+            // extension's fields and every extension's link in the validate
+            // chain. Silent loss of another app's declared surface is the
+            // P-2.2 shape again, one path over.
+            let prior = ctx.broker.db.sql_root(&format!(
+                "SELECT fields, server_script FROM doctype WHERE name = '{n}' LIMIT 1;"
+            ))?;
+            let prior = prior.as_array().and_then(|a| a.first()).cloned().unwrap_or_default();
+            let ext_fields: Vec<serde_json::Value> = prior["fields"]
+                .as_array()
+                .map(|a| a.iter().filter(|f| !f["ext_app"].is_null()).cloned().collect())
+                .unwrap_or_default();
+            let ext_scripts: Vec<serde_json::Value> = prior["server_script"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter(|s| {
+                            s["app"].as_str().is_some_and(|app| app != manifest.name)
+                        })
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let content = surql::render_value(&infer_value(&value))?;
             ctx.broker
                 .db
                 .sql_root(&format!("UPSERT doctype:{n} CONTENT {content};"))?;
+
+            // put the extensions back, behind the owner's own entry
+            for f in &ext_fields {
+                let fv = surql::render_value(&infer_value(f))?;
+                ctx.broker.db.sql_root(&format!("UPDATE doctype:{n} SET fields += {fv};"))?;
+            }
+            for s in &ext_scripts {
+                let sv = surql::render_value(&infer_value(s))?;
+                ctx.broker
+                    .db
+                    .sql_root(&format!("UPDATE doctype:{n} SET server_script += {sv};"))?;
+            }
             crate::broker::invalidate_meta(ctx.broker.db.tenant_id()); // WO-026: app install/update changed metadata
         }
+        self.attach_extensions(ctx, manifest)?;
+        Ok(())
+    }
+
+    /// **WO-050: apply this app's extensions to DocTypes it does not own.**
+    ///
+    /// Additive by construction — fields are appended and the script joins the
+    /// chain *behind* the owner's. Nothing here can remove or reorder what the
+    /// owner declared; owner-first is enforced independently in the dispatcher,
+    /// so this path could not displace an invariant even if it tried.
+    ///
+    /// Re-applied idempotently on update: this app's previous entries are
+    /// stripped first, so an update revises rather than duplicates.
+    fn attach_extensions(
+        &self,
+        ctx: &TenantContext,
+        manifest: &crate::app::Manifest,
+    ) -> Result<(), BrokerError> {
+        let me = surql::escape_str(&manifest.name);
+        for e in &manifest.extends {
+            ident(&e.doctype)?;
+            let target = surql::escape_str(&e.doctype);
+            let rows = ctx.broker.db.sql_root(&format!(
+                "SELECT name, app, fields FROM doctype WHERE name = '{target}' LIMIT 1;"
+            ))?;
+            let Some(row) = rows.as_array().and_then(|a| a.first()).cloned() else {
+                return Err(BrokerError::InvalidValue {
+                    detail: format!(
+                        "app '{}' extends '{}', which does not exist — install the owner first",
+                        manifest.name, e.doctype
+                    ),
+                });
+            };
+
+            // ── refuse-ambiguity (ADR-015): a collision names BOTH apps ──
+            let existing: Vec<(String, Option<String>)> = row["fields"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|f| {
+                            Some((
+                                f.get("fieldname")?.as_str()?.to_string(),
+                                f.get("ext_app").and_then(|x| x.as_str()).map(str::to_string),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            for f in &e.fields {
+                if let Some((_, held_by)) = existing.iter().find(|(n, _)| n == &f.fieldname) {
+                    let holder = held_by
+                        .clone()
+                        .unwrap_or_else(|| row["app"].as_str().unwrap_or("the owner").to_string());
+                    if holder != manifest.name {
+                        return Err(BrokerError::InvalidValue {
+                            detail: format!(
+                                "FRUST:E_EXTENSION_CONFLICT: app '{}' cannot add field '{}' to \
+                                 '{}' — '{}' already declares it. Two apps may not own one field; \
+                                 rename yours (it is namespaced under your app anyway).",
+                                manifest.name, f.fieldname, e.doctype, holder
+                            ),
+                        });
+                    }
+                }
+            }
+
+            // strip this app's previous contribution, then re-add (update-safe)
+            ctx.broker.db.sql_root(&format!(
+                "UPDATE doctype:{target} SET \
+                   fields = (fields ?? []).filter(|$f| $f.ext_app != '{me}'), \
+                   server_script = (server_script ?? []).filter(|$s| $s.app != '{me}');"
+            ))?;
+
+            for f in &e.fields {
+                let mut fv = serde_json::to_value(f).unwrap_or_default();
+                // Stamp the contributing app ONTO the field. This is what makes
+                // uninstall able to remove exactly its own additions and nothing
+                // else — without it, "which of these fields were yours" is
+                // archaeology.
+                fv["ext_app"] = serde_json::json!(manifest.name);
+                let content = surql::render_value(&infer_value(&fv))?;
+                ctx.broker
+                    .db
+                    .sql_root(&format!("UPDATE doctype:{target} SET fields += {content};"))?;
+            }
+            if !e.script.trim().is_empty() {
+                let sv = surql::render_value(&infer_value(&serde_json::json!({
+                    "app": manifest.name, "script": e.script, "hook": e.hook
+                })))?;
+                ctx.broker
+                    .db
+                    .sql_root(&format!("UPDATE doctype:{target} SET server_script += {sv};"))?;
+            }
+            crate::broker::invalidate_meta(ctx.broker.db.tenant_id());
+        }
+
+        // **The extension's fields must become real columns.** The install path
+        // syncs schema *before* metadata is attached, so extension fields added
+        // here would otherwise exist in the DocType record and nowhere in the
+        // database — and the first write naming one fails with SurrealDB's
+        // "no such field exists for table", which reads like a bug in the
+        // extension rather than a missing step in the installer.
+        if !manifest.extends.is_empty() {
+            if let Some(sync) = &ctx.sync {
+                sync.sync(&ctx.broker.db)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// **WO-050: which other apps' extensions would this update break?**
+    ///
+    /// The whole mechanism WO-049 named, wired: every installed app's manifest
+    /// is already stored verbatim in the registry and already re-parsed live for
+    /// route dispatch, so the declared dependency surface of every *other* app
+    /// is readable at plan time with no new storage and no new bookkeeping.
+    ///
+    /// Cross-references those surfaces against this bundle's own destructive
+    /// list (the migration engine's `REMOVE FIELD memo` strings that WO-019's
+    /// refusal already names) and returns a casualty per broken declaration.
+    /// Naming both the field and the app is the point: "your update breaks
+    /// something" is not actionable, "it breaks `crm_note` on `sales_invoice`,
+    /// declared by app 'crm'" is.
+    fn extension_casualties(
+        &self,
+        ctx: &TenantContext,
+        updating: &crate::app::Manifest,
+        destructive: &[String],
+    ) -> Result<Vec<String>, BrokerError> {
+        if destructive.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = ctx.broker.db.sql_root(&format!(
+            "SELECT name, manifest FROM {} ORDER BY name;",
+            crate::meta::APP_TABLE
+        ))?;
+        let mut out = Vec::new();
+        for r in rows.as_array().cloned().unwrap_or_default() {
+            let other = r["name"].as_str().unwrap_or_default().to_string();
+            if other == updating.name {
+                continue; // an app may break its own surface freely
+            }
+            let Ok(m) = crate::app::Manifest::parse(r["manifest"].as_str().unwrap_or("{}")) else {
+                continue;
+            };
+            for e in &m.extends {
+                // does this update touch a DocType that app extends?
+                if !updating.doctypes.iter().any(|d| d.name == e.doctype) {
+                    continue;
+                }
+                for f in &e.fields {
+                    // the extension's own field must still be declarable — if
+                    // the owner's new version drops the doctype or the
+                    // migration removes a field the extension reads, say so
+                    if destructive.iter().any(|d| {
+                        let d = d.to_ascii_lowercase();
+                        d.contains(&e.doctype.to_ascii_lowercase())
+                            && d.contains(&f.fieldname.to_ascii_lowercase())
+                    }) {
+                        out.push(format!(
+                            "extension of app '{}' on '{}' declares field '{}', which this update \
+                             removes",
+                            other, e.doctype, f.fieldname
+                        ));
+                    }
+                }
+                // a hook against a doctype this update drops entirely
+                if !e.script.trim().is_empty()
+                    && destructive.iter().any(|d| {
+                        let d = d.to_ascii_lowercase();
+                        d.contains("remove table") && d.contains(&e.doctype.to_ascii_lowercase())
+                    })
+                {
+                    out.push(format!(
+                        "extension of app '{other}' hooks '{}', which this update removes",
+                        e.doctype
+                    ));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// **WO-050: honest uninstall, extended cross-app.**
+    ///
+    /// Removes exactly this app's contributions from DocTypes it extended — its
+    /// namespaced fields and its link in the validate chain — and nothing else.
+    /// The owner's DocType, the owner's script and every row of data survive,
+    /// which is WO-019's honest-uninstall promise applied to a second
+    /// contributor. `WHERE app != me` keeps it off the app's own doctypes,
+    /// which the ordinary uninstall path already handles.
+    fn detach_extensions(&self, ctx: &TenantContext, app: &str) -> Result<(), BrokerError> {
+        let me = surql::escape_str(app);
+        ctx.broker.db.sql_root(&format!(
+            "UPDATE doctype SET \
+               fields = (fields ?? []).filter(|$f| $f.ext_app != '{me}'), \
+               server_script = (server_script ?? []).filter(|$s| $s.app != '{me}') \
+             WHERE app != '{me}';"
+        ))?;
+        crate::broker::invalidate_meta(ctx.broker.db.tenant_id());
         Ok(())
     }
 

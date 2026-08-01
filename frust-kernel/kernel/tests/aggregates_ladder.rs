@@ -129,7 +129,7 @@ fn tier1_monthly_counter_exact_under_burst() {
         name: 'si_monthly',
         fields: [ { fieldname: 'k', fieldtype: 'Data' }, { fieldname: 'revenue', fieldtype: 'Currency' }, { fieldname: 'n', fieldtype: 'Data' } ]
     };"#).unwrap();
-    let applied = MetadataSync { base: cfg.clone() }.sync(&db).expect("sync");
+    let applied = MetadataSync { base: cfg.clone() }.sync(&db).expect("sync").applied;
     assert_eq!(applied, 2, "source + rollup doctypes applied");
 
     // concurrent submits: 6 threads x 20, three months interleaved so every

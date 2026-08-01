@@ -111,7 +111,11 @@ fn validation_collects_every_problem_at_once() {
     assert!(joined.contains("MAJOR.MINOR.PATCH"), "{joined}");
     assert!(joined.contains("declared twice"), "{joined}");
     assert!(joined.contains("not_in_bundle"), "{joined}");
-    assert!(joined.contains("only 'validate' exists today"), "{joined}");
+    // WO-053: `before_save` is still not a hook point — but the refusal now
+    // names the vocabulary that DOES exist instead of claiming validate is the
+    // only one, which stopped being true.
+    assert!(joined.contains("before_save"), "names the unknown hook: {joined}");
+    assert!(joined.contains("'on_submit'"), "and names what exists: {joined}");
     assert!(joined.contains("missing.wasm"), "{joined}");
     assert!(joined.contains("bare .wasm filename"), "{joined}");
     assert!(errs.len() >= 8, "expected the whole list, got {}: {joined}", errs.len());

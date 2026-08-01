@@ -109,13 +109,67 @@ pub enum WriteOp {
     Update,
 }
 
-/// Hook classes for the cycle trap (ADR-006 edge 6).
+/// Hook classes for the cycle trap (ADR-006 edge 6) — and, since WO-053,
+/// REQ-2.2.1's lifecycle vocabulary itself.
+///
+/// ADR-006's cycle rule keys on `(record-id, hook-class)`, plural in the
+/// ratified text, so the trap extends per class for free: a `before_insert`
+/// that provokes a `validate` on the same record is not a cycle, and the same
+/// class twice on the same record still is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HookClass {
+    /// Before a CREATE is written. May mutate.
+    BeforeInsert,
+    /// Before any write is written. May mutate. The one wired before WO-053.
     Validate,
+    /// The docstatus 0→1 edge, BEFORE the write commits. May reject, not mutate.
+    OnSubmit,
+    /// The docstatus →2 edge. May reject, not mutate.
+    OnCancel,
     OnWrite,
+    /// Declared since WO-005 and never wired to a script or plugin. WO-007's
+    /// scheduled work is real, but it runs KERNEL handlers (`Contrib`
+    /// implementors driven by `RollupWorker`), not guest code — see the WO-053
+    /// census. Kept because the cycle trap's key space is the honest place to
+    /// record that the class exists.
     Scheduled,
+}
+
+impl HookClass {
+    /// The wire name — what a manifest writes and an operator reads. Shared
+    /// with the notification vocabulary (WO-043) on purpose: one set of event
+    /// names across the kernel, so `on_submit` means the same thing to a mail
+    /// rule and to a script.
+    pub fn wire(self) -> &'static str {
+        match self {
+            HookClass::BeforeInsert => "before_insert",
+            HookClass::Validate => "validate",
+            HookClass::OnSubmit => "on_submit",
+            HookClass::OnCancel => "on_cancel",
+            HookClass::OnWrite => "on_write",
+            HookClass::Scheduled => "scheduled",
+        }
+    }
+
+    /// The classes a manifest may subscribe to today. **This list is the
+    /// door** (WO-019's rule): a hook point that is not here is refused at
+    /// install with a 400, never accepted and silently never fired.
+    pub const SUBSCRIBABLE: [HookClass; 4] =
+        [HookClass::BeforeInsert, HookClass::Validate, HookClass::OnSubmit, HookClass::OnCancel];
+
+    pub fn from_wire(s: &str) -> Option<Self> {
+        Self::SUBSCRIBABLE.into_iter().find(|c| c.wire() == s)
+    }
+
+    /// May a hook of this class change the document it is shown?
+    ///
+    /// Stated, not inherited (WO-053 criterion 3). The edge classes fire on a
+    /// docstatus move, where ADR-009's lattice owns the value — they may
+    /// refuse the transition, they may not rewrite it.
+    pub fn may_mutate(self) -> bool {
+        matches!(self, HookClass::BeforeInsert | HookClass::Validate)
+    }
 }
 
 /// Typed contract errors — what a consumer (Desk, REST, plugin) sees.

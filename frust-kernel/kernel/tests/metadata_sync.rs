@@ -49,7 +49,7 @@ fn metadata_syncs_through_the_engine() {
     seed_doctype(&db, SUPPLIER_META);
 
     let sync = MetadataSync { base: cfg };
-    let applied = sync.sync(&db).expect("sync succeeds");
+    let applied = sync.sync(&db).expect("sync succeeds").applied;
     assert_eq!(applied, 2, "both doctypes applied");
 
     // engine bookkeeping exists: one history row per resource
@@ -60,7 +60,7 @@ fn metadata_syncs_through_the_engine() {
     assert_eq!(rows, 2, "engine history recorded both resources");
 
     // second sync is a true no-op (diff-based, not blind OVERWRITE)
-    let applied2 = sync.sync(&db).expect("re-sync succeeds");
+    let applied2 = sync.sync(&db).expect("re-sync succeeds").applied;
     assert_eq!(applied2, 0, "unchanged metadata -> empty diff -> no-op");
 
     // the lattice EVENT is live and enforces (WO-004 semantics, machine code)
@@ -103,7 +103,7 @@ fn resync_preserves_changefeed_history() {
     // metadata change: add an optional field -> engine applies a real diff
     db.sql_root("UPDATE doctype SET fields += { fieldname: 'notes', fieldtype: 'Text' } WHERE name = 'supplier2';")
         .unwrap();
-    let applied = sync.sync(&db).unwrap();
+    let applied = sync.sync(&db).unwrap().applied;
     assert_eq!(applied, 1, "field addition applied through the engine");
 
     let after = feed_len(&db);

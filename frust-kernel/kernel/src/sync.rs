@@ -4,7 +4,8 @@
 //! pipeline with history, classification, and locking â€” not blind OVERWRITE.
 
 use frust_orm::resource::{Conn, ConnFactory, EngineCtx, ResourceSpec, StmtResult, StorageLocation, Tenancy};
-use frust_orm::{MigrationOptions, ResourceMigrator};
+use frust_orm::{MigrationOptions, ObjectKind, ResourceMigrator, SchemaSnapshot};
+use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::boot::SchemaSync;
@@ -507,17 +508,108 @@ pub fn load_workflow(
 /// guard caught this during WO-019 criterion 6, and moving the query was the
 /// correct answer rather than widening the allowlist. The doctype name is
 /// escaped on the way in like every other value in this module.
-pub fn load_server_script(db: &Db, doctype: &str) -> Result<Option<String>, BrokerError> {
+/// A DocType's whole validate chain plus the field envelope it may write into.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HookPlan {
+    /// Owner first, then extensions in install order.
+    pub entries: Vec<ScriptEntry>,
+    /// Field names the DocType declares. Carried alongside so an app writing a
+    /// field it never declared can be refused BY NAME (WO-050 criterion 6)
+    /// rather than silently stripped — the failure WO-049 tripped over.
+    pub declared: Vec<String>,
+}
+
+/// One app's contribution to a DocType's validate chain.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptEntry {
+    /// The contributing app. `None` = a kernel-created doctype's own script
+    /// (no owning bundle), which is still "the owner" for ordering purposes.
+    pub app: Option<String>,
+    pub script: String,
+    /// WO-053: which lifecycle event this entry subscribes to. Stored (meta
+    /// v8), never inferred — an entry whose hook was lost must not silently
+    /// become a `validate`, so boot backfills it and the reader refuses what
+    /// it cannot name.
+    pub hook: crate::contract::HookClass,
+    /// Is this the DocType's OWNER — the app named on the doctype record?
+    ///
+    /// Carried rather than recomputed downstream, because "who is the owner"
+    /// must be decided in exactly one place: the moment the list is read.
+    pub is_owner: bool,
+}
+
+/// **WO-050: every app's validate script for this DocType, OWNER FIRST.**
+///
+/// The ordering is the guarantee, not a convenience. WO-049 measured what the
+/// single-slot shape did when a second app was allowed in: the extension
+/// *replaced* the owner's hook silently, `owner_ran = null`. So the owner's
+/// entry is placed first here, at the read, and the dispatcher runs the list in
+/// order — an extension can add to the chain and can reject a write, but it can
+/// never displace the invariant the DocType's own app declared.
+///
+/// Extensions follow in stored order, which is install order: deterministic,
+/// recorded, boring. Two extensions that disagree are refused at install
+/// (ADR-015 refuse-ambiguity), so ordering never has to arbitrate a conflict.
+pub fn load_server_scripts(db: &Db, doctype: &str) -> Result<HookPlan, BrokerError> {
     let n = crate::surql::escape_str(doctype);
-    let rows =
-        db.sql_root(&format!("SELECT server_script FROM doctype WHERE name = '{n}' LIMIT 1;"))?;
-    let text = rows
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|r| r.get("server_script"))
-        .and_then(|s| s.as_str())
-        .unwrap_or("");
-    Ok(if text.trim().is_empty() { None } else { Some(text.to_string()) })
+    let rows = db.sql_root(&format!(
+        "SELECT app, server_script, fields FROM doctype WHERE name = '{n}' LIMIT 1;"
+    ))?;
+    let Some(row) = rows.as_array().and_then(|a| a.first()) else { return Ok(HookPlan::default()) };
+    let owner = row.get("app").and_then(|a| a.as_str()).map(str::to_string);
+
+    let raw = row.get("server_script");
+    let mut entries: Vec<ScriptEntry> = match raw {
+        // the v7 shape
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter_map(|it| {
+                let script = it.get("script")?.as_str()?.to_string();
+                if script.trim().is_empty() {
+                    return None;
+                }
+                let app = it.get("app").and_then(|a| a.as_str()).map(str::to_string);
+                let is_owner = app == owner;
+                // A pre-v8 entry has no `hook`; boot's migration backfills it,
+                // and a doctype CREATED between boot and now can still lack it
+                // — the same tolerate-the-old-shape-on-read rule v7 set.
+                let hook = it
+                    .get("hook")
+                    .and_then(|h| h.as_str())
+                    .map_or(Some(crate::contract::HookClass::Validate), crate::contract::HookClass::from_wire)?;
+                Some(ScriptEntry { app, script, is_owner, hook })
+            })
+            .collect(),
+        // A pre-v7 scalar. Boot migrates these, but a doctype CREATED between
+        // boot and now (POST /doctype writes whatever it was given) can still
+        // be a string — so read it rather than refuse it. Tolerating the old
+        // shape on the read path is what makes the migration a non-event.
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => {
+            vec![ScriptEntry {
+                app: owner.clone(),
+                script: s.clone(),
+                is_owner: true,
+                hook: crate::contract::HookClass::Validate,
+            }]
+        }
+        _ => Vec::new(),
+    };
+
+    // owner first; extensions keep their stored (install) order
+    entries.sort_by_key(|e| !e.is_owner);
+
+    // The declared field names travel WITH the scripts, from the same row and
+    // the same query — so the loudness check in the dispatcher costs nothing
+    // extra and can never disagree with the metadata the scripts were read from.
+    let declared = row
+        .get("fields")
+        .and_then(|f| f.as_array())
+        .map(|a| {
+            a.iter().filter_map(|f| f.get("fieldname")?.as_str().map(str::to_string)).collect()
+        })
+        .unwrap_or_default();
+
+    Ok(HookPlan { entries, declared })
 }
 
 /// WO-043: the notification rules watching one DocType.
@@ -587,12 +679,181 @@ pub fn load_doctypes(db: &Db) -> Result<Vec<DocTypeDef>, BrokerError> {
     serde_json::from_value(v).map_err(|e| BrokerError::Db { detail: format!("bad doctype metadata: {e}") })
 }
 
+/// What a user-DocType sync did, and what it deliberately left alone.
+#[derive(Debug, Clone, Default)]
+pub struct SyncOutcome {
+    pub applied: usize,
+    /// `"<doctype>.<field>"` for each column the schema holds that no DocType
+    /// declares. Named so an operator can list them; see `BootReport`.
+    pub orphans: Vec<String>,
+}
+
+/// The last-applied schema objects per resource, read from the engine's own
+/// history table.
+///
+/// The migrator diffs metadata against **history**, not against the live
+/// schema, so history is where an orphan actually lives: it is a field the
+/// engine once applied and the metadata has since stopped declaring.
+fn history_fields(db: &Db) -> Result<HashMap<String, BTreeMap<String, String>>, BrokerError> {
+    const Q: &str =
+        "SELECT name, version, snapshot FROM _framework_migration ORDER BY version DESC;";
+    // Before the engine has ever run in this database the history table does
+    // not exist, and SurrealDB makes that an error rather than an empty set.
+    // No history means no orphans — matched on that ONE condition so a
+    // genuinely broken read still fails loudly (the WO-043 lesson).
+    let rows = match db.sql_root(Q) {
+        Ok(v) => v,
+        Err(e) if format!("{e:?}").contains("'_framework_migration' does not exist") => {
+            return Ok(HashMap::new())
+        }
+        Err(e) => return Err(e),
+    };
+    let mut out: HashMap<String, BTreeMap<String, String>> = HashMap::new();
+    for row in rows.as_array().map(Vec::as_slice).unwrap_or_default() {
+        let Some(name) = row["name"].as_str() else { continue };
+        // version-DESC: the first row seen for a resource is its current state
+        if out.contains_key(name) {
+            continue;
+        }
+        let Some(raw) = row["snapshot"].as_str() else { continue };
+        let snap: SchemaSnapshot = serde_json::from_str(raw).map_err(|e| BrokerError::Db {
+            detail: format!(
+                "corrupt schema snapshot for '{name}': {e} — refusing to guess what the \
+                 schema used to be"
+            ),
+        })?;
+        out.insert(
+            name.to_string(),
+            snap.objects
+                .values()
+                .filter(|o| o.kind == ObjectKind::Field)
+                .map(|o| (o.name.clone(), o.define_sql.clone()))
+                .collect(),
+        );
+    }
+    Ok(out)
+}
+
+/// **WO-052: an orphan column is CARRIED, not merely tolerated.**
+///
+/// Appends every field the history holds and the metadata no longer declares
+/// back onto the resource's desired schema, verbatim. Returns the orphaned
+/// field names.
+///
+/// Tolerating the refusal instead — classifying it as drift and moving on —
+/// boots the kernel, but the migrator abandons the **whole resource** on a
+/// refused diff (`continue`), so that DocType could never take another schema
+/// change again: the owner's next field add would be skipped with nothing but
+/// an "orphan" line to show for it. Silent, and exactly the class this project
+/// exists to refuse. Carrying the column makes the diff genuinely empty, so
+/// the DocType keeps evolving around its orphan.
+///
+/// `reclaiming` is the one field deliberately NOT carried — see
+/// [`MetadataSync::reclaim`].
+fn carry_orphans(
+    spec: &mut ResourceSpec,
+    history: &HashMap<String, BTreeMap<String, String>>,
+    reclaiming: Option<&str>,
+) -> Vec<String> {
+    let Some(fields) = history.get(&format!("{}__{}", spec.app, spec.name)) else {
+        return Vec::new();
+    };
+    let declared = SchemaSnapshot::from_sql(&spec.name, &spec.schema);
+    // an unterminated last statement would silently swallow the first carried
+    // one — the two DEFINEs would concatenate into one unparseable statement
+    if !spec.schema.trim_end().ends_with(';') {
+        spec.schema.push(';');
+    }
+    let mut orphans = Vec::new();
+    for (field, define_sql) in fields {
+        // `lines.*` belongs to `lines`: a child-object field is declared iff
+        // its parent is, or a re-declared table would orphan its own children.
+        let base = field.split('.').next().unwrap_or(field);
+        if declared.objects.contains_key(&format!("field:{base}")) {
+            continue;
+        }
+        if reclaiming == Some(base) {
+            continue;
+        }
+        spec.schema.push_str(define_sql);
+        spec.schema.push(';');
+        if base == field {
+            orphans.push(field.clone());
+        }
+    }
+    orphans
+}
+
+/// Is this migration error the destructive-DROP refusal (i.e. drift), rather
+/// than a real failure?
+///
+/// Matched on the refusal's own wording, deliberately narrowly: anything this
+/// does not recognise stays fatal. A broad match here would turn real schema
+/// failures into "orphans" and boot straight past them.
+fn is_orphan_refusal(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("refusing destructive") && m.contains("remove field")
+}
+
+/// The field names inside a `REMOVE FIELD x` refusal message.
+fn orphan_fields(message: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = message;
+    while let Some(i) = rest.to_ascii_uppercase().find("REMOVE FIELD ") {
+        let after = &rest[i + "REMOVE FIELD ".len()..];
+        let end = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(after.len());
+        if end > 0 {
+            out.push(after[..end].to_string());
+        }
+        rest = &after[end..];
+    }
+    out
+}
+
+/// Resource names are `app__doctype` (or bare `doctype`); the orphan should be
+/// reported against the DocType an operator would recognise.
+fn resource_doctype(name: &str) -> &str {
+    name.rsplit("__").next().unwrap_or(name)
+}
+
 impl MetadataSync {
     /// Sync every user DocType through the ported engine. Returns the number
     /// of resources applied. Destructive changes stay gated (engine default:
     /// allow_destructive = false); classification runs under Dev posture at
     /// boot â€” the strict prod apply path arrives with the module-6 surface.
-    pub fn sync(&self, db: &Db) -> Result<usize, BrokerError> {
+    pub fn sync(&self, db: &Db) -> Result<SyncOutcome, BrokerError> {
+        self.sync_inner(db, None)
+    }
+
+    /// **Reclaim one orphan column: the acknowledged, online destructive act.**
+    ///
+    /// The one place `allow_destructive` is ever set, and it is scoped three
+    /// ways so it cannot become a blanket drop: only the target DocType's
+    /// resource is migrated, every *other* orphan on it is still carried, and
+    /// the migrator's own drop path does the work — so the history snapshot
+    /// converges with the schema. A hand-issued `REMOVE FIELD` would drop the
+    /// column and leave history still claiming it, and the next boot would
+    /// report a phantom orphan for a column that no longer exists.
+    pub fn reclaim(&self, db: &Db, doctype: &str, column: &str) -> Result<(), BrokerError> {
+        let out = self.sync_inner(db, Some((doctype, column)))?;
+        if out.applied == 0 {
+            return Err(BrokerError::Db {
+                detail: format!(
+                    "reclaim of '{doctype}.{column}' applied nothing — the column is not in \
+                     this DocType's applied schema"
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn sync_inner(
+        &self,
+        db: &Db,
+        reclaim: Option<(&str, &str)>,
+    ) -> Result<SyncOutcome, BrokerError> {
         // WO-026: a schema sync can change any doctype — drop cached metadata.
         crate::broker::invalidate_meta(self.base.tenant_id().as_str());
         let doctypes = load_doctypes(db)?;
@@ -601,28 +862,80 @@ impl MetadataSync {
             .iter()
             .flat_map(|dt| dt.aggregates.iter().map(|a| a.rollup.clone()))
             .collect();
+        let history = history_fields(db)?;
+        let mut orphans = Vec::new();
         let mut specs = Vec::new();
         for dt in &doctypes {
-            specs.push(doctype_spec_in(dt, &rollup_targets)?);
+            if let Some((target, _)) = reclaim {
+                if dt.name != target {
+                    continue;
+                }
+            }
+            let mut spec = doctype_spec_in(dt, &rollup_targets)?;
+            let reclaiming = reclaim.and_then(|(t, c)| (dt.name == t).then_some(c));
+            orphans.extend(
+                carry_orphans(&mut spec, &history, reclaiming)
+                    .into_iter()
+                    .map(|f| format!("{}.{f}", dt.name)),
+            );
+            specs.push(spec);
+        }
+        if reclaim.is_some() && specs.is_empty() {
+            return Err(BrokerError::InvalidValue {
+                detail: format!("unknown doctype '{}'", reclaim.unwrap_or_default().0),
+            });
         }
         let conns = KernelConns { base: self.base.clone() };
         let tenancy = StrategyTenancy { target: self.base.clone() };
         let ctx = EngineCtx { conns: &conns, tenancy: &tenancy, bootstrap_sql: None };
         let migrator = ResourceMigrator::with_holder(format!("kernel-{}", std::process::id()));
+        let opts = MigrationOptions {
+            // the ONLY place this is ever true, and only for the single
+            // acknowledged column above
+            allow_destructive: reclaim.is_some(),
+            ..MigrationOptions::default_for_dev()
+        };
         let report = migrator
-            .migrate_tenant_with(&ctx, &specs, "default", MigrationOptions::default_for_dev())
+            .migrate_tenant_with(&ctx, &specs, "default", opts)
             .map_err(|e| BrokerError::Db { detail: format!("metadata sync: {e}") })?;
-        if !report.is_ok() {
+        // ── WO-052: orphan columns are drift, not a boot failure ──
+        //
+        // A column present in the schema that no DocType declares is a
+        // *legitimate* outcome: an extension uninstall detaches its field from
+        // metadata and deliberately leaves the column and its data behind
+        // (WO-019's "metadata detaches, data remains", extended cross-app by
+        // WO-050). The migrator correctly classifies removing it as destructive
+        // and correctly refuses to apply that without acknowledgement.
+        //
+        // What was wrong was the CONSEQUENCE. Boot treated the refusal as a
+        // fatal error, so a data-safety guard inverted into an availability
+        // outage: the kernel would not start, and `BootOptions` had no remedy.
+        // WO-051's gate found a store in exactly that state.
+        //
+        // So: a refusal to DROP is separated from every other error. It is
+        // reported as a named orphan and applied to nothing. Every other error
+        // still fails, unchanged — this narrows what is fatal, it does not
+        // weaken what acknowledgement a destructive APPLY requires.
+        let (drift, fatal): (Vec<_>, Vec<_>) =
+            report.errors.iter().partition(|e| is_orphan_refusal(&e.message));
+        if !fatal.is_empty() {
             return Err(BrokerError::Db {
-                detail: format!("metadata sync errors: {:?}", report.errors),
+                detail: format!("metadata sync errors: {fatal:?}"),
             });
         }
-        Ok(report.applied.len())
+        orphans.extend(drift.iter().flat_map(|e| {
+            orphan_fields(&e.message)
+                .into_iter()
+                .map(move |f| format!("{}.{f}", resource_doctype(&e.name)))
+        }));
+        orphans.sort();
+        orphans.dedup();
+        Ok(SyncOutcome { applied: report.applied.len(), orphans })
     }
 }
 
 impl SchemaSync for MetadataSync {
-    fn sync_user_doctypes(&self, db: &Db) -> Result<usize, BrokerError> {
+    fn sync_user_doctypes(&self, db: &Db) -> Result<SyncOutcome, BrokerError> {
         self.sync(db)
     }
 }
