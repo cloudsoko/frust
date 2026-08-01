@@ -291,6 +291,11 @@ impl Rest {
         // process, not for anyone's data.
         match segs.as_slice() {
             ["health"] => return Ok(serde_json::json!({ "ok": true })),
+            // WO-055 G5: liveness above answers for the PROCESS; readiness
+            // answers for what actually booted. No auth and no tenant, same as
+            // health — a readiness probe that needs a credential is a readiness
+            // probe nobody wires up.
+            ["ready"] => return Ok(crate::boot::readiness()),
             ["login"] => {
                 let ctx = self.login_context(&json, host)?;
                 return self.login(ctx, &json);
@@ -799,11 +804,28 @@ impl Rest {
             }
 
             ["write", doctype] => {
+                // **WO-055 G4: an unknown key is refused, not discarded.**
+                // `op` was accepted and silently dropped, so a client that sent
+                // `{"op":"create", "record": …}` believing it forced a create
+                // got an update and no complaint. On the WRITE path that is the
+                // silent-wrong class: the caller's stated intent and what
+                // happened disagreed, and nothing said so.
+                known_keys(&json, &["doc", "record"])?;
                 let doc = parse_doc(json.get("doc"))?;
                 let record = json.get("record").and_then(|r| r.as_str());
                 let op = if record.is_some() { WriteOp::Update } else { WriteOp::Create };
                 let out = ctx.broker.db_write(caller, &HookChain::default(), op, doctype, record, &doc)?;
-                Ok(serde_json::json!({ "created": out }))
+                // **G3, additive.** `created` has always carried the ROW, so
+                // turning it into a boolean would break every reader; instead
+                // `action` says which happened and `record` gives the id
+                // without digging. `created` is unchanged and deprecated in the
+                // docs — the additive shape the evolution policy requires.
+                let id = out.get("id").cloned().unwrap_or(serde_json::Value::Null);
+                Ok(serde_json::json!({
+                    "created": out,
+                    "action": if op == WriteOp::Create { "created" } else { "updated" },
+                    "record": id,
+                }))
             }
 
             ["aggregate", doctype] => {
@@ -1645,6 +1667,24 @@ impl Rest {
     }
 }
 
+/// Refuse any top-level key the route does not understand.
+///
+/// A silently-ignored field is a lie the client cannot see: it asked for
+/// something and got told nothing. Naming the unknown key AND the accepted
+/// ones makes the refusal actionable in one round trip.
+fn known_keys(json: &serde_json::Value, allowed: &[&str]) -> Result<(), BrokerError> {
+    let Some(obj) = json.as_object() else { return Ok(()) };
+    if let Some(bad) = obj.keys().find(|k| !allowed.contains(&k.as_str())) {
+        return Err(BrokerError::InvalidValue {
+            detail: format!(
+                "FRUST:E_UNKNOWN_FIELD: '{bad}' is not a field this route accepts                  (it takes {}). It was previously ignored in silence, which is why                  it is refused now.",
+                allowed.iter().map(|a| format!("'{a}'")).collect::<Vec<_>>().join(", ")
+            ),
+        });
+    }
+    Ok(())
+}
+
 fn require_manager(caller: &Caller) -> Result<(), BrokerError> {
     if caller.role == "manager" {
         Ok(())
@@ -1672,6 +1712,9 @@ fn header(req: &tiny_http::Request, name: &str) -> String {
 fn status_for(e: &BrokerError) -> u16 {
     match e {
         BrokerError::PermissionDenied { detail } if detail == "E_UNAUTHENTICATED" => 401,
+        // WO-055 G1: a rejected login is the caller's credentials, not a
+        // server fault - 401, and never carrying the transport's own words
+        BrokerError::PermissionDenied { detail } if detail == crate::db::AUTH_REJECTED => 401,
         // live budget: not an error, a capacity answer â€” poll instead
         BrokerError::Db { detail } if detail.contains("FRUST:E_SUB_BUDGET") => 429,
         // tenant door budget: the standard "slow down" answer, with a hint

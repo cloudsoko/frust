@@ -9,6 +9,8 @@
 //!   `--accept-meta-migrations` (the two-step ack). A fresh DB (no version
 //!   record) is first boot and applies without ack — nothing exists to lose.
 
+use std::sync::{Mutex, OnceLock};
+
 use crate::contract::BrokerError;
 use crate::db::Db;
 use crate::meta::{identity_ddl, meta_ddl, BOOT_LOCK_TABLE, META_SCHEMA_VERSION, META_TABLE};
@@ -225,7 +227,50 @@ fn boot_locked(db: &Db, opts: &BootOptions, sync: &dyn SchemaSync) -> Result<Boo
     publish_orphans(db.tenant_id(), &synced.orphans, None);
 
     // A7 step 5: verdict
-    Ok(BootReport { applied_meta: applied, meta_version: now, doctypes, orphan_columns: synced.orphans })
+    let report =
+        BootReport { applied_meta: applied, meta_version: now, doctypes, orphan_columns: synced.orphans };
+    mark_ready(db.tenant_id(), &report);
+    Ok(report)
+}
+
+// ── WO-055 G5: readiness, said out loud ─────────────────────────────────────
+
+/// What has actually finished booting, per tenant.
+///
+/// Process-scoped on purpose: readiness is a property of the PROCESS, and with
+/// N tenants in one process "ready" means every tenant this process serves got
+/// through boot. Only `boot()` writes here, on its success path, so the flag
+/// cannot be true for a tenant that did not boot.
+static READY: OnceLock<Mutex<Vec<serde_json::Value>>> = OnceLock::new();
+
+fn ready_slots() -> &'static Mutex<Vec<serde_json::Value>> {
+    READY.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn mark_ready(tenant: &str, report: &BootReport) {
+    let mut slots = ready_slots().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    slots.retain(|s| s.get("tenant").and_then(serde_json::Value::as_str) != Some(tenant));
+    slots.push(serde_json::json!({
+        "tenant": tenant,
+        "meta_version": report.meta_version,
+        "doctypes": report.doctypes,
+        "orphan_columns": report.orphan_columns,
+    }));
+}
+
+/// The `/ready` answer.
+///
+/// **What this can and cannot tell you, stated because the difference matters
+/// operationally:** the kernel does not accept connections until boot
+/// finishes, so over HTTP this has never been observed `false` — during the
+/// ~25 s accepting-boot window (WO-019) the honest signal is a refused
+/// connection, and a health check must budget for it or it will kill a kernel
+/// that is working. What this endpoint adds is the *positive* signal and the
+/// boot facts to assert against, separated from `/health`, which answers for
+/// the process and knows nothing about any tenant.
+pub fn readiness() -> serde_json::Value {
+    let slots = ready_slots().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    serde_json::json!({ "ready": !slots.is_empty(), "tenants": slots.clone() })
 }
 
 /// Reads `_tenant_policy` into the door buckets (WO-013). Boot owns the read

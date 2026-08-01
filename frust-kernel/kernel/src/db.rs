@@ -83,12 +83,76 @@ pub(crate) fn agent_for(endpoint: &str) -> ureq::Agent {
                 .clamp(2, 16)
                 + 8;
             ureq::Agent::config_builder()
+                // **WO-055 (G1): a non-2xx must not throw its body away.**
+                // ureq's default turns a 4xx into `Error::StatusCode(404)` and
+                // drops the response, which is why every failed login used to
+                // read `signin transport: http status: 404` — the status alone
+                // cannot tell a wrong password from a missing database, and
+                // SurrealDB puts that distinction in the BODY. Every call site
+                // funnels through `read_json`, which fails on non-2xx below, so
+                // turning this off does not make any status silently pass.
+                .http_status_as_error(false)
                 .max_idle_connections_per_host(idle)
                 .max_idle_connections(idle)
                 .build()
                 .into()
         })
         .clone()
+}
+
+/// The marker a rejected login carries, so `status_for` can answer 401 without
+/// re-deriving why. Deliberately a constant rather than prose: the mapping
+/// keys on it.
+pub const AUTH_REJECTED: &str = "FRUST:E_AUTH_REJECTED";
+
+/// SurrealDB's own words for a failure, preferring the specific field.
+///
+/// The envelope is `{code, details, description, information}`; `information`
+/// carries the useful sentence ("No record was returned", "The database 'x'
+/// does not exist"), `details` the generic one ("Not found").
+fn surreal_message(body: &serde_json::Value) -> String {
+    for key in ["information", "details", "description"] {
+        if let Some(s) = body.get(key).and_then(serde_json::Value::as_str) {
+            if !s.is_empty() {
+                return s.to_string();
+            }
+        }
+    }
+    body.to_string()
+}
+
+/// The same, from a body that may not be JSON at all.
+fn surreal_message_of(text: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(text)
+        .map_or_else(|_| text.trim().to_string(), |v| surreal_message(&v))
+}
+
+/// **WO-055 G1: is this signin failure a rejection of the CREDENTIALS, or is
+/// the store itself missing or broken?**
+///
+/// Measured against SurrealDB 3.2.0, because the status alone cannot answer it:
+///
+/// | case                        | HTTP | `information`                        |
+/// |-----------------------------|------|--------------------------------------|
+/// | wrong password / no user    | 404  | `No record was returned`             |
+/// | database does not exist     | 404  | `The database 'x' does not exist`    |
+/// | namespace does not exist    | 404  | `The namespace 'x' does not exist`   |
+/// | store present but broken    | 400  | `The record access signin query failed` |
+/// | access method missing       | 400  | request problem                      |
+///
+/// So a bare `404 -> 401` mapping would tell a user "wrong password" when
+/// their tenant's database had vanished. This recognises the ONE rejection
+/// marker and treats everything else as a server fault — the safe direction,
+/// because "the database is gone" reported as "your password is wrong" sends
+/// the operator to the only place the problem isn't.
+/// Test seam for the classifier: the recorded-responses table in
+/// `tests/login_errors.rs` runs against the real function rather than a copy.
+pub fn is_credential_rejection_for_test(status: u16, body: &str) -> bool {
+    is_credential_rejection(status, body)
+}
+
+fn is_credential_rejection(status: u16, body: &str) -> bool {
+    status == 404 && surreal_message_of(body).contains("No record was returned")
 }
 
 // ── WO-044: the root token ───────────────────────────────────────────────────
@@ -292,11 +356,35 @@ impl Db {
     }
 
     fn read_json(res: &mut ureq::http::Response<ureq::Body>) -> Result<serde_json::Value, BrokerError> {
+        let (status, text) = Self::read_text(res)?;
+        if !(200..300).contains(&status) {
+            // The status stays IN the message: `keyguard` recognises its
+            // deliberately-forged probe's healthy refusal by finding "401"
+            // here, and ADR-013's guard is fail-closed — an error it cannot
+            // recognise refuses boot. (It did exactly that when an earlier
+            // cut of this change fed it a parse error instead.)
+            return Err(BrokerError::Db {
+                detail: format!("http {status}: {}", surreal_message_of(&text)),
+            });
+        }
+        serde_json::from_str(&text).map_err(|e| BrokerError::Db { detail: format!("parse: {e}") })
+    }
+
+    /// Status and RAW body, whatever the status.
+    ///
+    /// Deliberately does not require JSON: a non-2xx body is not guaranteed to
+    /// be any — SurrealDB answers a forged token with the plain sentence
+    /// "There was a problem with authentication". Demanding JSON of an error
+    /// turns "you are not authorised" into "expected value at line 1 column 1".
+    fn read_text(
+        res: &mut ureq::http::Response<ureq::Body>,
+    ) -> Result<(u16, String), BrokerError> {
+        let status = res.status().as_u16();
         let text = res
             .body_mut()
             .read_to_string()
             .map_err(|e| BrokerError::Db { detail: format!("read body: {e}") })?;
-        serde_json::from_str(&text).map_err(|e| BrokerError::Db { detail: format!("parse: {e}") })
+        Ok((status, text))
     }
 
     /// SurrealDB uses optimistic concurrency: concurrent writers can get
@@ -816,11 +904,32 @@ impl Db {
             .header("Content-Type", "application/json")
             .send(body)
             .map_err(|e| BrokerError::Db { detail: format!("signin transport: {e}") })?;
-        let parsed = Self::read_json(&mut res)?;
+        // **WO-055 G1.** Read the body whatever the status, then classify:
+        // rejected credentials are the caller's problem (401), anything else
+        // is ours (500). The old code mapped every non-success to `Db`, so a
+        // typo answered `500 signin transport: http status: 404` - a false
+        // report that the server was broken, on the busiest error path there
+        // is, with an internal transport detail leaked to an unauthenticated
+        // caller.
+        let (status, text) = Self::read_text(&mut res)?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        if !(200..300).contains(&status) {
+            return Err(if is_credential_rejection(status, &text) {
+                BrokerError::PermissionDenied { detail: AUTH_REJECTED.into() }
+            } else {
+                // the store, not the credentials - and it says which
+                BrokerError::Db {
+                    detail: format!("signin failed: http {status}: {}", surreal_message_of(&text)),
+                }
+            });
+        }
         let token = parsed
             .get("token")
             .and_then(|t| t.as_str())
-            .ok_or_else(|| BrokerError::PermissionDenied { detail: format!("signin failed: {parsed}") })?
+            .ok_or_else(|| BrokerError::Db {
+                detail: format!("signin returned no token: {}", surreal_message_of(&text)),
+            })?
             .to_string();
         cache.lock().unwrap().insert(user.to_string(), token.clone());
         Ok(token)
