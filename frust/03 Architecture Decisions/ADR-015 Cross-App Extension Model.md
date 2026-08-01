@@ -1,6 +1,6 @@
 ---
 tags: [frust, adr, apps, extension, milestone-4]
-status: DIRECTION APPROVED by Boss 2026-07-31 — declared-extension-as-manifest-content is the ratified direction; FINAL RATIFICATION GATED on [[WO-049 Extension Probe]] (the pre-grill verification task + an empirical probe of the three questions' leans — spike gates ADR, per house convention). The leans below are positions to be confirmed or overturned by the probe's evidence, not decided text.
+status: ACCEPTED 2026-07-31 — ratified on [[WO-049 Extension Probe]]'s evidence (all 5 predictions confirmed, both lean-corrections absorbed, see Ratification section). Build = [[WO-050 Extension Mechanism]].
 created: 2026-07-31
 ---
 
@@ -37,6 +37,20 @@ Stated precisely, because the first draft of this position got it wrong and the 
 
 Fields + lifecycle hooks. UI injection rides Tier-1 automatically — the Desk renders whatever metadata exists. Everything else (extension-to-extension dependencies, marketplace ordering) waits for evidence.
 
-## Evidence base for the grill
+## Ratification (2026-07-31, on WO-049's evidence)
 
-A1's refusal message (the exact constraint to relax) · the accounting seed as owner-app test case · [[v2.0 Deployability Gate]] P-2.2 row (the trade being re-priced) · topcoat #214 (the owner-evolution shape in the wild).
+**Vocabulary (the (a)-entanglement, sourced 5 ways):** validate-only is **unbuilt delivery, not a ratified boundary** — ADR-007's profile-table axis is *verbs* with no lifecycle row; ADR-006 already keys its cycle rule on a plural `(record-id, hook-class)` and its evolution policy is additive-only; `HookClass{Validate,OnWrite,Scheduled}` exists in `contract.rs` with only Validate wired. Widening the vocabulary is **ordinary build work under REQ-2.2.1**, not an ADR-007 amendment. (Deferred out of WO-050 — composition lands on `validate` first; vocabulary widening is its own follow-on.)
+
+**The binding build order — THE MECHANISM LANDS BEFORE THE BOUNDARY MOVES.** The probe's headline: with `owns` bypassed, app B **silently replaced** app A's hook — `owner_ran = null`, no error, no log, no trace. P-2.2 in its original form, and `owns` is the only thing preventing it today. Therefore a naive relaxation enables silent override, not composition, and **`owns` is relaxed only as the LAST step of WO-050**, behind: `server_script` scalar→list of `{app, script}` (ADR-008 migration discipline), owner-first un-overridable dispatch, pool + WO-048 cache keys widened to `(tenant, doctype, app)`, `app` on the `hook_dispatch` span, per-app registry rows so uninstall detaches the extension and nothing else.
+
+**(a) corrected per the probe:** "the owner's hooks always run and cannot be overridden" is **not a property the system has — it is one the build must create**, stated as an obligation with its own failing control: the probe's silent-override scenario becomes the permanent regression test (B may never replace A).
+
+**(b) veto RULED:** extension hooks **may reject** — a validate that cannot reject is not a validate, and rejection is *tightening*, which is additive-only in spirit. Vetoes are attributed per-app in the typed error (the trace names the rejecting app). **No suppression mechanism in v1** (YAGNI). Refuse-ambiguity governs *conflicting mutations* (two extensions writing the same field → install-time refusal naming both apps), not vetoes — a veto is not ambiguous, it is a rejection with a name.
+
+**(c) confirmed, cheaper than assumed:** the owner-evolution seam exists end-to-end with **no new storage** — `plan_unchecked` already loads the whole-tenant view (already used cross-app for rollup targets), `installed_app.manifest` holds every declared surface verbatim and is re-parsed live in production, `destructive()` already yields casualty strings. WO-050 wires the call: an owner update that breaks a declared extension surface **refuses naming the extension casualty**, never silently disables.
+
+**Probe's unpredicted finding → build obligation:** the WO-009 envelope filter **silently strips undeclared fields** — an extension that writes a field it failed to declare gets no error and no data. In WO-050, an extension writing an undeclared field is a **typed, loud error**. Declare-or-lose-silently is the exact failure class this project refuses.
+
+## Evidence
+
+[[2026-07-31 WO-049 extension probe]] (`extension_probe.rs`, 3/3, asserts-whichever-reality-holds) · A1's refusal message · the accounting seed as owner-app test case · [[v2.0 Deployability Gate]] P-2.2 row (the trade re-priced) · topcoat #214 (the owner-evolution shape in the wild).

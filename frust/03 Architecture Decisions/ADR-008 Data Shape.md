@@ -45,6 +45,18 @@ Measured teeth for the second trigger: hook-envelope and changefeed costs scale 
 4. User-DocType sync from DB metadata
 5. boot-check verdict (prod: pending *user* migrations never auto-apply; pending *meta* migrations per A5)
 
+## Amendment — Orphan Columns (ruled 2026-07-31, from WO-051's blocker)
+
+> [!important] The honest-uninstall promise and the destructive-change guard collided (WO-050's extension uninstall left a store that refused to boot: `E_BOOT_DB: REMOVE FIELD crm_followup`, no operator remedy). Neither is wrong alone; the ruling reconciles them:
+> 1. **Meta stays fail-closed, untouched** — binary-authoritative, this ADR's core.
+> 2. **A user-doctype schema SUPERSET at boot — a column present in the DB but undeclared in metadata — is an ORPHAN, never a boot refusal.** The destructive guard's purpose is refusing to *apply* destructive DDL without acknowledgment; refusing to *boot* over a plan it will not apply inverts a data-safety guard into an availability outage. Sync applies nothing to an orphan; boot proceeds; the orphan is **named** — boot report + metrics — never silent.
+> 3. **Reclaiming an orphan (actually dropping the column) is an explicit acknowledged act** through the online update path, refusal-names-casualty per REQ-6.6.2. No new boot flag: boot-time destructive pending only arises from drift, and drift = orphan.
+> 4. **Extension uninstall's contract, precised:** the field leaves metadata; the column and its data remain as a *named orphan*; **re-install re-adopts it** — the enable-restores semantics extended, the data comes back.
+>
+> Build: [[WO-052 Orphan Columns]]. The missing regression that would have caught this — *restart the kernel after an extension uninstall* — ships with it.
+>
+> **Implementation sharpened by the build (2026-08-01, binding): the orphan is CARRIED, not merely tolerated.** The literal reading of point 2 — classify the refusal as drift, boot anyway — passes the amendment's own criteria **and ships a silent defect**: the migrator abandons a *whole resource* on a refused diff, so a DocType with one orphan would silently freeze against every future schema change (the owner's next field add skipped, boot green, no error). The shipped mechanism re-appends every orphan's `define_sql` from migration history onto the desired schema so the diff is *genuinely empty* — the DocType keeps evolving, the orphan keeps its data. Pinned by test: an orphaned DocType still takes the owner's next release. Anyone re-implementing from this note implements *carry*, not tolerate. (Corollary, same build: reclaim goes **through the migrator**, never a hand-issued `REMOVE FIELD` — history would still claim the column and the next boot would report a phantom orphan.)
+
 ## Parked for ADR-009 (recorded, not decided)
 
 Table-as-queue via `LIVE SELECT` workers leans right, but live queries are this vault's last **unverified** SurrealDB behavior, and the v3.2.0 pattern (#7432, #7433) is *silent* misbehavior. Lost events in a queue aren't a bug report — they're lost jobs. The ADR-009 work order MUST carry a WO-002-criterion-3-shaped named criterion: **prove a LIVE SELECT worker misses nothing across reconnects and restarts** before the queue bet is accepted. Even odds it finds issue #3.
