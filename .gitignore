@@ -33,6 +33,7 @@ node_modules/
 *.log
 *.err
 /mail-outbox/
+**/mail-outbox/
 **/mail-capture/
 
 # Obsidian per-machine workspace state — the NOTES are committed, the editor's
