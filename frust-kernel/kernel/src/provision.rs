@@ -101,3 +101,56 @@ pub fn export_target(target: &ResolvedTenant) -> (String, Option<String>, bool) 
         plan.is_tenant_isolated(),
     )
 }
+
+/// Empty and recreate the database selected by the tenancy strategy before a
+/// restore. `surreal import` is additive, so importing over the live database
+/// is not a restore and can fail after applying only part of a dump.
+///
+/// The database name is not accepted as a string: it comes from the same
+/// private-constructor target used by every request and backup plan. Recovery
+/// performs its confirmation and safety-backup checks before reaching here.
+pub(crate) fn reset_database_for_restore(target: &ResolvedTenant) -> Result<(), BrokerError> {
+    let plan = target.strategy().backup_plan(target);
+    if !plan.is_tenant_isolated() {
+        return Err(BrokerError::InvalidValue {
+            detail: "tenant restore refused: the strategy's database contains shared tenant data"
+                .into(),
+        });
+    }
+    let database = plan.database.ok_or_else(|| BrokerError::InvalidValue {
+        detail: "restore requires a database-scoped backup plan".into(),
+    })?;
+    crate::db::scoped_db(target).sql_root_ns(&format!(
+        "REMOVE DATABASE {database}; DEFINE DATABASE {database};"
+    ))?;
+    Ok(())
+}
+
+/// Replace SurrealDB's exported `[REDACTED]` access key immediately after an
+/// import. The random value is produced inside the database, never printed,
+/// and the access replacement is one DDL statement.
+pub(crate) fn rotate_restored_access(target: &ResolvedTenant) -> Result<(), BrokerError> {
+    let db = crate::db::scoped_db(target);
+    let secret = db.sql_root("RETURN rand::string(64);")?;
+    let secret = secret.as_str().ok_or_else(|| BrokerError::Db {
+        detail: "database did not return a signing-key string".into(),
+    })?;
+    if secret.len() != 64 || !secret.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(BrokerError::Db {
+            detail: "database returned an invalid signing-key value".into(),
+        });
+    }
+
+    // `access` is configuration rather than request data, but it still passes
+    // through the compiler's identifier validator before entering DDL.
+    let access =
+        crate::surql::render_path(&[crate::contract::PathSegment::Field(db.access().to_string())])?;
+    let key = crate::surql::escape_str(secret);
+    db.sql_root(&format!(
+        "DEFINE ACCESS OVERWRITE {access} ON DATABASE TYPE RECORD \
+         SIGNIN (SELECT * FROM app_user WHERE name = $name AND \
+         crypto::argon2::compare(pass, $pass)) WITH JWT ALGORITHM HS512 KEY '{key}' \
+         DURATION FOR TOKEN 1h, FOR SESSION 12h;"
+    ))?;
+    Ok(())
+}

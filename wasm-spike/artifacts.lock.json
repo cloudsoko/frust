@@ -1,0 +1,13 @@
+{
+  "rust": "1.96.0",
+  "target": "wasm32-wasip2",
+  "artifacts": {
+    "wasm-spike/artifacts/script_engine.wasm": "C491810B8D1E5563856686A35AECE8CDCE32C7312935B5CCC75029512D428FD1",
+    "wasm-spike/artifacts/plugin_demo.wasm": "7E0D6522ACE01EB5C1ACFCE19F308AF3F7FB6B7E9F35A49C6A55315BFF04299B",
+    "frust-desk/assets/engine/script_engine.core.wasm": "C983DEC7304A43FB28BD2ED1D477474DA9D217C64CC96FA5D046B12F0DEABE3B",
+    "frust-desk/assets/engine/script_engine.js": "D6DD173052817295A79701CF4DF170E8A3B1B377C40E58A27943E11A58191A64",
+    "wasm-spike/artifacts-old-world/plugin.wit.snapshot": "1872C03F8F1FC2EF50BF767295C25967A2E1DA94B3730429A4BDFDDD950824D1",
+    "wasm-spike/artifacts-old-world/plugin_demo.wasm": "7E0D6522ACE01EB5C1ACFCE19F308AF3F7FB6B7E9F35A49C6A55315BFF04299B",
+    "wasm-spike/artifacts-old-world/script_engine.wasm": "D1E4E3096EF0C0D427415A727458E071EB53E57D0B34E860A8AFD01326039A53"
+  }
+}

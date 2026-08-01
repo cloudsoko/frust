@@ -1,0 +1,6 @@
+target/
+**/target/
+mail-outbox/
+*.log
+*.err
+*.pdb

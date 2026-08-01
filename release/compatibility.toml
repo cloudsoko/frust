@@ -1,0 +1,26 @@
+schema = 1
+
+[framework]
+version = "0.1.0"
+stability = "experimental"
+rust = "1.96.0"
+surrealdb = "3.2.0"
+
+[application]
+manifest_version = 1
+version_syntax = "MAJOR.MINOR.PATCH"
+
+[api]
+rest_major = 1
+policy = "frust-kernel/docs/evolution-policy.md"
+
+[wasm]
+target = "wasm32-wasip2"
+wit_package = "frust:plugin"
+worlds = ["plugin", "route-plugin", "lifecycle-plugin"]
+artifact_lock = "wasm-spike/artifacts.lock.json"
+
+[build]
+pnpm = "11.1.2"
+jco = "1.25.2"
+lockfiles_required = true

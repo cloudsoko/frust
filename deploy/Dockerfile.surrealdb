@@ -1,0 +1,27 @@
+FROM surrealdb/surrealdb:v3.2.0 AS upstream
+
+FROM debian:bookworm-slim
+
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.title="Frust SurrealDB" \
+      org.opencontainers.image.description="Pinned SurrealDB with Frust secret and bootstrap entrypoints" \
+      org.opencontainers.image.version="3.2.0" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="https://github.com/AmeinEskinder/frust"
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --gid 10002 surrealdb && \
+    useradd --uid 10002 --gid surrealdb --home-dir /var/lib/surrealdb --create-home --shell /usr/sbin/nologin surrealdb && \
+    install -d -o surrealdb -g surrealdb /var/lib/surrealdb/data
+
+COPY --from=upstream /surreal /usr/local/bin/surreal
+COPY --chmod=0755 bin/surrealdb-entrypoint.sh /usr/local/bin/surrealdb-entrypoint
+COPY --chmod=0755 bin/initialize-databases.sh /usr/local/bin/initialize-databases
+
+USER 10002:10002
+WORKDIR /var/lib/surrealdb
+EXPOSE 8000
+
+ENTRYPOINT ["surrealdb-entrypoint"]

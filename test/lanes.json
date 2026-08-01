@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "surreal": {
+    "image": "surrealdb/surrealdb:v3.2.0",
+    "host": "127.0.0.1",
+    "hostPort": 8899,
+    "containerPort": 8000,
+    "user": "root",
+    "password": "root",
+    "readinessTimeoutSeconds": 45
+  },
+  "offlineTargets": [
+    "hook_dispatch",
+    "hook_world_evolution",
+    "structured_logs_gate",
+    "surql_monopoly",
+    "tenancy_monopoly"
+  ],
+  "liveLibraryPackages": [
+    "frust-orm"
+  ],
+  "liveExcludedTargets": [
+    {
+      "target": "tenant_restore_ops",
+      "reason": "Invokes ../../frust-skel/surreal.exe directly instead of the pinned container CLI."
+    }
+  ],
+  "perfExclusiveTargets": [
+    "fuel_overhead",
+    "live_tax_curve",
+    "perf_gates",
+    "scale_proof"
+  ],
+  "perfCases": [
+    {
+      "target": "perf_gates",
+      "mode": "default",
+      "test": null
+    },
+    {
+      "target": "fuel_overhead",
+      "mode": "ignored-exact",
+      "test": "fuel_metering_overhead_on_the_hook_path"
+    },
+    {
+      "target": "live_tax_curve",
+      "mode": "ignored-exact",
+      "test": "writer_tax_per_parked_subscription"
+    },
+    {
+      "target": "mail_notifications",
+      "mode": "ignored-exact",
+      "test": "the_save_floor_does_not_move_when_smtp_is_dead"
+    },
+    {
+      "target": "tenant_fairness",
+      "mode": "ignored-exact",
+      "test": "noisy_neighbour_bound"
+    }
+  ],
+  "knownNonHermeticCases": [
+    {
+      "target": "aggregates_ladder",
+      "test": "tier1_counter_at_1m",
+      "reason": "Requires the separately seeded scale fixture on port 8898."
+    },
+    {
+      "target": "realtime_e2e",
+      "test": "restart_reports_dead_then_refetch_recovers",
+      "reason": "Stops and restarts an ambient developer SurrealDB process."
+    },
+    {
+      "target": "scale_proof",
+      "test": "scale_proof_1m",
+      "reason": "Requires the separately seeded one-million-row fixture on port 8898."
+    },
+    {
+      "target": "tenant_restore_ops",
+      "test": "*",
+      "reason": "Hardcodes a Windows surreal.exe checkout and is not container-owned."
+    }
+  ],
+  "laneLimitations": [
+    "frust-orm keeps pure unit tests and live HTTP tests in the same Rust library test binary, so that whole library target runs in the live lane."
+  ]
+}

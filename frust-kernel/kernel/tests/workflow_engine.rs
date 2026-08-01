@@ -274,14 +274,13 @@ fn a_document_offers_only_this_roles_transitions() {
     assert!(actions.contains(&"Approve") && actions.contains(&"Reject"));
 
     // every offered button is genuinely allowed — buttons cannot drift from rules
-    for a in actions {
+    if let Some(a) = actions.into_iter().next() {
         b.workflow_actions(&mgr(), "expense_claim", &key).unwrap();
         assert!(
             b.db_transition(&mgr(), &HookChain::default(), "expense_claim", &key, a).is_ok()
                 || a == "Approve",
             "offered action '{a}' must be allowed"
         );
-        break; // taking one changes state; the judge-vs-offer equality is unit-tested exhaustively
     }
 }
 

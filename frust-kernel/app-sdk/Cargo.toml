@@ -1,0 +1,22 @@
+[package]
+name = "frust-app-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+frust-kernel = { path = "../kernel" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = "0.10"
+wasmtime = { workspace = true }
+
+[lib]
+name = "frust_app_sdk"
+path = "src/lib.rs"
+
+[[bin]]
+name = "frust-app"
+path = "src/main.rs"

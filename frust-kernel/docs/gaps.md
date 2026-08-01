@@ -70,6 +70,27 @@ Worth stating so a consumer does not read one as the other; not a defect.
 
 ---
 
+# Fixed in WO-057
+
+## ESC (from the WO-056 dogfood) — a refused CREATE reported success · **FIXED**
+
+Was: `POST /write/{write-closed table}` answered `200
+{"action":"created","created":null,"record":null}` and created no row — WO-020's
+Finding A alive on the CREATE path, where the guard had been written for UPDATE
+only and CREATE fell through the catch-all.
+
+Now: `403 permission-denied` / `E_WRITE_NO_ROWS`, naming the table. The
+database's refusal is unchanged — only the sentence the kernel says about it.
+Both sides tested (`kernel/tests/refused_create.rs`): the refused create is
+typed AND a legitimate create still returns its record, because a fix here could
+trade a false success for a false failure.
+
+Found by *using the app*, not by a test — and made visible by WO-055's additive
+`action`/`record` keys, since `action:"created"` beside `record:null` is
+self-contradicting.
+
+---
+
 # Fixed in WO-055
 
 **Kept, not deleted.** These are the record of what documenting the surface

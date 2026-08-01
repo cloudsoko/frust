@@ -1,0 +1,41 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: cargo
+    directory: /frust-kernel
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: cargo
+    directory: /frust-desk
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: cargo
+    directory: /wasm-spike/script-engine
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: cargo
+    directory: /wasm-spike/plugin-demo
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: npm
+    directory: /wasm-spike
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: npm
+    directory: /frust-e2e
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 3

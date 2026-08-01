@@ -1,0 +1,3 @@
+[build]
+# surrealdb-core can exhaust the documented development machine above this.
+jobs = 2

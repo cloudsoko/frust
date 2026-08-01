@@ -251,6 +251,17 @@ async function main() {
     /app '/.test(unbalanced.json?.error?.message ?? ''),
     JSON.stringify(unbalanced.json).slice(0, 200));
 
+  // WO-057: a write the database refuses must not report success
+  const refused = await call('/write/ar_outstanding', {
+    token, body: { doc: { k: 'Docs Harness Probe', charged: '1', paid: '0' } },
+  });
+  check('a write-closed table refuses a create -> 403 E_WRITE_NO_ROWS',
+    refused.status === 403 && /E_WRITE_NO_ROWS/.test(refused.json?.error?.detail ?? ''),
+    JSON.stringify(refused.json).slice(0, 200));
+  check('the refusal is not dressed as a success',
+    refused.json?.action !== 'created' && !refused.json?.record,
+    JSON.stringify(refused.json).slice(0, 160));
+
   console.log('\n== workflow ==');
   const actions = await call(`/workflow/sales_invoice/${key}`, { token: clerkToken });
   check('GET /workflow/{doctype}/{key} -> the caller\'s available actions',

@@ -1,10 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["kernel", "orm"]
+members = ["app-sdk", "kernel", "orm"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.96"
+repository = "https://github.com/AmeinEskinder/frust"
+publish = false
 
 [workspace.dependencies]
 anyhow = "1"

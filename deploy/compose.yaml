@@ -1,0 +1,176 @@
+name: frust
+
+x-logging: &default-logging
+  driver: local
+  options:
+    max-size: 10m
+    max-file: "5"
+
+x-kernel-environment: &kernel-environment
+  FRUST_DB_ENDPOINT: http://database:8000
+  FRUST_DB_ACCESS: ${FRUST_DB_ACCESS:-account}
+  FRUST_TENANCY: database-per-tenant
+  FRUST_TENANTS: ${FRUST_TENANTS:-site}
+  FRUST_NS: ${FRUST_NS:-frust}
+  FRUST_LOG: ${FRUST_LOG:-info}
+  FRUST_MAIL: ${FRUST_MAIL:-file}
+  FRUST_MAIL_FROM: ${FRUST_MAIL_FROM:-frust@localhost}
+
+services:
+  database:
+    build:
+      context: .
+      dockerfile: Dockerfile.surrealdb
+      args:
+        VCS_REF: ${VCS_REF:-unknown}
+    image: ${FRUST_SURREAL_IMAGE:-frust/surrealdb:3.2.0}
+    restart: unless-stopped
+    init: true
+    secrets:
+      - surreal_root_username
+      - surreal_root_password
+    volumes:
+      - surreal-data:/var/lib/surrealdb/data
+    networks:
+      datastore:
+        aliases: [database]
+    healthcheck:
+      test: [CMD, /usr/local/bin/surreal, isready, --endpoint, http://127.0.0.1:8000]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    stop_grace_period: 30s
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    logging: *default-logging
+
+  initialize:
+    image: ${FRUST_SURREAL_IMAGE:-frust/surrealdb:3.2.0}
+    entrypoint: [/usr/local/bin/initialize-databases]
+    environment:
+      FRUST_TENANCY: database-per-tenant
+      FRUST_TENANTS: ${FRUST_TENANTS:-site}
+      FRUST_NS: ${FRUST_NS:-frust}
+      SURREAL_ENDPOINT: http://database:8000
+    secrets:
+      - surreal_root_username
+      - surreal_root_password
+    networks: [datastore]
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: "no"
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    logging: *default-logging
+
+  kernel:
+    build:
+      context: ../frust-kernel
+      dockerfile: ../deploy/Dockerfile.kernel
+      additional_contexts:
+        artifacts: ../wasm-spike/artifacts
+        deploy: .
+      args:
+        FRUST_VERSION: ${FRUST_VERSION:-0.1.0}
+        VCS_REF: ${VCS_REF:-unknown}
+    image: ${FRUST_KERNEL_IMAGE:-frust/kernel:0.1.0}
+    restart: unless-stopped
+    init: true
+    environment: *kernel-environment
+    secrets:
+      - surreal_root_username
+      - surreal_root_password
+    volumes:
+      - mail-outbox:/var/lib/frust/mail-outbox
+    networks: [datastore, application]
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD-SHELL, 'curl --fail --silent http://127.0.0.1:8790/ready | grep --quiet ''"ready":true''']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+    stop_grace_period: 15s
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    logging: *default-logging
+
+  desk:
+    build:
+      context: ../frust-desk
+      dockerfile: ../deploy/Dockerfile.desk
+      additional_contexts:
+        topcoat: ../topcoat
+      args:
+        FRUST_VERSION: ${FRUST_VERSION:-0.1.0}
+        VCS_REF: ${VCS_REF:-unknown}
+    image: ${FRUST_DESK_IMAGE:-frust/desk:0.1.0}
+    restart: unless-stopped
+    init: true
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      FRUST_KERNEL: http://kernel:8790
+      FRUST_DESK_MAX_INFLIGHT: ${FRUST_DESK_MAX_INFLIGHT:-64}
+    ports:
+      - "${FRUST_BIND_IP:-127.0.0.1}:${FRUST_DESK_PORT:-3000}:3000"
+    networks: [application]
+    depends_on:
+      kernel:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --show-error, http://127.0.0.1:3000/admission]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    logging: *default-logging
+
+  migrate:
+    image: ${FRUST_KERNEL_IMAGE:-frust/kernel:0.1.0}
+    profiles: [operations]
+    command: [--accept-meta-migrations]
+    environment: *kernel-environment
+    secrets:
+      - surreal_root_username
+      - surreal_root_password
+    volumes:
+      - mail-outbox:/var/lib/frust/mail-outbox
+    networks: [datastore]
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    restart: "no"
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    logging: *default-logging
+
+networks:
+  datastore:
+    internal: true
+  application: {}
+
+volumes:
+  surreal-data: {}
+  mail-outbox: {}
+
+secrets:
+  surreal_root_username:
+    file: ./secrets/surreal_root_username.txt
+  surreal_root_password:
+    file: ./secrets/surreal_root_password.txt

@@ -206,6 +206,13 @@ persisted.
 Hooks fire on this path; a rejection is `422 hook-rejected` carrying the app's
 message and its app.
 
+**A write that stores nothing is refused, never reported as done.** If the
+database accepts the statement but persists no row — a write-closed table
+(kernel-maintained rollups and registries), or a row your role may not write —
+the answer is `403 permission-denied` with `E_WRITE_NO_ROWS`, naming the table.
+It is never a `200` carrying a null record. (Both the create and update halves;
+WO-020 fixed update, WO-057 create.)
+
 ### `POST /aggregate/{doctype}` — session
 
 ```

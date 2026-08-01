@@ -1,0 +1,164 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact tag and recorded submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Enforce tag, metadata, artifacts, and legal readiness
+        run: python .github/scripts/release-preflight.py --tag "${GITHUB_REF_NAME}" --require-license
+
+  build:
+    needs: preflight
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            label: linux-x86_64
+            executable_suffix: ""
+          - runner: windows-latest
+            label: windows-x86_64
+            executable_suffix: ".exe"
+    steps:
+      - name: Check out the exact tag and recorded submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Cache Rust build outputs
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: |
+            frust-kernel
+            frust-desk
+            wasm-spike/script-engine
+            wasm-spike/plugin-demo
+          key: release-${{ matrix.label }}
+
+      - name: Install pinned Node and pnpm
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+          cache-dependency-path: wasm-spike/pnpm-lock.yaml
+
+      - name: Activate pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack install --global pnpm@11.1.2
+
+      - name: Rebuild locked runtime artifacts
+        shell: pwsh
+        run: ./scripts/frust.ps1 build-artifacts
+
+      - name: Refuse generated artifact drift
+        shell: pwsh
+        run: |
+          git diff --exit-code -- wasm-spike/artifacts frust-desk/assets/engine wasm-spike/artifacts.lock.json
+          if ($LASTEXITCODE -ne 0) { throw "release artifacts are not reproducible" }
+
+      - name: Build locked release binaries
+        shell: pwsh
+        run: |
+          cargo build --manifest-path frust-kernel/Cargo.toml --package frust-kernel --release --locked --jobs 2
+          if ($LASTEXITCODE -ne 0) { throw "kernel release build failed" }
+          cargo build --manifest-path frust-desk/Cargo.toml --release --locked --jobs 2
+          if ($LASTEXITCODE -ne 0) { throw "Desk release build failed" }
+
+      - name: Stage release payload
+        shell: pwsh
+        run: |
+          $stage = "dist/frust-${{ github.ref_name }}-${{ matrix.label }}"
+          New-Item -ItemType Directory -Force -Path "$stage/bin", "$stage/runtime", "$stage/release" | Out-Null
+          Copy-Item "frust-kernel/target/release/frust${{ matrix.executable_suffix }}" "$stage/bin/"
+          Copy-Item "frust-desk/target/release/frust-desk${{ matrix.executable_suffix }}" "$stage/bin/"
+          Copy-Item "wasm-spike/artifacts/*.wasm" "$stage/runtime/"
+          Copy-Item "frust-desk/assets/engine/script_engine.js" "$stage/runtime/"
+          Copy-Item "frust-desk/assets/engine/script_engine.core.wasm" "$stage/runtime/"
+          Copy-Item "release/compatibility.toml" "$stage/release/"
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: dist/frust-${{ github.ref_name }}-${{ matrix.label }}
+          format: spdx-json
+          output-file: dist/frust-${{ github.ref_name }}-${{ matrix.label }}/release/sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Archive and checksum payload
+        shell: pwsh
+        run: |
+          $name = "frust-${{ github.ref_name }}-${{ matrix.label }}"
+          Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
+          $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $name.zip" | Out-File "dist/$name.zip.sha256" -Encoding ascii -NoNewline
+
+      - name: Attest archive provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            dist/frust-${{ github.ref_name }}-${{ matrix.label }}.zip
+            dist/frust-${{ github.ref_name }}-${{ matrix.label }}.zip.sha256
+
+      - name: Upload locked release payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.label }}
+          path: |
+            dist/frust-${{ github.ref_name }}-${{ matrix.label }}.zip
+            dist/frust-${{ github.ref_name }}-${{ matrix.label }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Download release payloads
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Publish immutable GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then prerelease="--prerelease"; fi
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --generate-notes \
+            --title "Frust ${GITHUB_REF_NAME}" \
+            $prerelease

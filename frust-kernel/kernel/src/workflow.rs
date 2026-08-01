@@ -120,7 +120,7 @@ impl WorkflowDef {
     pub fn available(&self, state: &str, role: &str) -> Vec<&TransitionDef> {
         self.transitions
             .iter()
-            .filter(|t| t.from == state && (t.role == role || role == "manager" && t.role == role))
+            .filter(|t| t.from == state && t.role == role)
             .collect()
     }
 
