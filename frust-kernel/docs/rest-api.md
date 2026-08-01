@@ -54,6 +54,7 @@ Read from `status_for()`:
 | `kind` | status | meaning |
 |---|---|---|
 | `permission-denied` with `detail: "E_UNAUTHENTICATED"` | **401** | no/unknown token |
+| `permission-denied` with `detail: "FRUST:E_AUTH_REJECTED"` | **401** | `/login` refused the credentials |
 | `permission-denied`, `field-not-readable`, `identity-unresolved` | **403** | authenticated, not allowed |
 | `unknown-doctype` | **404** | no such DocType or record |
 | `workflow-denied` | **422** | a rule refused a transition (`code` carries `FRUST:E_WORKFLOW:*`) |
@@ -101,6 +102,25 @@ Liveness for the *process*; the only route with no tenant.
 Prometheus text exposition (`text/plain; version=0.0.4`), not JSON. Handled
 before routing, so it never touches a tenant or a session.
 
+### `GET /ready` — no auth
+
+Readiness, as opposed to `/health`'s liveness: what has actually **booted**.
+
+```
+→ GET /ready
+← 200 {"ready": true,
+       "tenants": [{"tenant":"acme","meta_version":8,"doctypes":10,
+                    "orphan_columns":["sales_invoice.crm_followup"]}]}
+```
+
+**Read the ~25 s boot window honestly:** the kernel does not accept connections
+until boot completes, so `/ready` answering at all already means it is up — the
+window shows as a *refused connection*, not as `ready: false`. A health check
+must budget for it or it will kill a kernel that is working (the WO-019 ops
+caveat). What this endpoint adds over `/health` is the positive signal plus the
+boot facts to assert against — meta version, DocType count, and any orphan
+columns carried.
+
 ### `POST /login` — no auth
 
 ```
@@ -113,11 +133,15 @@ request's subdomain, then — **only when the process serves exactly one tenant*
 — that one. A hint that is present but does not resolve is refused outright,
 never falling through to "the only tenant".
 
-An empty `user` is `400`. **Bad credentials currently answer `500`, which is a
-known defect under ruling** — see [gaps.md](./gaps.md) G1. This document
-deliberately promises *no* status for that case rather than enshrine the
-current one; what is guaranteed today is only that bad credentials do not
-return a token.
+An empty `user` is `400`. **Bad credentials are `401`** with
+`{"kind":"permission-denied","detail":"FRUST:E_AUTH_REJECTED"}` — and a wrong
+password is indistinguishable from an unknown user, deliberately, so the
+endpoint is not a user-enumeration oracle.
+
+A signin that fails for a reason that is *not* the credentials — the tenant's
+database missing, the store half-provisioned — is still a `500` naming what is
+wrong. That distinction is drawn from SurrealDB's response body, not its status:
+it answers `404` for both a wrong password and a vanished database (WO-055).
 
 ### `POST /logout` — session
 
@@ -157,16 +181,27 @@ widen what the caller may see.
 
 ```
 → POST /write/sales_invoice   {"doc": {"customer": "…", "total": 25.00}}
-← 200 {"created": { "id": "sales_invoice:…", "docstatus": 0, … }}
+← 200 {"action": "created", "record": "sales_invoice:…",
+       "created": { "id": "sales_invoice:…", "docstatus": 0, … }}
 
 → POST /write/sales_invoice   {"record": "uc1ebw…", "doc": {"customer": "…"}}
-← 200 {"created": { … }}
+← 200 {"action": "updated", "record": "sales_invoice:uc1ebw…", "created": { … }}
 ```
 
-**Create vs update is inferred from the presence of `record`** — there is no
-`op` field, and one sent is ignored. The response key is `created` in both
-cases (a wart: see [gaps.md](./gaps.md)). Updates are partial: only the fields
-you send, plus whatever hooks changed, are persisted.
+**Create vs update is inferred from the presence of `record`, and that is the
+only discriminant.** There is no `op` field — and since WO-055 an unknown
+top-level key is **refused** (`400 FRUST:E_UNKNOWN_FIELD`) rather than ignored,
+naming both the offending key and the accepted ones. It used to be discarded in
+silence, so a client sending `{"op":"create","record":…}` got an update and no
+complaint.
+
+`action` is `"created"` or `"updated"`; `record` is the id. **`created` carries
+the row and is DEPRECATED** — it says `created` on updates too, which is why
+`action` exists. It is unchanged and still populated (removing it would be a
+breaking change); read `action` instead.
+
+Updates are partial: only the fields you send, plus whatever hooks changed, are
+persisted.
 
 Hooks fire on this path; a rejection is `422 hook-rejected` carrying the app's
 message and its app.

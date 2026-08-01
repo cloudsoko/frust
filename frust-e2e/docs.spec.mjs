@@ -106,6 +106,16 @@ async function main() {
     metrics.status === 200 && /^# TYPE /m.test(mtext),
     `status=${metrics.status}`);
 
+  const ready = await call('/ready');
+  check('GET /ready -> 200 {ready:true, tenants:[…]}',
+    ready.status === 200 && ready.json?.ready === true &&
+    Array.isArray(ready.json?.tenants) && ready.json.tenants.length > 0,
+    JSON.stringify(ready.json));
+  check('/ready carries the boot facts, not just a flag',
+    Number.isInteger(ready.json?.tenants?.[0]?.meta_version) &&
+    Number.isInteger(ready.json?.tenants?.[0]?.doctypes),
+    JSON.stringify(ready.json?.tenants?.[0]));
+
   const noAuth = await call('/read/sales_invoice', { body: {} });
   check('unauthenticated -> 401 E_UNAUTHENTICATED',
     noAuth.status === 401 && noAuth.json?.error?.detail === 'E_UNAUTHENTICATED',
@@ -141,14 +151,19 @@ async function main() {
     token.split('.')[0] === login.json.tenant,
     token);
 
-  // **G1, open.** The security property is asserted; the STATUS is not, because
-  // the current 500 is a defect under ruling (rest.rs's own comment says this
-  // path yields PermissionDenied) and pinning it here would quietly promise it.
+  // G1 is FIXED (WO-055), so the status is a promise now and asserted as one.
   const badCreds = await call('/login', { body: { user: 'manager', pass: 'wrong' } });
-  check('bad credentials do not return a token',
-    badCreds.status !== 200 && !badCreds.json?.token, JSON.stringify(badCreds.json));
-  console.log(`  note  bad credentials currently answer ${badCreds.status} ` +
-    `(${badCreds.json?.error?.kind}) — gaps.md G1, status intentionally unpromised`);
+  check('bad credentials -> 401 FRUST:E_AUTH_REJECTED',
+    badCreds.status === 401 && badCreds.json?.error?.detail === 'FRUST:E_AUTH_REJECTED' &&
+    !badCreds.json?.token, JSON.stringify(badCreds.json));
+  check('the refusal leaks no transport detail',
+    !/http status|signin transport|404/.test(JSON.stringify(badCreds.json)),
+    JSON.stringify(badCreds.json));
+
+  const ghost = await call('/login', { body: { user: 'no_such_user', pass: 'x' } });
+  check('an unknown user is indistinguishable from a wrong password',
+    JSON.stringify(ghost.json) === JSON.stringify(badCreds.json),
+    `${JSON.stringify(ghost.json)} vs ${JSON.stringify(badCreds.json)}`);
 
   const clerk = await call('/login', { body: { user: 'clerk1', pass: 'pw-clerk1' } });
   const clerkToken = clerk.json?.token;
@@ -200,8 +215,10 @@ async function main() {
                    lines: [{ item: 'Sprocket', qty: '2', rate: '12.50', amount: '25.00' }] } },
   });
   const rec = created.json?.created;
-  check('POST /write/{doctype} create -> 200 {created:{…}}',
-    created.status === 200 && !!rec?.id, JSON.stringify(created.json).slice(0, 200));
+  check('POST /write/{doctype} create -> 200 {action,record,created}',
+    created.status === 200 && !!rec?.id && created.json?.action === 'created' &&
+    created.json?.record === rec?.id,
+    JSON.stringify(created.json).slice(0, 220));
   check('money reads back as a STRING, not a float',
     typeof rec?.total === 'string', `total=${JSON.stringify(rec?.total)} (${typeof rec?.total})`);
   check('a new document starts at docstatus 0', rec?.docstatus === 0, `docstatus=${rec?.docstatus}`);
@@ -214,6 +231,17 @@ async function main() {
     updated.status === 200 && updated.json?.created?.customer === 'Docs Harness II' &&
     updated.json?.created?.total === rec?.total,
     JSON.stringify(updated.json).slice(0, 200));
+  check('an update says action:"updated" (G3 — `created` said otherwise)',
+    updated.json?.action === 'updated', JSON.stringify(updated.json).slice(0, 160));
+
+  // G4: an unknown key is refused by name, not discarded
+  const strayKey = await call('/write/sales_invoice', {
+    token: clerkToken, body: { op: 'create', doc: { customer: 'nope' } },
+  });
+  check('an unknown write field -> 400 FRUST:E_UNKNOWN_FIELD naming it',
+    strayKey.status === 400 && /E_UNKNOWN_FIELD/.test(strayKey.json?.error?.detail ?? '') &&
+    /'op'/.test(strayKey.json?.error?.detail ?? ''),
+    JSON.stringify(strayKey.json).slice(0, 220));
 
   const unbalanced = await call('/write/sales_invoice', {
     token: clerkToken, body: { doc: { customer: 'Docs Harness', total: 999.00, lines: [] } },

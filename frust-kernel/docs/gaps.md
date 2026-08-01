@@ -1,54 +1,17 @@
 # Surface gaps — found by documenting it
 
+**Status:** G1, G3, G4, G5 fixed in WO-055 (see the bottom of this file).
+G2 and G6 remain open, by ruling.
+
 Documenting a surface finds its warts; this is the list, named rather than
 papered over. Nothing here is fixed by WO-054 (its boundary was *document what
 is*, not redesign). Each entry says what it is, what it costs a consumer, and
 what fixing it would take, so the PM can rule on each independently.
 
-**G1 is an escalation, not a wart** — it is the one item the WO's escalation
-clause covers.
-
----
-
-## G1 — bad credentials answer `500`, and say "http status: 404" · **ESCALATED**
-
-**What happens.** Every failed `/login` — wrong password, unknown user, missing
-`pass` — returns:
-
-```
-500  {"error":{"kind":"db","detail":"signin transport: http status: 404"}}
-```
-
-**Why it is a contradiction rather than a wart.** The route's own source says
-otherwise — `rest.rs`: `let jwt = db.signin(user, pass)?; // bad creds -> PermissionDenied`.
-The intended answer is `403`. So the surface contradicts its stated contract,
-and documenting the current behaviour would enshrine a **false statement about
-the system's health**:
-
-- a client cannot distinguish "your password is wrong" from "the kernel's
-  database is broken";
-- every failed login looks like a server fault to any monitor watching 5xx —
-  on the product's highest-traffic error path;
-- it leaks an internal transport detail (`http status: 404`) to an
-  unauthenticated caller.
-
-That is why `rest-api.md` deliberately promises **no** status here, and why the
-harness asserts only the security property (no token is issued) rather than
-pinning `500`.
-
-**Mechanism.** SurrealDB's `/signin` answers **404** for bad credentials.
-`Db::signin_inner` maps any non-success to `BrokerError::Db`, and `status_for`
-maps `Db` to 500. Nothing distinguishes "credentials rejected" from "transport
-broke".
-
-**Fix.** Small and local: in `signin_inner`, map a 401/403/404 from the signin
-endpoint to `PermissionDenied` and leave everything else as `Db`. One arm, plus
-a test that a wrong password is 403 and that a genuinely unreachable database
-still surfaces as 500 — the second half matters, or the fix trades a false
-"server broken" for a false "your password is wrong".
-
-**Not fixed here** because WO-054's boundary is documentation, and because the
-mapping is security-adjacent enough to deserve its own ruling.
+G2 and G6 below are **deferred by ruling**, not oversight: G2's fix touches
+every route arm and needs its own breaking-vs-additive decision (its own WO,
+when a proxy or cache sits in front of the kernel); G6 is contained already by
+the evolution policy, which declares `detail` prose unpromised.
 
 ---
 
@@ -63,34 +26,6 @@ mutating call as cacheable, and `HEAD`/`OPTIONS` are not answered specially.
 anything sitting in front of the kernel. *Fix:* match on method per route;
 mechanical but touches every arm, and needs a ruling on whether to reject
 mismatches (breaking) or accept-and-warn (additive).
-
-## G3 — `/write` returns `{"created": …}` for updates too
-
-An update's response key says `created`. Purely cosmetic, but a consumer
-reading `created` as "a new record was made" is wrong.
-
-*Fix:* additive — add `record` alongside, keep `created` for a major. Renaming
-it is breaking.
-
-## G4 — an ignored `op` field is silently ignored
-
-`{"op":"create"}` is accepted and discarded; create-vs-update comes from the
-presence of `record`. A client that believes it is asking for a create, while
-also sending `record`, gets an update with no complaint. (Observed first-hand:
-this document's author sent `op` for a whole session before reading the code.)
-
-*Fix:* refuse an unknown top-level key, or honour `op` and refuse a
-contradiction. Both are breaking for anyone currently sending it.
-
-## G5 — `/health` reports the process, not readiness
-
-`{"ok":true}` is answered by the HTTP layer as soon as it listens, but boot
-(meta migration + schema sync) can take ~25 s and REST does not listen until
-it finishes — so `/health` is honest today *by accident of ordering*, and
-carries no explicit readiness/liveness split. Operators have already been bitten
-by health checks that kill a kernel mid-boot (banked in WO-019).
-
-*Fix:* a `/ready` that reports boot state explicitly, additive.
 
 ## G6 — error `detail` strings are prose, and some carry internals
 
@@ -132,3 +67,67 @@ Worth stating so a consumer does not read one as the other; not a defect.
   The corrupt row in the dev store predates the current door or arrived out of
   band; the intake asymmetry does not exist. The original finding named a real
   bad row, but its stated cause was wrong.
+
+---
+
+# Fixed in WO-055
+
+**Kept, not deleted.** These are the record of what documenting the surface
+found — the entries stay so the finding is legible, with what shipped.
+
+## G1 — bad credentials answered `500` · **FIXED**
+
+Was: every failed login returned `500 {"kind":"db","detail":"signin transport: http status: 404"}`,
+contradicting the route's own source comment, reporting a server fault on the
+busiest error path there is, and leaking an internal transport detail to an
+unauthenticated caller.
+
+Now: `401 {"kind":"permission-denied","detail":"FRUST:E_AUTH_REJECTED"}`, with a
+wrong password and an unknown user deliberately indistinguishable.
+
+**The fix's real difficulty was the half that isn't the bug.** SurrealDB 3.2.0
+answers **404 for a wrong password AND 404 for a database that does not exist**,
+so the obvious `404 → 401` mapping would have told an operator their password
+was wrong when the tenant's store had vanished. The discriminant is the body:
+
+| case | HTTP | `information` |
+|---|---|---|
+| wrong password / unknown user | 404 | `No record was returned` |
+| database does not exist | 404 | `The database 'x' does not exist` |
+| namespace does not exist | 404 | `The namespace 'x' does not exist` |
+| store present but broken | 400 | `The record access signin query failed` |
+
+So the classifier recognises the one rejection marker and treats **everything
+else as a server fault** — the safe default direction. Both sides are tested
+(`kernel/tests/login_errors.rs`), including the recorded-responses table as an
+executable case list.
+
+Two things fell out of reading the body at all, both worth having:
+- every non-2xx from SurrealDB now reports **SurrealDB's own message** instead
+  of `http status: NNN`;
+- doing it wrong first proved ADR-013's keyguard is genuinely fail-closed: an
+  early cut fed it a parse error instead of a recognisable 401 and **boot
+  refused** rather than assuming the store was healthy.
+
+## G3 — `/write` said `created` on updates · **FIXED additive**
+
+`action: "created"|"updated"` and `record: <id>` added. `created` still carries
+the row, unchanged and deprecated in the docs — removing it would be breaking,
+so the policy's additive path was taken instead.
+
+## G4 — an ignored `op` field · **FIXED**
+
+An unknown top-level key on `/write` is refused with `400 FRUST:E_UNKNOWN_FIELD`
+naming the key and the accepted ones. Breaking for anyone sending `op` — nobody
+is, because it never did anything, and its doing nothing *silently* was the bug.
+
+## G5 — `/health` was readiness by accident · **FIXED additive**
+
+`GET /ready` added, reporting per-tenant boot facts (meta version, DocType
+count, orphan columns). `/health` stays liveness.
+
+Stated honestly: the kernel does not accept connections until boot completes, so
+over HTTP `/ready` has never been observed `false` — the ~25 s window is a
+refused connection. What it adds is the positive signal, the boot facts, and the
+split from liveness. A test asserts it reads `false` in a process that never
+booted, so the endpoint is not a constant wearing a probe's name.
