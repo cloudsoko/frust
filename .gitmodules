@@ -1,8 +1,12 @@
 [submodule "topcoat"]
 	path = topcoat
-	url = git@github.com:AmeinEskinder/topcoat-vendored.git
+	url = git@github.com:cloudsoko/topcoat.git
+	branch = frust
+[submodule "frust-ui"]
+	path = frust-ui
+	url = git@github.com:cloudsoko/frust-ui.git
 	branch = main
-[submodule "frust-desk-ui"]
-	path = frust-desk-ui
-	url = git@github.com:AmeinEskinder/frust-desk-ui.git
-	branch = frust-ui
+[submodule "frust-desk"]
+	path = frust-desk
+	url = git@github.com:cloudsoko/frust-desk.git
+	branch = main
