@@ -70,7 +70,7 @@ fn the_sentence_through_two_processes() {
     });
     admin.sql_root(&format!("CREATE doctype CONTENT {invoice_meta};")).unwrap();
     // sync the new doctype through the ported engine (what `frust` does on run)
-    let synced = MetadataSync { base: cfg.clone() }.sync(&admin).unwrap();
+    let synced = MetadataSync { base: cfg.clone() }.sync(&admin).unwrap().applied;
     assert_eq!(synced, 1, "the runtime DocType synced to live schema");
 
     // ── SUBMIT THROUGH BOTH HOOK CLASSES, over REST (Desk-as-client) ──

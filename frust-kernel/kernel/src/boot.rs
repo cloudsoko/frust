@@ -73,19 +73,50 @@ pub struct BootReport {
     pub meta_version: i64,
     /// DocTypes re-read from the DB after meta sync (self-hosting honesty).
     pub doctypes: usize,
+    /// **WO-052: columns present in the schema that no DocType declares.**
+    ///
+    /// Named, never merely tolerated. These arise legitimately — an extension
+    /// uninstall detaches its field from metadata and deliberately leaves the
+    /// column and its data behind (WO-019's "metadata detaches, data remains",
+    /// extended cross-app by WO-050) — and an orphan nobody can enumerate is
+    /// the silent-wrong shape wearing ops clothing.
+    ///
+    /// Each entry is `"<doctype>.<field>"`.
+    pub orphan_columns: Vec<String>,
 }
 
 /// The module-3 seam: user-DocType schema sync. The ported adapter fills
 /// this; until then boot performs no user sync and reports it.
 pub trait SchemaSync: Send + Sync {
-    fn sync_user_doctypes(&self, db: &Db) -> Result<usize, BrokerError>;
+    fn sync_user_doctypes(&self, db: &Db) -> Result<crate::sync::SyncOutcome, BrokerError>;
 }
 
 /// Placeholder until module 3 lands the ported engine.
 pub struct NoUserSync;
 impl SchemaSync for NoUserSync {
-    fn sync_user_doctypes(&self, _db: &Db) -> Result<usize, BrokerError> {
-        Ok(0)
+    fn sync_user_doctypes(&self, _db: &Db) -> Result<crate::sync::SyncOutcome, BrokerError> {
+        Ok(crate::sync::SyncOutcome::default())
+    }
+}
+
+/// Publish the orphan gauges, so `/metrics` answers "what is orphaned here?"
+/// without anyone reading a log line.
+///
+/// `cleared` is a column that has just STOPPED being an orphan. A gauge map
+/// never forgets a key, so a reclaimed column has to be zeroed by name — a
+/// metric that keeps reporting a column nobody can find is worse than no
+/// metric at all.
+pub fn publish_orphans(tenant: &str, orphans: &[String], cleared: Option<&str>) {
+    crate::telemetry::gauge("frust_orphan_columns", &[("tenant", tenant)], orphans.len() as f64);
+    for o in orphans {
+        crate::telemetry::gauge(
+            "frust_orphan_column",
+            &[("tenant", tenant), ("column", o.as_str())],
+            1.0,
+        );
+    }
+    if let Some(c) = cleared {
+        crate::telemetry::gauge("frust_orphan_column", &[("tenant", tenant), ("column", c)], 0.0);
     }
 }
 
@@ -169,7 +200,7 @@ fn boot_locked(db: &Db, opts: &BootOptions, sync: &dyn SchemaSync) -> Result<Boo
         .unwrap_or(0) as usize;
 
     // A7 step 4: user-DocType sync (module-3 seam)
-    let _synced = sync.sync_user_doctypes(db)?;
+    let synced = sync.sync_user_doctypes(db)?;
 
     // WO-013: tenant policy is kernel-owned DDL, re-asserted every boot, and
     // loaded into the door buckets. No rows = unlimited = unchanged posture.
@@ -186,11 +217,15 @@ fn boot_locked(db: &Db, opts: &BootOptions, sync: &dyn SchemaSync) -> Result<Boo
             ("meta_version", serde_json::json!(now)),
             ("meta_applied", serde_json::json!(applied)),
             ("doctypes", serde_json::json!(doctypes)),
+            // WO-052: orphans are NAMED at boot. An orphan nobody can list is
+            // the silent-wrong shape in ops clothing.
+            ("orphan_columns", serde_json::json!(synced.orphans)),
         ],
     );
+    publish_orphans(db.tenant_id(), &synced.orphans, None);
 
     // A7 step 5: verdict
-    Ok(BootReport { applied_meta: applied, meta_version: now, doctypes })
+    Ok(BootReport { applied_meta: applied, meta_version: now, doctypes, orphan_columns: synced.orphans })
 }
 
 /// Reads `_tenant_policy` into the door buckets (WO-013). Boot owns the read
@@ -242,9 +277,12 @@ fn read_meta_version(db: &Db) -> Result<Option<i64>, BootError> {
 /// the racing-nodes test counts `_frust_meta` log rows to prove single-apply.
 fn apply_meta(db: &Db, holder: &str, from_version: i64) -> Result<(), BootError> {
     let ddl = meta_ddl();
+    // WO-050: record migrations ride the SAME transaction as the version bump,
+    // so a bumped version can never outrun the data it promises.
+    let data = crate::meta::meta_data_migrations();
     let holder = crate::surql::escape_str(holder);
     let txn = format!(
-        "BEGIN TRANSACTION;\n{ddl};\n\
+        "BEGIN TRANSACTION;\n{ddl};\n{data};\n\
          UPSERT {META_TABLE}:schema SET version = {META_SCHEMA_VERSION};\n\
          CREATE {META_TABLE} SET kind = 'meta_apply_log', from_version = {from_version}, \
          to_version = {META_SCHEMA_VERSION}, applied_by = '{holder}', at = time::now();\n\

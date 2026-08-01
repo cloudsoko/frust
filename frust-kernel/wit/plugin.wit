@@ -77,6 +77,41 @@ interface hooks {
     hog: func();
 }
 
+/// The rest of REQ-2.2.1's lifecycle set (WO-053).
+///
+/// **Why these are not simply added to `hooks`.** WO-053 measured all three
+/// candidate shapes against the real toolchain, and ADR-006 edge-1's
+/// "additive" turns out to have exactly one unit — THE WORLD:
+///
+/// - adding a func to an existing interface → every component fails to
+///   instantiate (`hooks does not have export 'before-insert'`), including the
+///   ones already shipped;
+/// - adding an interface to an existing world's exports → same, one message
+///   later (`no exported instance named 'frust:plugin/lifecycle'`);
+/// - a NEW world, leaving the old one untouched → old components load and run.
+///
+/// A world's `export` list is a REQUIREMENT, not an offer. So growth means a
+/// new world beside the old, never a wider old one — the same conclusion
+/// `route-plugin` reached for routes, now measured rather than reasoned.
+///
+/// `on-submit`/`on-cancel` return `result<_, string>` and not a document: they
+/// fire on a docstatus edge, where the lattice (ADR-009) owns the value. They
+/// may REFUSE the transition; they may not rewrite it.
+interface lifecycle {
+    use hooks.{entry};
+
+    /// Before a CREATE is written. May mutate, exactly like `validate`.
+    before-insert: func(doc: list<entry>) -> result<list<entry>, string>;
+
+    /// The docstatus 0→1 edge, BEFORE the write commits. Err rejects the
+    /// transition; the document stays at docstatus 0 and the lattice EVENT
+    /// never runs, because the write never happens.
+    on-submit: func(doc: list<entry>) -> result<_, string>;
+
+    /// The docstatus →2 edge, same contract.
+    on-cancel: func(doc: list<entry>) -> result<_, string>;
+}
+
 /// The base world: a hook provider. The script engine and every hook-only
 /// plugin live here.
 ///
@@ -101,4 +136,15 @@ world route-plugin {
     import db-api;
     export hooks;
     export routes;
+}
+
+/// WO-053: the grown world. `plugin` above is UNTOUCHED and stays that way —
+/// every component ever built against it still satisfies it, which is the
+/// whole of the compatibility promise. A component that exports only `hooks`
+/// is loaded under `plugin` and simply never receives the new events.
+world lifecycle-plugin {
+    import host-api;
+    import db-api;
+    export hooks;
+    export lifecycle;
 }

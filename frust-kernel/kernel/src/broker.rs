@@ -50,6 +50,22 @@ impl HookChain {
 /// in-process wasmtime (`hooks::WasmHooks`) with the broker unchanged.
 pub trait HookDispatch: Send + Sync {
     fn validate(&self, doctype: &str, doc: &[(String, Value)]) -> Result<Vec<(String, Value)>, BrokerError>;
+
+    /// WO-053: fire one lifecycle class. Returns the (possibly mutated)
+    /// document for a mutating class, the input unchanged otherwise; `Err`
+    /// rejects and blocks the write.
+    ///
+    /// Defaulted to a no-op so the many test doubles that implement only
+    /// `validate` keep compiling and simply deliver nothing — the honest
+    /// behaviour for a dispatcher that predates the vocabulary.
+    fn fire(
+        &self,
+        _class: crate::contract::HookClass,
+        _doctype: &str,
+        doc: &[(String, Value)],
+    ) -> Result<Vec<(String, Value)>, BrokerError> {
+        Ok(doc.to_vec())
+    }
 }
 
 /// External hook-runner (the WO-002 composition process on :8787). Retained
@@ -138,6 +154,14 @@ pub struct FieldMeta {
     pub fieldtype: String,
     #[serde(default)]
     pub perm_role: Option<String>,
+}
+
+/// The docstatus carried by a document envelope, if it names one.
+fn docstatus_of(doc: &[(String, Value)]) -> Option<i64> {
+    doc.iter().find(|(k, _)| k == "docstatus").and_then(|(_, v)| match v {
+        Value::Int(i) => Some(*i),
+        _ => None,
+    })
 }
 
 /// Engine-level fields present on every synced table. `docstatus` is the
@@ -752,6 +776,48 @@ impl Broker {
         if !hook_doc.iter().any(|(k, _)| k == "id") {
             hook_doc.push(("id".into(), Value::Text(format!("{}:{record_key}", meta.name))));
         }
+        // ── WO-053: before_insert, ahead of validate and creates only ──
+        //
+        // Stated, not inherited: it fires only for a CREATE (there is no
+        // "insert" to be before on an update), it is shown the same full
+        // envelope validate gets, and it MAY MUTATE — so its output is the
+        // document validate then sees. Ordering is the point: an app that
+        // stamps a default in before_insert must have that default available
+        // to every validate, including other apps'.
+        if op == WriteOp::Create {
+            let chain = chain.push(&format!("{}:{record_key}", meta.name), HookClass::BeforeInsert)?;
+            let _ = &chain;
+            hook_doc = self.hooks.fire(HookClass::BeforeInsert, doctype, &hook_doc)?;
+        }
+
+        // ── WO-053: the docstatus edges, BEFORE the write ──
+        //
+        // The edge is computed from the baseline against the document about to
+        // be written — the pre-commit twin of the post-commit derivation the
+        // notification path does further down. It has to be pre-commit for one
+        // reason that decides the whole contract: **these hooks may REJECT**,
+        // and a rejection has to prevent the transition rather than annotate it
+        // after the fact.
+        //
+        // What that buys, and it is exactly what ADR-009 requires: a rejected
+        // 0→1 leaves docstatus 0 and the lattice EVENT never runs, because the
+        // WRITE never happens. The lattice stays the floor; no hook is anywhere
+        // near it. Nothing here touches the EVENT — the escalation clause this
+        // WO carried is not reached.
+        let edge_before = docstatus_of(&baseline).unwrap_or(0);
+        let edge_after = docstatus_of(&hook_doc).unwrap_or(edge_before);
+        for (from_to, class) in
+            [(1, HookClass::OnSubmit), (2, HookClass::OnCancel)]
+        {
+            if edge_before != from_to && edge_after == from_to {
+                let chain = chain.push(&format!("{}:{record_key}", meta.name), class)?;
+                let _ = &chain;
+                // the return is DISCARDED by the dispatcher for a non-mutating
+                // class; only the Err matters here
+                self.hooks.fire(class, doctype, &hook_doc)?;
+            }
+        }
+
         let mut entries = self.hooks.validate(doctype, &hook_doc)?;
         // the injected id is a hook input, never a stored column
         entries.retain(|(k, _)| k != "id");

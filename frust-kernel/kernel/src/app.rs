@@ -66,6 +66,38 @@ pub struct Manifest {
     /// typed, and validated like everything else.
     #[serde(default)]
     pub workflows: Vec<crate::workflow::WorkflowDef>,
+    /// **WO-050: what this app adds to DocTypes it does NOT own.**
+    ///
+    /// Kept separate from `doctypes` on purpose: `doctypes` means "I ship and
+    /// own this", `extends` means "I add to someone else's". Conflating them is
+    /// how an extension quietly becomes an owner.
+    #[serde(default)]
+    pub extends: Vec<ExtensionDecl>,
+}
+
+/// One app's extension of a DocType another app owns (ADR-015).
+///
+/// Additive by construction: fields and a hook, nothing that can remove or
+/// replace what the owner declared. The owner's hook always runs first and
+/// cannot be displaced — that is enforced in the dispatcher, not here.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ExtensionDecl {
+    /// The DocType being extended (owned by another app, or by the kernel).
+    pub doctype: String,
+    /// Namespaced fields this extension adds. **Namespacing is enforced**, not
+    /// advised: a collision between two apps' fields is refused at install
+    /// naming both, and a prefix is what makes that refusal rare enough to be
+    /// an error rather than a fact of life.
+    #[serde(default)]
+    pub fields: Vec<crate::sync::FieldDef>,
+    /// The lifecycle point. `validate` only, as for owned scripts — ADR-015
+    /// ruled the wider vocabulary ordinary build work, deliberately deferred so
+    /// composition lands on one hook first.
+    #[serde(default = "default_hook")]
+    pub hook: String,
+    /// The script text. Optional: an extension may add fields only.
+    #[serde(default)]
+    pub script: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -76,6 +108,17 @@ pub struct ScriptDecl {
     #[serde(default = "default_hook")]
     pub hook: String,
     pub script: String,
+}
+
+/// The subscribable vocabulary, rendered for a refusal message. Sourced from
+/// `HookClass::SUBSCRIBABLE` so the door and the dispatcher can never disagree
+/// about what exists.
+fn known_hooks() -> String {
+    crate::contract::HookClass::SUBSCRIBABLE
+        .iter()
+        .map(|c| format!("'{}'", c.wire()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn default_hook() -> String {
@@ -189,14 +232,69 @@ impl Manifest {
                 if !owns(&s.doctype) {
                     errs.push(format!("{kind} targets '{}', which this bundle does not declare", s.doctype));
                 }
-                if s.hook != "validate" {
+                // WO-053: the vocabulary is the door. A hook point that does not
+                // exist is refused HERE, at install, with the list of the ones
+                // that do — never accepted and then silently never fired, which
+                // is the failure a typo would otherwise buy you.
+                if crate::contract::HookClass::from_wire(&s.hook).is_none() {
                     errs.push(format!(
-                        "{kind} on '{}' uses hook '{}'; only 'validate' exists today",
-                        s.doctype, s.hook
+                        "{kind} on '{}' uses hook '{}'; known hooks are {}",
+                        s.doctype,
+                        s.hook,
+                        known_hooks()
                     ));
                 }
                 if s.script.trim().is_empty() {
                     errs.push(format!("{kind} on '{}' is empty", s.doctype));
+                }
+            }
+        }
+
+        // ── WO-050: extension declarations ──
+        //
+        // Validated with the same discipline as everything else (WO-019): a
+        // bundle that cannot be installed says so completely, in one pass, at
+        // the door. The `owns` predicate above deliberately does NOT apply to
+        // these — extending someone else's DocType is the whole point — so
+        // these checks are what stands in its place.
+        let owns_ext = |d: &str| self.doctypes.iter().any(|dt| dt.name == d);
+        for e in &self.extends {
+            if !is_ident(&e.doctype) {
+                errs.push(format!("extends targets '{}', which is not an identifier", e.doctype));
+            }
+            if owns_ext(&e.doctype) {
+                errs.push(format!(
+                    "extends targets '{}', which this bundle ALSO declares — own it or extend                      it, not both",
+                    e.doctype
+                ));
+            }
+            if crate::contract::HookClass::from_wire(&e.hook).is_none() {
+                errs.push(format!(
+                    "extension on '{}' uses hook '{}'; known hooks are {}",
+                    e.doctype,
+                    e.hook,
+                    known_hooks()
+                ));
+            }
+            if e.script.trim().is_empty() && e.fields.is_empty() {
+                errs.push(format!(
+                    "extension on '{}' adds nothing — no fields and no script",
+                    e.doctype
+                ));
+            }
+            // **Namespacing is enforced, not advised.** Two apps adding `note`
+            // to the same DocType is a collision that has to be refused; two
+            // apps adding `crm_note` and `bill_note` never collide at all. The
+            // prefix is what turns a routine conflict into a real error.
+            let prefix = format!("{}_", self.name);
+            for f in &e.fields {
+                if !is_ident(&f.fieldname) {
+                    errs.push(format!("extension field '{}' is not an identifier", f.fieldname));
+                } else if !f.fieldname.starts_with(&prefix) {
+                    errs.push(format!(
+                        "extension field '{}' on '{}' must be namespaced '{}…' — an app may                          only add fields under its own name",
+                        f.fieldname, e.doctype, prefix
+                    ));
                 }
             }
         }

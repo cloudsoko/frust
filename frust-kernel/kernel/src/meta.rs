@@ -17,7 +17,10 @@
 /// v6: the session table (WO-047) — `_frust_session` moves here from a lazy
 /// `DEFINE TABLE IF NOT EXISTS` inside the login batch, which a whole-batch
 /// conflict retry could turn into a duplicate session row.
-pub const META_SCHEMA_VERSION: i64 = 6;
+/// v7: cross-app extension (WO-050) — `doctype.server_script` becomes a LIST of
+/// `{app, script}` so more than one app can contribute a hook. See
+/// `meta_data_migrations`.
+pub const META_SCHEMA_VERSION: i64 = 8;
 
 /// Version + application log records live here.
 pub const META_TABLE: &str = "_frust_meta";
@@ -159,6 +162,46 @@ pub fn mail_ddl() -> String {
         format!("DEFINE FIELD OVERWRITE enqueued_at ON {out} TYPE datetime DEFAULT time::now()"),
     ]
     .join(";\n")
+}
+
+/// **Data migrations that travel with the meta version (WO-050).**
+///
+/// `meta_ddl` reshapes *schema*; this reshapes *records the kernel owns*. It
+/// runs inside `apply_meta`'s transaction, so the version bump and the data it
+/// implies commit together — a bumped version over unmigrated data would leave
+/// list-expecting code reading a scalar, which is the worst of the two failure
+/// directions.
+///
+/// **Every statement here must be idempotent**, because a re-run is always
+/// possible (a crashed boot, a racing node losing the lock) and because
+/// idempotence is what makes "apply again" a safe answer rather than a gamble.
+///
+/// v7 — `server_script` scalar → `[{app, script}]`. **Recompute, not launder**
+/// (ADR-008): the owner's entry is *derived from the record itself* — the
+/// existing script text paired with the doctype's own `app` — never invented.
+/// A doctype with no `app` (kernel-created, not owned by a bundle) yields an
+/// entry with no `app` key, which is exactly what "the owner" means there.
+/// Guarded by `type::is_string`, so records already migrated are untouched.
+pub fn meta_data_migrations() -> String {
+    [
+        // v7 (WO-050): the scalar script became a per-app list.
+        "UPDATE doctype SET server_script = [{ app: app, script: server_script }]          WHERE type::is_string(server_script)",
+        // v8 (WO-053): each entry names its hook class. Everything written
+        // before this WO subscribed to the only class that existed, so the
+        // backfill is `validate` — stated rather than defaulted at read time,
+        // because a stored entry with no hook is indistinguishable from one
+        // whose hook was lost.
+        // The guard is INSIDE the expression, not in a WHERE clause.
+        // v3.2.0 evaluates the SET expression for every row and only *applies*
+        // it to the ones WHERE matches — so `WHERE type::is_array(...)` still
+        // runs `.map()` against the doctypes whose `server_script` is NONE, and
+        // "no such method found for the none type" fails the whole migration.
+        // Caught by the app-upgrade test, not by my first probe: that probe's
+        // population was all-arrays, so every row matched and the guard was
+        // never asked to do anything.
+        "UPDATE doctype SET server_script = IF type::is_array(server_script) {            server_script.map(|$s|              IF $s.hook = NONE { object::from_entries(object::entries($s).append(['hook', 'validate'])) }              ELSE { $s })          } ELSE { server_script }",
+    ]
+    .join("; ")
 }
 
 /// Idempotent meta DDL (OVERWRITE; WO-002 Finding A: re-defines preserve

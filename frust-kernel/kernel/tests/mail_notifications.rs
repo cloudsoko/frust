@@ -356,7 +356,17 @@ fn a_rule_that_resolves_to_nobody_dead_letters_instead_of_sending_nothing() {
 /// arms are the same workload and pass for the wrong reason), and the dead
 /// transport must actually be slow (or "dead" is indistinguishable from
 /// "healthy" and the comparison proves nothing).
+/// **Own invocation, by the standing rule** (WO-014, sharpened by WO-017's
+/// quiet-machine clause). Its last assertion compares MEASURED durations, so it
+/// is a perf-shaped check living in a functional binary — and WO-052's jwt
+/// suite caught it flapping there: it read 15.05 ms against a 14.30 ms budget
+/// under full parallel load, then passed comfortably the moment the machine was
+/// quiet. That is the instrument reporting the machine, not the kernel.
+///
+/// Run it with the gates:
+///   `cargo test --test mail_notifications -- --ignored --test-threads=1`
 #[test]
+#[ignore = "perf-shaped: own invocation on a quiet machine (see the doc comment)"]
 fn the_save_floor_does_not_move_when_smtp_is_dead() {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc as StdArc;
