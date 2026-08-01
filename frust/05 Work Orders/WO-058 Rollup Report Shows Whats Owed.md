@@ -1,6 +1,6 @@
 ---
 tags: [frust, work-order, desk, reports, money, milestone-5]
-status: QUEUED (2026-08-01) — activates when WO-057 closes. The headline application gap from the WO-056 survey.
+status: DELIVERED (2026-08-01) — one entry per rollup, all metrics unioned, **outstanding = charged − paid in EXACT DECIMAL (scaled i128, no float)**. Browser-asserted: Meridian — count 2, paid 120.00, charged 300.00, outstanding **180.00**. Zero kernel source changed. Three findings recorded not patched: the Desk is now a THIRD decimal implementation (long-term home is a PM call); `count` was blank because the read envelope stripped undeclared `n` (remedied as app content); and a session that outlives a restart fails as a 500 rather than a re-login prompt (WO-008 JWT rotation, one layer down). See [[2026-08-01 WO-058 rollup report shows whats owed]].
 created: 2026-08-01
 ---
 

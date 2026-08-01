@@ -1,6 +1,6 @@
 ---
 tags: [frust, work-order, doctype, desk, milestone-5]
-status: ACTIVE (2026-08-01) — DISPATCHED to a worktree-isolated opus agent (with WO-062). A BUILD: full implementation. PM reconciles the worktree into the main tree on completion (may overlap the WO-057/058 builder's kernel/Desk edits — rest.rs / frust-desk).
+status: IMPLEMENTATION EXISTS, UNRECONCILED (2026-08-01) — the cancelled worktree agent HAD built it (found UNCOMMITTED in its worktree — NOT "nothing"): `sync.rs` +90 (kernel single-record sync), `main.rs` +238 (Desk single-form), new `tests/single_doctype.rs`. **NOT copied to the main tree** — it's base-254d812, the main tree has moved, and a concurrent session may also be doing `is_single`. **Boss decides:** reconcile this implementation, or let a main-tree Single-DocType session own it (confirm which — don't ship two). Recoverable from the worktree until pruned; unreviewed by PM (the *compiler-unchanged* gate needs checking).
 created: 2026-08-01
 ---
 

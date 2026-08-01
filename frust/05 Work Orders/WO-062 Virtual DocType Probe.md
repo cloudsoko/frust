@@ -1,6 +1,6 @@
 ---
 tags: [frust, work-order, doctype, integration, probe, milestone-5]
-status: ACTIVE (2026-08-01) — DISPATCHED to a worktree-isolated opus agent (with WO-061). A PROBE→ADR-018, NOT a straight build: the agent STOPS at the permission gate if the alpha would break (Boss trade decision), builds only a probe-prototype if the gates hold. Deliverable = ADR-018 PROPOSED (PM ratifies). Touches the ALPHA + ADR-006 capability surface.
+status: PROBE DONE (2026-08-01) — the cancelled worktree agent HAD completed the probe; found UNCOMMITTED in its worktree and **recovered to the main vault**. **Verdict: Frust does NOT do live virtual DocTypes — SYNC-TO-REAL-TABLE instead** (STOP on gate 1: permissions on non-DB data can only be bypassable in-connector `IF $auth` filtering → breaks the one-compiler alpha; grounded in SurrealDB evidence — `http::get` refused as a network boundary, `DEFINE FUNCTION` returns all rows to any caller with no permission surface). → [[ADR-018 Virtual DocType]] **PROPOSED** (PM recommends ratifying; the SurrealDB evidence was NOT independently re-run — offer to verify before ratifying a strategic direction). Sync-mirror worker + any ADR-006 outbound-HTTP amendment = future Boss-gated WOs.
 created: 2026-08-01
 ---
 

@@ -700,8 +700,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;
 
-    use crate::db::ConnConfig;
-    use crate::tenancy::{TenancyConfig, DEFAULT_TENANT};
+    use crate::tenancy::{test_tenancy, DEFAULT_TENANT};
 
     static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
@@ -716,17 +715,7 @@ mod tests {
     }
 
     fn tenancy(strategy: &str, database: Option<&str>) -> Tenancy {
-        Tenancy::from_config(
-            ConnConfig::default(),
-            TenancyConfig {
-                strategy,
-                namespace: None,
-                database,
-                environment: None,
-                tenants: &[DEFAULT_TENANT],
-            },
-        )
-        .expect("tenancy")
+        test_tenancy(strategy, database).expect("tenancy")
     }
 
     fn isolated_strategy() -> String {

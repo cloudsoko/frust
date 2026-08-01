@@ -3,8 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
-      - "v[0-9]+.[0-9]+.[0-9]+-*"
+      - "v[0-9]*.[0-9]*.[0-9]*"
+      - "v[0-9]*.[0-9]*.[0-9]*-*"
 
 permissions:
   contents: read
@@ -19,8 +19,8 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
-      - name: Enforce tag, metadata, artifacts, and legal readiness
-        run: python .github/scripts/release-preflight.py --tag "${GITHUB_REF_NAME}" --require-license
+      - name: Enforce tag, metadata, and legal readiness
+        run: python .github/scripts/release-preflight.py --tag "${GITHUB_REF_NAME}" --require-license --skip-artifacts
 
   build:
     needs: preflight
@@ -76,6 +76,10 @@ jobs:
       - name: Rebuild locked runtime artifacts
         shell: pwsh
         run: ./scripts/frust.ps1 build-artifacts
+
+      - name: Verify release metadata and runtime checksums
+        shell: pwsh
+        run: python .github/scripts/release-preflight.py --tag "${{ github.ref_name }}" --require-license
 
       - name: Refuse generated artifact drift
         shell: pwsh

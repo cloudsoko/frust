@@ -1,6 +1,6 @@
 ---
 tags: [frust, work-order, kernel, correctness, milestone-5]
-status: ACTIVE (2026-08-01) — the WO-056 escalation: a correctness bug, not a gap. Jumps the queue.
+status: DONE (2026-08-01) — `(WriteOp::Create, None)` now returns typed `E_WRITE_NO_ROWS` (the sibling of WO-020's UPDATE arm). Failing control watched RED on WO-056's exact repro (`create into write-closed rollup → Ok(Null)`) then green; both-sides (refused create is typed + writes zero rows; legitimate create still returns its record; EVENT-rollup still populates; UPDATE arm untouched). Live over HTTP on the shipped binary: `403 E_WRITE_NO_ROWS` naming the table, rows unchanged; control create `200 action=created`. Docs + gaps.md (ESC → "Fixed in WO-057") + harness followed, 49/0. Builder correctly did NOT commit (tree contaminated by concurrent sessions — see caveat), did NOT touch the toolchain. See [[2026-08-01 WO-057 refused create silent success]].
 created: 2026-08-01
 ---
 

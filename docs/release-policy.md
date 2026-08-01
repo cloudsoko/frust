@@ -42,14 +42,15 @@ Protect `main` with these successful checks:
 
 The quality gate initializes recorded submodules, uses the pinned Rust/pnpm/JCO
 versions, rebuilds the WASM/browser runtime, and refuses checksum or generated
-artifact drift. The live matrix runs the complete non-ignored SurrealDB-backed
-suite in both supported root-authentication modes.
+artifact drift. The live matrix runs the bounded, hermetic SurrealDB-backed
+lane in both supported root-authentication modes.
 
 Ignored performance tests are deliberately outside pull-request CI. The weekly
 workflow runs the self-contained measurement gates in release mode and retains
-their logs. The seeded `:8898` scale harness and the test that restarts a local
-Windows SurrealDB process still require dedicated controlled runners; they are
-not silently represented as ordinary CI coverage.
+their logs. `test/lanes.json` is the reviewable coverage contract. The seeded
+`:8898` scale harness, the test that restarts a local Windows SurrealDB process,
+and the checkout-specific `tenant_restore_ops` CLI test remain quarantined for
+dedicated controlled runners; they are not represented as ordinary CI coverage.
 
 ## Published evidence
 
