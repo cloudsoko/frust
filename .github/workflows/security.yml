@@ -2,13 +2,6 @@ name: Dependency security
 
 on:
   pull_request:
-    paths:
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
-      - "**/package.json"
-      - "**/pnpm-lock.yaml"
-      - ".github/workflows/**"
-      - "deploy/Dockerfile*"
   schedule:
     - cron: "31 3 * * 2"
   workflow_dispatch:
