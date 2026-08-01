@@ -103,6 +103,7 @@ cp .frust/build/browser-engine/script_engine.js frust-desk/assets/engine/script_
 "@
     Invoke-Native docker @(
         "run", "--rm",
+        "--env", "CI=true",
         "--volume", $repoMount,
         "--mount", "type=volume,source=frust-wasm-node-modules,target=/frust-source/wasm-spike/node_modules",
         "--workdir", "/frust-source",
