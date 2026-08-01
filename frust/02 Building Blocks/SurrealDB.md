@@ -120,3 +120,27 @@ Single Rust binary. Runs embedded (in-process, SurrealKV/RocksDB), as a server, 
 - [[Frust Hub]] — project home
 - [[Frappe Pain Points]] — what this building block kills
 - [[SRS]] — requirements it serves
+
+## `/signin` failure responses (measured, WO-055, v3.2.0)
+
+**The status cannot tell a rejected credential from a missing store — the body
+can.** Anything mapping signin failures to an HTTP status must read
+`information`, not `code`:
+
+| case | HTTP | `information` |
+|---|---|---|
+| correct credentials | 200 | (token) |
+| wrong password / unknown user | **404** | `No record was returned` |
+| database does not exist | **404** | `The database 'x' does not exist` |
+| namespace does not exist | **404** | `The namespace 'x' does not exist` |
+| store present, signin query fails | 400 | `The record access signin query failed` |
+| access method missing | 400 | request problem |
+| malformed body (no name/pass) | **401** | `Authentication failed` |
+
+Note the inversion worth remembering: **404 means "auth rejected", 401 means
+"your request was malformed"** — the opposite of the intuition.
+
+**And a non-2xx body is not necessarily JSON.** A forged bearer token gets the
+plain sentence `There was a problem with authentication` (39 bytes, no
+envelope), so any error path that demands JSON turns an auth refusal into a
+parse error.

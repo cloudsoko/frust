@@ -1,6 +1,6 @@
 ---
 tags: [frust, work-order, rest, api, kernel, milestone-5]
-status: ACTIVE (2026-08-01) — the WO-054 gaps, ruled: fix the ones that are bugs, additive-first
+status: DELIVERED (2026-08-01) — G1/G3/G4/G5 fixed, G2/G6 deferred as ruled. **Escalation checked FIRST and did not fire — but only just:** SurrealDB answers 404 for a wrong password AND for a missing database, so the obvious 404→401 fix would have told an operator their password was wrong when their store had vanished. The distinction is drawable from the BODY, not the status; the classifier recognises the one rejection marker and defaults everything else to a server fault. Side effect worth keeping: ADR-013's keyguard proved fail-closed for real (an early cut fed it a parse error and boot REFUSED). See [[2026-08-01 WO-055 rest surface corrections]].
 created: 2026-08-01
 ---
 
