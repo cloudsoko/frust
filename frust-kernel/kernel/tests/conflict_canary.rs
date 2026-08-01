@@ -31,11 +31,13 @@ fn conflict_detection_canary() {
             std::thread::spawn(move || {
                 for _ in 0..OPS {
                     // read-modify-write inside a transaction: the classic
-                    // optimistic-concurrency collision shape
+                    // optimistic-concurrency collision shape. The row already
+                    // exists, so UPDATE keeps this a write-conflict probe rather
+                    // than exercising UPSERT's create-or-update semantics.
                     db.sql_root(
                         "BEGIN TRANSACTION; \
                          LET $cur = (SELECT VALUE n FROM ONLY canary:one); \
-                         UPSERT canary:one SET n = $cur + 1; \
+                         UPDATE canary:one SET n = $cur + 1; \
                          COMMIT TRANSACTION;",
                     )
                     .expect("write must succeed via retry");

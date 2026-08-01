@@ -179,6 +179,10 @@ impl HookInstance {
         if self.live.is_none() {
             let mut store = new_store(&self.engine, self.script.as_deref());
             store.set_epoch_deadline(CALL_DEADLINE_TICKS);
+            store.set_fuel(CALL_FUEL).map_err(|e| BrokerError::HookRejected {
+                stage: "instantiate".into(),
+                message: format!("fuel: {e}"),
+            })?;
             let plugin = self
                 .pre
                 .instantiate(&mut store)
