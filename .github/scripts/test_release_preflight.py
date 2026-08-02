@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import shutil
 import tempfile
 import unittest
@@ -101,6 +102,27 @@ class ReleaseApprovalTests(unittest.TestCase):
                 "0.1.0",
                 {"approved_candidate": "v0.1.0-rc.3"},
             )
+
+
+class ArtifactSetTests(unittest.TestCase):
+    def test_rejects_an_unlisted_wasm_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            artifacts = root / "wasm-spike" / "artifacts"
+            artifacts.mkdir(parents=True)
+            expected = artifacts / "expected.wasm"
+            expected.write_bytes(b"expected")
+            (artifacts / "unlisted.wasm").write_bytes(b"unlisted")
+            lock = {
+                "artifacts": {
+                    "wasm-spike/artifacts/expected.wasm": PREFLIGHT.sha256(expected),
+                }
+            }
+            (root / "wasm-spike" / "artifacts.lock.json").write_text(
+                json.dumps(lock), encoding="utf-8"
+            )
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                PREFLIGHT.check_artifacts(root)
 
 
 class LegalReadinessTests(unittest.TestCase):
