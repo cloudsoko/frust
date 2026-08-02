@@ -293,8 +293,8 @@ jobs:
           $candidate = (git rev-list -n 1 "${{ github.ref_name }}").Trim()
           $baseline = (git rev-parse "$candidate^1").Trim()
           "BASELINE_COMMIT=$baseline" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          git config --global url."${{ github.server_url }}/".insteadOf git@github.com:
           git clone "${{ github.server_url }}/${{ github.repository }}.git" staging/baseline
-          git -C staging/baseline config url."${{ github.server_url }}/".insteadOf git@github.com:
           git -C staging/baseline checkout --detach $baseline
           git -C staging/baseline submodule update --init --recursive
 
