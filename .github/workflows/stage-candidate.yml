@@ -6,6 +6,9 @@ on:
       tag:
         required: true
         type: string
+      orchestration_sha:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -18,6 +21,7 @@ jobs:
     environment: staging
     env:
       CANDIDATE_TAG: ${{ inputs.tag }}
+      ORCHESTRATION_COMMIT: ${{ inputs.orchestration_sha }}
     steps:
       - name: Resolve immutable published candidate
         id: candidate
@@ -28,6 +32,10 @@ jobs:
           set -euo pipefail
           if [[ ! "$CANDIDATE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
             echo "candidate must be a release-candidate tag" >&2
+            exit 1
+          fi
+          if [[ ! "$ORCHESTRATION_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "orchestration commit must be a full Git commit SHA" >&2
             exit 1
           fi
           gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${CANDIDATE_TAG}" >/dev/null
@@ -52,6 +60,14 @@ jobs:
 
       - name: Enforce candidate approval and legal readiness
         run: python .github/scripts/release-preflight.py --tag "$CANDIDATE_TAG" --require-license --skip-artifacts
+
+      - name: Check out reviewed staging orchestration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.orchestration_sha }}
+          path: staging-orchestration
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Download the published signed Linux payload
         shell: pwsh
@@ -115,10 +131,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          ./scripts/staging-drill.ps1 `
+          ./staging-orchestration/scripts/staging-drill.ps1 `
             -Tag $env:CANDIDATE_TAG `
             -Commit "$env:CANDIDATE_COMMIT" `
             -BaselineCommit "$env:BASELINE_COMMIT" `
+            -CandidateCheckout . `
             -BaselineCheckout staging/baseline `
             -PayloadDirectory staging/payload `
             -EvidenceDirectory staging/evidence `
