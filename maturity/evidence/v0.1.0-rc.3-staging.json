@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "record_type": "release-candidate-staging-drill",
+  "candidate": {
+    "tag": "v0.1.0-rc.3",
+    "commit": "078cb0fbcbeb25c5e8ecd4cf36690d7095b1c04f",
+    "release_url": "https://github.com/cloudsoko/frust/releases/tag/v0.1.0-rc.3",
+    "release_workflow_run": "https://github.com/cloudsoko/frust/actions/runs/30761430006",
+    "published_at": "2026-08-02T18:54:52Z",
+    "prerelease": true
+  },
+  "deployment": {
+    "environment": "ephemeral-staging",
+    "workflow_run_id": 30767346680,
+    "workflow_run_url": "https://github.com/cloudsoko/frust/actions/runs/30767346680",
+    "orchestration_commit": "b944ae52219116aa30f72cf00edf786c42fa84b8",
+    "baseline_commit": "30efb12e398353eb7d98645018ec01217bf0e149",
+    "started_at": "2026-08-02T21:12:27.1985238Z",
+    "finished_at": "2026-08-02T21:19:47.2476054Z",
+    "elapsed_ms": 440049,
+    "result": "passed"
+  },
+  "supply_chain_gates": {
+    "published_prerelease_resolved": true,
+    "candidate_commit_pinned": true,
+    "release_preflight_passed": true,
+    "archive_sha256_verified": true,
+    "archive_sigstore_verified": true,
+    "sbom_sigstore_verified": true,
+    "github_build_provenance_verified": true,
+    "linux_archive_sha256": "1a7f08cbada1d54a67232d00772f8eff4a4f51905f7acddfc9580df455b0c1c9",
+    "linux_sbom_sha256": "7141d4bed46113b5843db0adc80e9fc315b1f81203ec99093169112648c42318",
+    "windows_archive_sha256": "26cc53a58c538f64a553fc39ed9725ba1e591459a04396c7af41163ca0ac570a",
+    "windows_sbom_sha256": "9a664cca212c5b6447251097bab0d85ffa277be0a34c1162b34058f0d5fb447f"
+  },
+  "timings_ms": {
+    "baseline_deploy": 12754,
+    "upgrade_to_candidate": 11063,
+    "rollback_to_baseline": 7335,
+    "redeploy_candidate": 7324,
+    "backup": 561,
+    "restore": 817
+  },
+  "checks": {
+    "baseline_ready": true,
+    "baseline_data_seeded": true,
+    "upgrade_preserved_data": true,
+    "rollback_preserved_data": true,
+    "restore_recovered_backup_state": true,
+    "final_candidate_ready": true
+  },
+  "recovery": {
+    "tenant": "staging",
+    "topology": "database-per-tenant",
+    "namespace": "frust",
+    "database": "staging",
+    "backup_bytes": 6535,
+    "backup_sha256": "891e39f1017cff1589fc99003554436593b939813a4cdd673cbba9baa7aac0f7",
+    "backup_verified": true,
+    "safety_backup_created": true,
+    "sessions_invalidated": true,
+    "post_restore_keyguard_passed": true
+  },
+  "source_evidence": {
+    "artifact_id": 8839456055,
+    "artifact_name": "staging-evidence-v0.1.0-rc.3-30767346680",
+    "retention_days": 90,
+    "downloaded_archive_sha256": "b6d67703166cdd3f866c206ab07a764c0520a8ca55cf5eb632c1097d1bba280e",
+    "generated_report_sha256": "42292cd451ea1b9ee0f2d6a4466faa0584c88f4e307490c1df1d3c653803be53",
+    "compose_log_sha256": "4f0251ba43990684c6761fe3f2f50aab19afa877362993f049b473ba4365bc28"
+  }
+}
