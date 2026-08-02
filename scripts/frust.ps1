@@ -167,8 +167,8 @@ function Invoke-Doctor {
     try {
         $health = Invoke-WebRequest -Uri "http://127.0.0.1:8899/health" -TimeoutSec 2 -UseBasicParsing
         $version = (Invoke-WebRequest -Uri "http://127.0.0.1:8899/version" -TimeoutSec 2 -UseBasicParsing).Content.Trim()
-        $versionPattern = "^surrealdb-$([regex]::Escape($SurrealVersion))(?:\+.*)?$"
-        $storeReady = $health.StatusCode -eq 200 -and $version -match $versionPattern
+        $versionPattern = "^surrealdb-$([regex]::Escape($SurrealVersion))(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+        $storeReady = $health.StatusCode -eq 200 -and $version -cmatch $versionPattern
         Write-Check $storeReady "SurrealDB $SurrealVersion" $(if ($storeReady) { "healthy on 127.0.0.1:8899" } else { "found $version on 127.0.0.1:8899" }) "start the pinned SurrealDB version with the command documented in README.md"
     } catch {
         $surreal = Get-Command surreal -ErrorAction SilentlyContinue
