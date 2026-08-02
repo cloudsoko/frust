@@ -83,7 +83,7 @@ fn one_trace_spans_the_whole_kernel() {
             let _ = Rest::single(b, addr, None, None).serve(|| {});
         });
         for _ in 0..50 {
-            if ureq::post(format!("{url}/health")).send("").is_ok() {
+            if ureq::get(format!("{url}/health")).call().is_ok() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -199,7 +199,7 @@ fn metrics_endpoint_answers_without_shell() {
             let _ = Rest::single(b, addr, None, None).serve(|| {});
         });
         for _ in 0..50 {
-            if ureq::post(format!("{url}/health")).send("").is_ok() {
+            if ureq::get(format!("{url}/health")).call().is_ok() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));

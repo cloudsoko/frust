@@ -69,7 +69,7 @@ fn start_rest(target: &ResolvedTenant, port: u16) -> String {
         let _ = Rest::single(broker, addr, None, None).serve(|| {});
     });
     for _ in 0..50 {
-        if ureq::post(format!("{url}/health")).send("").is_ok() {
+        if ureq::get(format!("{url}/health")).call().is_ok() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
