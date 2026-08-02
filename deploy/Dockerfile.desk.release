@@ -1,21 +1,5 @@
 # syntax=docker/dockerfile:1.7
 
-ARG RUST_VERSION=1.96.0
-FROM rust:${RUST_VERSION}-bookworm AS build
-
-ENV CARGO_NET_RETRY=10 \
-    CARGO_HTTP_MULTIPLEXING=false \
-    CARGO_HTTP_TIMEOUT=600
-
-WORKDIR /src
-COPY --from=topcoat . /src/topcoat
-COPY . /src/frust-desk
-
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/src/frust-desk/target,sharing=locked \
-    cargo build --locked --release --manifest-path /src/frust-desk/Cargo.toml && \
-    install -Dm0755 /src/frust-desk/target/release/frust-desk /out/frust-desk
-
 FROM debian:bookworm-slim AS runtime
 
 ARG FRUST_VERSION=0.1.0
@@ -34,9 +18,9 @@ RUN apt-get update && \
     useradd --uid 10001 --gid frust --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin frust && \
     install -d /usr/share/licenses/frust-desk /usr/share/licenses/topcoat
 
-COPY --from=build /out/frust-desk /usr/local/bin/frust-desk
-COPY LICENSE NOTICE /usr/share/licenses/frust-desk/
-COPY THIRD_PARTY_LICENSES/TOPCOAT-MIT.txt /usr/share/licenses/topcoat/LICENSE
+COPY --from=payload --chmod=0755 bin/frust-desk /usr/local/bin/frust-desk
+COPY --from=payload licenses/FRUST-DESK-AGPL-3.0.txt licenses/FRUST-DESK-NOTICE.txt /usr/share/licenses/frust-desk/
+COPY --from=payload licenses/TOPCOAT-MIT.txt /usr/share/licenses/topcoat/LICENSE
 
 USER 10001:10001
 ENV HOST=0.0.0.0 \

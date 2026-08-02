@@ -1,20 +1,21 @@
 # Release policy
 
-Frust releases are immutable, version-tagged build outputs. This policy covers
-the repository's release mechanics; it does not grant permission to distribute
-the software.
+Frust releases are immutable, version-tagged build outputs. Frust-owned code is
+distributed under `AGPL-3.0-only`; independently licensed components retain
+their upstream terms.
 
-## Current release blocker: no project license
+## License contract
 
-The repository has no `LICENSE` or `COPYING` file. The owner must choose the
-project's license and confirm that every bundled dependency and vendored asset
-may be distributed under that choice. Automation must not infer a license from
-dependency licenses or source visibility.
+The root project, Frust Desk, and Frust UI carry the canonical GNU AGPL version
+3 text, SPDX Cargo metadata, and source notices. Topcoat remains MIT licensed,
+and SurrealDB retains its upstream license. Release archives include the Frust
+license and notices plus the licenses of statically linked, separately licensed
+components. The per-artifact SBOM records the complete dependency inventory.
 
-`.github/scripts/release-preflight.py --require-license` therefore fails every
-release until the owner adds the selected license. Kernel crates also remain
-`publish = false`. Removing either control requires an explicit distribution
-decision and review.
+`.github/scripts/release-preflight.py --require-license` rejects altered license
+text, missing notices, SPDX metadata drift, or missing independently licensed
+component records. Kernel crates remain `publish = false`; a GitHub binary or
+container release does not implicitly authorize a crates.io publication.
 
 ## Version and tag contract
 
@@ -62,27 +63,32 @@ host archive contains:
 - the machine-readable compatibility manifest;
 - an SPDX JSON software bill of materials.
 
-Each archive is accompanied by a SHA-256 checksum and a GitHub OIDC build
-provenance attestation. The `release` GitHub Environment should require a human
-reviewer so publishing is distinct from building.
+Each archive and detached SBOM is accompanied by a SHA-256 checksum where
+applicable, a keyless Sigstore signature bundle, and a GitHub OIDC build
+provenance attestation. The publish job verifies every signature before it
+creates the immutable GitHub release. The `release` GitHub Environment limits
+deployment to version tags so publishing is distinct from building.
 
 Consumers should verify both mechanisms:
 
 ```text
 sha256sum --check frust-vX.Y.Z-linux-x86_64.zip.sha256
+cosign verify-blob --bundle frust-vX.Y.Z-linux-x86_64.zip.sigstore.json \
+  --certificate-identity-regexp 'https://github.com/cloudsoko/frust/.github/workflows/release.yml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  frust-vX.Y.Z-linux-x86_64.zip
 gh attestation verify frust-vX.Y.Z-linux-x86_64.zip --repo cloudsoko/frust
 ```
 
-GitHub provenance establishes which workflow produced an artifact. It is not a
-substitute for platform code signing. Windows Authenticode, Apple signing and
-notarization, and an organization-controlled container signing identity remain
-owner decisions before those distribution channels are promised.
+Sigstore establishes the workflow identity that signed a release blob or OCI
+digest, and GitHub provenance establishes its build origin. Neither substitutes
+for Windows Authenticode or Apple signing/notarization where those platform
+trust channels are promised.
 
 ## Operator configuration still required
 
-- Select and add the project license after legal review.
 - Enable protected branches and require the checks above.
-- Create the protected `release` Environment and assign reviewers.
+- Keep the `release` and `staging` Environments restricted to version tags.
 - Enable private vulnerability reporting or publish a monitored security
   contact before inviting third-party adoption.
 - Decide supported host platforms and acquire their code-signing identities.
