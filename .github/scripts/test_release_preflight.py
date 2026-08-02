@@ -86,6 +86,23 @@ class PnpmLockValidationTests(unittest.TestCase):
         self.assert_rejected(lock_text)
 
 
+class ReleaseApprovalTests(unittest.TestCase):
+    def test_accepts_the_recorded_release_candidate(self) -> None:
+        PREFLIGHT.check_tag(
+            "v0.1.0-rc.1",
+            "0.1.0",
+            {"approved_candidate": "v0.1.0-rc.1"},
+        )
+
+    def test_rejects_an_unapproved_release_candidate(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            PREFLIGHT.check_tag(
+                "v0.1.0-rc.2",
+                "0.1.0",
+                {"approved_candidate": "v0.1.0-rc.1"},
+            )
+
+
 class LegalReadinessTests(unittest.TestCase):
     def fixture(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
         temporary = tempfile.TemporaryDirectory()
@@ -128,15 +145,16 @@ class LegalReadinessTests(unittest.TestCase):
         (topcoat / "Cargo.toml").write_text(
             '[workspace.package]\nlicense = "MIT"\n', encoding="utf-8"
         )
-        (topcoat / "LICENSE").write_text("MIT fixture\n", encoding="utf-8")
+        shutil.copyfile(PREFLIGHT.ROOT / "topcoat" / "LICENSE", topcoat / "LICENSE")
         for component in ("frust-desk", "frust-ui"):
             licenses = root / component / "THIRD_PARTY_LICENSES"
             licenses.mkdir()
-            (licenses / "TOPCOAT-MIT.txt").write_text("MIT fixture\n", encoding="utf-8")
+            shutil.copyfile(topcoat / "LICENSE", licenses / "TOPCOAT-MIT.txt")
         surreal = root / "deploy" / "licenses"
         surreal.mkdir(parents=True)
-        (surreal / "SURREALDB-BSL-1.1.txt").write_text(
-            "Business Source License 1.1\nLicensor: SurrealDB Ltd.\n", encoding="utf-8"
+        shutil.copyfile(
+            PREFLIGHT.ROOT / "deploy" / "licenses" / "SURREALDB-BSL-1.1.txt",
+            surreal / "SURREALDB-BSL-1.1.txt",
         )
         return temporary, root
 
@@ -185,6 +203,27 @@ class LegalReadinessTests(unittest.TestCase):
         with temporary:
             (root / "frust-desk" / "THIRD_PARTY_LICENSES" / "TOPCOAT-MIT.txt").write_text(
                 "modified\n", encoding="utf-8"
+            )
+            self.assert_rejected(root)
+
+    def test_rejects_coordinated_topcoat_license_drift(self) -> None:
+        temporary, root = self.fixture()
+        with temporary:
+            for path in (
+                root / "topcoat" / "LICENSE",
+                root / "frust-desk" / "THIRD_PARTY_LICENSES" / "TOPCOAT-MIT.txt",
+                root / "frust-ui" / "THIRD_PARTY_LICENSES" / "TOPCOAT-MIT.txt",
+            ):
+                path.write_text("coordinated drift\n", encoding="utf-8")
+            self.assert_rejected(root)
+
+    def test_rejects_surrealdb_license_body_drift(self) -> None:
+        temporary, root = self.fixture()
+        with temporary:
+            path = root / "deploy" / "licenses" / "SURREALDB-BSL-1.1.txt"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace("Change Date", "Changed Date", 1),
+                encoding="utf-8",
             )
             self.assert_rejected(root)
 
