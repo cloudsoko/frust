@@ -63,7 +63,7 @@ jobs:
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:8899/version |
-            grep -Eq '^surrealdb-3\.2\.3(\+.*)?$'
+            grep -Eq '^surrealdb-3\.2\.3(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 
       - name: Run release-mode ignored measurement gates
         run: |
