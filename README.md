@@ -5,7 +5,7 @@ upgrade*. Three processes: the metadata kernel, SurrealDB, and a server-rendered
 Desk.
 
 ```
-git clone --recurse-submodules git@github.com:cloudsoko/frust.git
+git clone --recurse-submodules https://github.com/cloudsoko/frust.git
 ```
 
 ## Layout
@@ -13,10 +13,10 @@ git clone --recurse-submodules git@github.com:cloudsoko/frust.git
 | path | what it is | tracked |
 |---|---|---|
 | `frust-kernel/` | the metadata kernel (`frust serve`) — broker, hooks, workers, REST | source |
-| `frust-desk/` | the Desk: a server-rendered, REST-only client (ADR-004 headless contract) | source |
+| `frust-desk/` | the Desk: a server-rendered, REST-only client (ADR-004 headless contract) | submodule |
 | `frust-e2e/` | the browser evidence harness (`pnpm workflow` / `sse` / `mail` / `print`) | source |
 | `frust/` | the vault: vision, ADRs, Work Orders, dated build logs — **the decision record** | source |
-| `topcoat/` | **submodule** → `topcoat-vendored` — the vendored web framework trunk with our carried patches | submodule |
+| `topcoat/` | **submodule** -> the maintained Topcoat fork used by the Desk | submodule |
 | `frust-ui/` | **submodule** -> retired WO-037 UI foundation, kept for its history | submodule |
 
 Every claim in the code traces to a linked ADR / Work Order / build log in
@@ -26,7 +26,8 @@ against, including what it refused to do.
 
 ## Bootstrap
 
-The repository pins Rust 1.96.0, `wasm32-wasip2`, JCO 1.25.2, and pnpm 11.1.2.
+The repository pins Rust 1.96.0, `wasm32-wasip2`,
+`@bytecodealliance/jco-transpile` 0.5.2, and pnpm 11.1.2.
 Install Git, rustup, Node/Corepack, and PowerShell, then run from the repository
 root:
 
@@ -89,22 +90,26 @@ Notable environment switches, all fail-closed on an unrecognised value:
 
 ## Submodules
 
-`topcoat/` is a **vendored** trunk, not a consumer pin. It carries patches we own
-until they land upstream (`tokio-rs/topcoat`); the ledger of what is carried and
-why lives in `frust/02 Building Blocks/Topcoat.md`. Bump policy: the merge *is*
-the probe — a "non-breaking" upstream release is only non-breaking once the
-build says so.
+`frust-desk/` is the independently versioned Desk. `topcoat/` is a maintained
+fork, not a floating consumer dependency. `frust-ui/` is the retired WO-037 UI
+foundation retained for history. All three public repositories are pinned to
+exact commits by the root repository; branch names in `.gitmodules` are update
+channels, not build inputs.
+
+The release preflight rejects SSH-only or unexpected submodule URLs, mismatched
+pins, and (in protected CI) any pinned commit that cannot be fetched
+anonymously over HTTPS.
 
 ```bash
 git submodule update --init --recursive   # after clone
-git submodule update --remote topcoat     # take the latest vendored trunk
+git submodule sync --recursive            # after a URL change
 ```
 
 ## Tests
 
 ```bash
-cd frust-kernel && cargo test --jobs 2          # 53 binaries, 331 tests
-cd frust-desk   && cargo test --jobs 2          # incl. the CSS-seam guard
+cd frust-kernel && cargo test --jobs 2
+cd frust-desk   && cargo test --jobs 2          # includes the CSS-seam guard
 cd frust-e2e    && pnpm workflow && pnpm sse && pnpm print && pnpm mail
 ```
 

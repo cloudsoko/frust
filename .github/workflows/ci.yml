@@ -52,7 +52,7 @@ jobs:
 
       - name: Validate release metadata
         run: |
-          python .github/scripts/release-preflight.py --require-license --skip-artifacts
+          python .github/scripts/release-preflight.py --require-license --skip-artifacts --check-public-submodules
           python -m unittest discover -s .github/scripts -p "test_*.py"
 
       - name: Validate maturity ledger
