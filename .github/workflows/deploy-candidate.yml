@@ -1,0 +1,21 @@
+name: Deploy release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Immutable published release-candidate tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  staging:
+    uses: ./.github/workflows/stage-candidate.yml
+    with:
+      tag: ${{ inputs.tag }}
+    permissions:
+      contents: read
+      attestations: read
