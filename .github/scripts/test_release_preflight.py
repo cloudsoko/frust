@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("release-preflight.py")
@@ -123,6 +124,56 @@ class ArtifactSetTests(unittest.TestCase):
             )
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 PREFLIGHT.check_artifacts(root)
+
+
+class PublicSubmodulePolicyTests(unittest.TestCase):
+    def test_repository_uses_the_approved_public_https_submodules(self) -> None:
+        self.assertEqual(PREFLIGHT.read_public_submodules(), PREFLIGHT.PUBLIC_SUBMODULES)
+
+    def test_rejects_an_ssh_only_submodule_url(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            text = (PREFLIGHT.ROOT / ".gitmodules").read_text(encoding="utf-8")
+            (root / ".gitmodules").write_text(
+                text.replace(
+                    "https://github.com/cloudsoko/frust-desk.git",
+                    "git@github.com:cloudsoko/frust-desk.git",
+                ),
+                encoding="utf-8",
+            )
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                PREFLIGHT.read_public_submodules(root)
+
+    def test_anonymous_git_environment_drops_inherited_credentials_and_config(self) -> None:
+        hostile = {
+            "PATH": "test-path",
+            "HOME": "credential-home",
+            "XDG_CONFIG_HOME": "credential-xdg",
+            "GIT_ASKPASS": "credential-helper",
+            "SSH_ASKPASS": "ssh-credential-helper",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.extraHeader",
+            "GIT_CONFIG_VALUE_0": "Authorization: Bearer secret",
+        }
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.dict(
+            PREFLIGHT.os.environ, hostile, clear=True
+        ):
+            private_home = Path(temporary) / "private-home"
+            environment = PREFLIGHT.git_anonymous_environment(private_home)
+
+        self.assertEqual(environment["PATH"], "test-path")
+        self.assertEqual(environment["HOME"], str(private_home))
+        self.assertEqual(environment["XDG_CONFIG_HOME"], str(private_home / "xdg"))
+        self.assertEqual(environment["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(environment["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertNotIn("GIT_ASKPASS", environment)
+        self.assertNotIn("SSH_ASKPASS", environment)
+        self.assertFalse(
+            any(
+                name.startswith("GIT_CONFIG_") and name != "GIT_CONFIG_NOSYSTEM"
+                for name in environment
+            )
+        )
 
 
 class LegalReadinessTests(unittest.TestCase):
