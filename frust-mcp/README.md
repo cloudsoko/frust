@@ -45,7 +45,7 @@ consumer — a different language, a different process, a different build target
 ## Run it
 
 The kernel binary hardcodes its SurrealDB endpoint to `127.0.0.1:8899`, so you
-need a SurrealDB 3.2.0 there (root:root). Isolation is by a uniquely-named
+need a SurrealDB 3.2.3 there (root:root). Isolation is by a uniquely-named
 database `frustmcp` + the kernel's own port `8795`.
 
 ```bash

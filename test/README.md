@@ -19,7 +19,7 @@ default instead of any developer target directory.
 
 The `smoke`, `live`, and `perf` lanes refuse to start when `127.0.0.1:8899` is occupied.
 When it is free, the runner owns a randomly named, in-memory
-`surrealdb/surrealdb:v3.2.0` container and waits at most 45 seconds for its
+`surrealdb/surrealdb:v3.2.3` container and waits at most 45 seconds for its
 health endpoint. Cleanup addresses only the container ID returned by that run.
 Cargo failures, timeouts, and Ctrl+C all pass through the same cleanup block.
 

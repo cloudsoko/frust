@@ -51,7 +51,9 @@ jobs:
         run: corepack enable && corepack install --global pnpm@11.1.2
 
       - name: Validate release metadata
-        run: python .github/scripts/release-preflight.py --skip-artifacts
+        run: |
+          python .github/scripts/release-preflight.py --skip-artifacts
+          python -m unittest discover -s .github/scripts -p "test_*.py"
 
       - name: Validate maturity ledger
         run: |

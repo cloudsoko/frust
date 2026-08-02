@@ -10,12 +10,12 @@ workspace version, the Rust toolchain pin, and the WASM artifact lock.
 | --- | --- | --- |
 | Frust framework | `0.1.0`, experimental | No long-term support promise yet |
 | Rust build toolchain | `1.96.0` | Exact pin for reproducible builds |
-| SurrealDB | `3.2.0` | Exact tested runtime version |
+| SurrealDB | `3.2.3` | Exact tested runtime version |
 | App manifest | `manifest_version = 1` | Unknown versions are refused |
 | REST surface | major `1` | Additive policy in `frust-kernel/docs/evolution-policy.md` |
 | WASI target | `wasm32-wasip2` | Exact component build target |
 | WIT package | `frust:plugin` | Current worlds are listed in the manifest |
-| pnpm / JCO | `11.1.2` / `1.25.2` | Exact artifact-build inputs |
+| pnpm / JCO transpiler | `11.1.2` / `@bytecodealliance/jco-transpile 0.5.2` | Exact artifact-build inputs |
 | Artifact builders | Digest-pinned Linux containers | Prevents host-specific WASM output |
 
 Only combinations listed in a release's compatibility file are supported. A
