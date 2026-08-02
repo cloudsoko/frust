@@ -89,17 +89,17 @@ class PnpmLockValidationTests(unittest.TestCase):
 class ReleaseApprovalTests(unittest.TestCase):
     def test_accepts_the_recorded_release_candidate(self) -> None:
         PREFLIGHT.check_tag(
-            "v0.1.0-rc.2",
+            "v0.1.0-rc.3",
             "0.1.0",
-            {"approved_candidate": "v0.1.0-rc.2"},
+            {"approved_candidate": "v0.1.0-rc.3"},
         )
 
     def test_rejects_an_unapproved_release_candidate(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             PREFLIGHT.check_tag(
-                "v0.1.0-rc.3",
+                "v0.1.0-rc.4",
                 "0.1.0",
-                {"approved_candidate": "v0.1.0-rc.2"},
+                {"approved_candidate": "v0.1.0-rc.3"},
             )
 
 
