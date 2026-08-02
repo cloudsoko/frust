@@ -152,6 +152,9 @@ function Test-LanePolicy {
     if ($Policy.surreal.image -ne "surrealdb/surrealdb:v3.2.3") {
         throw "The hermetic lane must pin SurrealDB exactly to surrealdb/surrealdb:v3.2.3"
     }
+    if ($Policy.surreal.store -ne "surrealkv:/tmp/frust-test") {
+        throw "The hermetic lane must use the production SurrealKV storage engine"
+    }
     if ($Policy.surreal.host -ne "127.0.0.1" -or $Policy.surreal.hostPort -ne 8899) {
         throw "Existing tests require the isolated database at 127.0.0.1:8899"
     }
@@ -268,7 +271,7 @@ function Start-TestDatabase {
             "start", "--log", "warn",
             "--user", [string] $DatabasePolicy.user,
             "--pass", [string] $DatabasePolicy.password,
-            "memory"
+            [string] $DatabasePolicy.store
         ) 180 $RepoRoot
         $containerId = $run.StdOut.Trim()
         if ($containerId -notmatch '^[a-f0-9]{12,64}$') {
