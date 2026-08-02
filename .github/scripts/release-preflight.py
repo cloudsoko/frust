@@ -234,15 +234,41 @@ def git_anonymous_prefix() -> list[str]:
     return prefix
 
 
+def git_anonymous_environment(home: Path) -> dict[str, str]:
+    # The public-read probe must not inherit credentials or Git configuration
+    # from the developer, runner, or a GitHub CLI integration. Keep only the
+    # process-discovery variables Git needs on supported platforms, and give
+    # it private configuration and temporary directories.
+    allowed = ("PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "SystemDrive")
+    environment = {name: os.environ[name] for name in allowed if name in os.environ}
+    temporary = home / "tmp"
+    temporary.mkdir(parents=True)
+    environment.update(
+        {
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(home / "xdg"),
+            "TEMP": str(temporary),
+            "TMP": str(temporary),
+            "TMPDIR": str(temporary),
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+    )
+    return environment
+
+
 def check_public_submodule_fetchability(
     recorded: dict[str, str], modules: dict[str, dict[str, str]]
 ) -> None:
-    environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     for name, config in modules.items():
         expected = recorded[name]
         with tempfile.TemporaryDirectory(prefix=f"frust-public-{name}-") as temporary:
+            probe = Path(temporary)
+            repository = probe / "repository"
+            repository.mkdir()
+            environment = git_anonymous_environment(probe / "home")
             initialize = subprocess.run(
-                [*git_anonymous_prefix(), "-C", temporary, "init", "--quiet"],
+                [*git_anonymous_prefix(), "-C", str(repository), "init", "--quiet"],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -254,7 +280,7 @@ def check_public_submodule_fetchability(
                 [
                     *git_anonymous_prefix(),
                     "-C",
-                    temporary,
+                    str(repository),
                     "fetch",
                     "--quiet",
                     "--depth=1",
@@ -273,7 +299,7 @@ def check_public_submodule_fetchability(
                     f"{config['url']}: {fetch.stderr.strip()}"
                 )
             resolved = subprocess.run(
-                ["git", "-C", temporary, "rev-parse", "FETCH_HEAD"],
+                ["git", "-C", str(repository), "rev-parse", "FETCH_HEAD"],
                 capture_output=True,
                 text=True,
                 check=False,
