@@ -21,6 +21,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.surrealdb
+      additional_contexts:
+        legal: ..
       args:
         VCS_REF: ${VCS_REF:-unknown}
     image: ${FRUST_SURREAL_IMAGE:-frust/surrealdb:3.2.3}
@@ -74,6 +76,7 @@ services:
       additional_contexts:
         artifacts: ../wasm-spike/artifacts
         deploy: .
+        legal: ..
       args:
         FRUST_VERSION: ${FRUST_VERSION:-0.1.0}
         VCS_REF: ${VCS_REF:-unknown}
@@ -86,6 +89,7 @@ services:
       - surreal_root_password
     volumes:
       - mail-outbox:/var/lib/frust/mail-outbox
+      - recovery-data:/var/lib/frust/recovery
     networks: [datastore, application]
     depends_on:
       initialize:
@@ -168,6 +172,7 @@ networks:
 volumes:
   surreal-data: {}
   mail-outbox: {}
+  recovery-data: {}
 
 secrets:
   surreal_root_username:

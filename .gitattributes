@@ -1,4 +1,9 @@
 # Reproducible WASM builds require byte-identical inputs on every host.
 /.gitattributes text eol=lf
+/LICENSE text eol=lf whitespace=-blank-at-eof
+/deploy/licenses/SURREALDB-BSL-1.1.txt text eol=lf whitespace=-blank-at-eof
 /wasm-spike/** text eol=lf
 /wasm-spike/**/*.wasm binary
+
+# Container shebangs must remain executable on Linux from Windows checkouts.
+/deploy/**/*.sh text eol=lf

@@ -1,20 +1,5 @@
 # syntax=docker/dockerfile:1.7
 
-ARG RUST_VERSION=1.96.0
-FROM rust:${RUST_VERSION}-bookworm AS build
-
-ENV CARGO_NET_RETRY=10 \
-    CARGO_HTTP_MULTIPLEXING=false \
-    CARGO_HTTP_TIMEOUT=600
-
-WORKDIR /src/frust-kernel
-COPY . .
-
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/src/frust-kernel/target,sharing=locked \
-    cargo build --locked --release --package frust-kernel && \
-    install -Dm0755 target/release/frust /out/frust
-
 FROM surrealdb/surrealdb:v3.2.3 AS surrealdb
 
 FROM debian:bookworm-slim AS runtime
@@ -36,12 +21,12 @@ RUN apt-get update && \
     install -d -o frust -g frust /opt/frust/artifacts /var/lib/frust/mail-outbox /var/lib/frust/recovery && \
     install -d /usr/share/licenses/frust /usr/share/licenses/surrealdb
 
-COPY --from=build /out/frust /usr/local/bin/frust
+COPY --from=payload --chmod=0755 bin/frust /usr/local/bin/frust
 COPY --from=surrealdb /surreal /usr/local/bin/surreal
-COPY --from=artifacts --chown=frust:frust . /opt/frust/artifacts/
-COPY --from=deploy --chmod=0755 bin/kernel-entrypoint.sh /usr/local/bin/kernel-entrypoint
-COPY --from=legal LICENSE NOTICE /usr/share/licenses/frust/
-COPY --from=deploy licenses/SURREALDB-BSL-1.1.txt /usr/share/licenses/surrealdb/LICENSE
+COPY --from=payload --chown=frust:frust runtime/ /opt/frust/artifacts/
+COPY --chmod=0755 bin/kernel-entrypoint.sh /usr/local/bin/kernel-entrypoint
+COPY --from=payload licenses/FRUST-AGPL-3.0.txt licenses/FRUST-NOTICE.txt /usr/share/licenses/frust/
+COPY --from=payload licenses/SURREALDB-BSL-1.1.txt /usr/share/licenses/surrealdb/LICENSE
 
 USER 10001:10001
 WORKDIR /var/lib/frust
