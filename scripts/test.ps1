@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("offline", "live", "perf", "all", "check")]
+    [ValidateSet("offline", "smoke", "live", "perf", "all", "check")]
     [string] $Lane = "offline",
 
     [ValidateRange(30, 3600)]
@@ -157,10 +157,12 @@ function Test-LanePolicy {
     }
 
     $offline = @($Policy.offlineTargets | ForEach-Object { [string] $_ })
+    $smoke = @($Policy.smokeTargets | ForEach-Object { [string] $_ })
     $liveExcluded = @($Policy.liveExcludedTargets | ForEach-Object { [string] $_.target })
     $perfExclusive = @($Policy.perfExclusiveTargets | ForEach-Object { [string] $_ })
     $liveLibraries = @($Policy.liveLibraryPackages | ForEach-Object { [string] $_ })
     Assert-UniqueValues "offlineTargets" $offline
+    Assert-UniqueValues "smokeTargets" $smoke
     Assert-UniqueValues "liveExcludedTargets" $liveExcluded
     Assert-UniqueValues "perfExclusiveTargets" $perfExclusive
     Assert-UniqueValues "liveLibraryPackages" $liveLibraries
@@ -172,7 +174,7 @@ function Test-LanePolicy {
         throw "frust-orm testkit topology changed; reclassify its library target before running lanes"
     }
 
-    $referencedTargets = @($offline + $liveExcluded + $perfExclusive + @(
+    $referencedTargets = @($offline + $smoke + $liveExcluded + $perfExclusive + @(
         $Policy.perfCases | ForEach-Object { [string] $_.target }
     ) + @(
         $Policy.knownNonHermeticCases | ForEach-Object { [string] $_.target }
@@ -185,6 +187,12 @@ function Test-LanePolicy {
     $overlap = @($offline | Where-Object { $_ -in $liveExcluded -or $_ -in $perfExclusive })
     if ($overlap.Count -gt 0) {
         throw "Offline targets overlap excluded/perf-exclusive targets: $($overlap -join ', ')"
+    }
+    $invalidSmoke = @($smoke | Where-Object {
+        $_ -in $offline -or $_ -in $liveExcluded -or $_ -in $perfExclusive
+    })
+    if ($invalidSmoke.Count -gt 0) {
+        throw "Smoke targets must belong to the hermetic live lane: $($invalidSmoke -join ', ')"
     }
 
     foreach ($case in $Policy.perfCases) {
@@ -323,9 +331,11 @@ $policy = Get-Content -LiteralPath $PolicyPath -Raw | ConvertFrom-Json
 $allTargets = @(Get-IntegrationTargets)
 Test-LanePolicy $policy $allTargets
 $liveTargets = @(Get-LiveTargets $policy $allTargets)
+$smokeTargets = @($policy.smokeTargets | ForEach-Object { [string] $_ })
 
 if ($Lane -eq "check") {
     Write-Host "Offline targets: $(@($policy.offlineTargets).Count)"
+    Write-Host "Smoke targets: $($smokeTargets.Count)"
     Write-Host "Live targets: $($liveTargets.Count)"
     Write-Host "Live library packages: $(@($policy.liveLibraryPackages).Count)"
     Write-Host "Perf cases: $(@($policy.perfCases).Count)"
@@ -346,6 +356,12 @@ foreach ($target in $liveTargets) {
 }
 $liveArgs += @("--", "--test-threads=$TestThreads")
 
+$smokeArgs = @("test", "--locked", "-p", "frust-kernel")
+foreach ($target in $smokeTargets) {
+    $smokeArgs += @("--test", $target)
+}
+$smokeArgs += @("--", "--test-threads=$TestThreads")
+
 $liveLibraryArgs = @("test", "--locked")
 foreach ($package in $policy.liveLibraryPackages) {
     $liveLibraryArgs += @("-p", [string] $package)
@@ -354,6 +370,7 @@ $liveLibraryArgs += @("--lib", "--", "--test-threads=$TestThreads")
 
 if ($List) {
     Write-Host "`nOffline integration targets:`n  $(@($policy.offlineTargets) -join "`n  ")"
+    Write-Host "`nSmoke integration targets:`n  $($smokeTargets -join "`n  ")"
     Write-Host "`nLive integration targets:`n  $($liveTargets -join "`n  ")"
     Write-Host "`nLive library packages:`n  $(@($policy.liveLibraryPackages) -join "`n  ")"
     Write-Host "`nKnown non-hermetic cases (never selected):"
@@ -380,15 +397,22 @@ try {
         Invoke-CargoTests $offlineIntegrationArgs "offline kernel integration tests"
     }
 
-    if ($Lane -in @("live", "perf", "all") -and -not $List) {
+    if ($Lane -in @("smoke", "live", "perf", "all") -and -not $List) {
         $database = Start-TestDatabase $policy.surreal
         $env:FRUST_DB_ENDPOINT = "http://$($policy.surreal.host):$($policy.surreal.hostPort)"
         $env:FRUST_DB_ROOT_USER = [string] $policy.surreal.user
         $env:FRUST_DB_ROOT_PASS = [string] $policy.surreal.password
     }
 
-    if ($Lane -in @("live", "all")) {
+    if ($Lane -in @("smoke", "live", "all")) {
         Invoke-CargoTests $liveLibraryArgs "live library tests"
+    }
+
+    if ($Lane -eq "smoke") {
+        Invoke-CargoTests $smokeArgs "protected live smoke tests"
+    }
+
+    if ($Lane -in @("live", "all")) {
         Invoke-CargoTests $liveArgs "live kernel integration tests"
     }
 
