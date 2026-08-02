@@ -4,13 +4,20 @@
 //!
 //! Requires: surreal.exe on 127.0.0.1:8899 (root/root), ns `frust`.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex,
+};
 
 use crate::resource::{Conn, StmtResult};
 
 const ENDPOINT: &str = "http://127.0.0.1:8899";
 const NS: &str = "frust";
 const AUTH: &str = "Basic cm9vdDpyb290"; // root:root
+
+// Namespace-level database DDL conflicts even when two tests create different
+// database names. Keep provisioning and teardown serial within this test binary.
+static DB_LIFECYCLE: Mutex<()> = Mutex::new(());
 
 pub struct TestDb {
     pub db_name: String,
@@ -35,6 +42,9 @@ impl Drop for TestDb {
         if !self.owned {
             return;
         }
+        let _guard = DB_LIFECYCLE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _ = self.post(&format!("REMOVE DATABASE IF EXISTS {};", self.db_name), false);
     }
 }
@@ -75,8 +85,23 @@ pub fn mem_db() -> TestDb {
     static N: AtomicU64 = AtomicU64::new(0);
     let db_name = format!("orm_t_{}_{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed));
     let db = TestDb { db_name: db_name.clone(), owned: true };
-    db.post(&format!("REMOVE DATABASE IF EXISTS {db_name}; DEFINE DATABASE {db_name};"), false)
+    let guard = DB_LIFECYCLE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let statements = db
+        .post(
+            &format!("REMOVE DATABASE IF EXISTS {db_name}; DEFINE DATABASE {db_name};"),
+            false,
+        )
         .expect("provision test database (is surreal.exe on :8899 running?)");
+    let failure = statements
+        .iter()
+        .find(|statement| !statement.ok)
+        .map(|statement| statement.result.clone());
+    drop(guard);
+    if let Some(failed) = failure {
+        panic!("provision test database {db_name}: {failed}");
+    }
     db
 }
 

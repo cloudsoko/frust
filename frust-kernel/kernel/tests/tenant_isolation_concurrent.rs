@@ -259,7 +259,7 @@ fn one_process_routes_two_tenants_and_no_request_ever_crosses() {
         let _ = Rest { router: Arc::new(router), addr: addr.into(), realtime: None }.serve(|| {});
     });
     for _ in 0..50 {
-        if ureq::post(format!("{url}/health")).send("").is_ok() {
+        if ureq::get(format!("{url}/health")).call().is_ok() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
