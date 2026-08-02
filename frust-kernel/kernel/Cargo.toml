@@ -26,8 +26,8 @@ base64 = "0.22"
 lettre = { version = "0.11", default-features = false, features = [
     "builder", "smtp-transport", "rustls-tls", "file-transport", "file-transport-envelope",
 ] }
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 
