@@ -2,6 +2,7 @@
   "version": 1,
   "surreal": {
     "image": "surrealdb/surrealdb:v3.2.3",
+    "store": "surrealkv:/tmp/frust-test",
     "host": "127.0.0.1",
     "hostPort": 8899,
     "containerPort": 8000,

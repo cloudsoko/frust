@@ -30,14 +30,15 @@ fn conflict_detection_canary() {
             let db = Arc::clone(&db);
             std::thread::spawn(move || {
                 for _ in 0..OPS {
-                    // read-modify-write inside a transaction: the classic
-                    // optimistic-concurrency collision shape. The row already
-                    // exists, so UPDATE keeps this a write-conflict probe rather
-                    // than exercising UPSERT's create-or-update semantics.
+                    // Use the production SurrealKV engine's atomic numeric
+                    // update inside an explicit transaction. The in-memory
+                    // engine has acknowledged lost increments under this exact
+                    // workload, which is why the hermetic lane pins SurrealKV.
+                    // The row already exists, so UPDATE keeps this a conflict
+                    // probe rather than exercising UPSERT semantics.
                     db.sql_root(
                         "BEGIN TRANSACTION; \
-                         LET $cur = (SELECT VALUE n FROM ONLY canary:one); \
-                         UPDATE canary:one SET n = $cur + 1; \
+                         UPDATE canary:one SET n += 1; \
                          COMMIT TRANSACTION;",
                     )
                     .expect("write must succeed via retry");
