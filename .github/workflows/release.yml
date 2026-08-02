@@ -248,6 +248,7 @@ jobs:
     uses: ./.github/workflows/stage-candidate.yml
     with:
       tag: ${{ github.ref_name }}
+      orchestration_sha: ${{ github.sha }}
     permissions:
       contents: read
       attestations: read
