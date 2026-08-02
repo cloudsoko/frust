@@ -60,7 +60,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-runtime-inputs
-          path: wasm-spike/artifacts/*.wasm
+          path: |
+            wasm-spike/artifacts/script_engine.wasm
+            wasm-spike/artifacts/plugin_demo.wasm
           if-no-files-found: error
           retention-days: 1
 
@@ -136,7 +138,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$stage/bin", "$stage/runtime", "$stage/release", "$stage/licenses" | Out-Null
           Copy-Item "frust-kernel/target/release/frust${{ matrix.executable_suffix }}" "$stage/bin/"
           Copy-Item "frust-desk/target/release/frust-desk${{ matrix.executable_suffix }}" "$stage/bin/"
-          Copy-Item "wasm-spike/artifacts/*.wasm" "$stage/runtime/"
+          Copy-Item "wasm-spike/artifacts/script_engine.wasm" "$stage/runtime/"
+          Copy-Item "wasm-spike/artifacts/plugin_demo.wasm" "$stage/runtime/"
           Copy-Item "frust-desk/assets/engine/script_engine.js" "$stage/runtime/"
           Copy-Item "frust-desk/assets/engine/script_engine.core.wasm" "$stage/runtime/"
           Copy-Item "release/compatibility.toml" "$stage/release/"
