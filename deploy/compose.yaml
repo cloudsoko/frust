@@ -23,7 +23,7 @@ services:
       dockerfile: Dockerfile.surrealdb
       args:
         VCS_REF: ${VCS_REF:-unknown}
-    image: ${FRUST_SURREAL_IMAGE:-frust/surrealdb:3.2.0}
+    image: ${FRUST_SURREAL_IMAGE:-frust/surrealdb:3.2.3}
     restart: unless-stopped
     init: true
     secrets:
@@ -46,7 +46,7 @@ services:
     logging: *default-logging
 
   initialize:
-    image: ${FRUST_SURREAL_IMAGE:-frust/surrealdb:3.2.0}
+    image: ${FRUST_SURREAL_IMAGE:-frust/surrealdb:3.2.3}
     entrypoint: [/usr/local/bin/initialize-databases]
     environment:
       FRUST_TENANCY: database-per-tenant
