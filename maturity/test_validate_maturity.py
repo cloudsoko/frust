@@ -15,6 +15,14 @@ assert SPEC is not None and SPEC.loader is not None
 VALIDATOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VALIDATOR)
 
+EVIDENCE_SCRIPT_PATH = REPO_ROOT / "scripts" / "verify_staging_evidence.py"
+EVIDENCE_SPEC = importlib.util.spec_from_file_location(
+    "verify_staging_evidence", EVIDENCE_SCRIPT_PATH
+)
+assert EVIDENCE_SPEC is not None and EVIDENCE_SPEC.loader is not None
+EVIDENCE = importlib.util.module_from_spec(EVIDENCE_SPEC)
+EVIDENCE_SPEC.loader.exec_module(EVIDENCE)
+
 
 def capability() -> dict:
     return {
@@ -156,6 +164,23 @@ class LedgerValidationTests(unittest.TestCase):
             ]
         )
         self.assertEqual(result, 1)
+
+
+class StagingEvidenceTests(unittest.TestCase):
+    def test_committed_staging_evidence_reproduces_from_raw_report(self) -> None:
+        EVIDENCE.verify_files(
+            REPO_ROOT / "maturity" / "evidence" / "v0.1.0-rc.3-staging.json"
+        )
+
+    def test_rejects_a_changed_derived_timing(self) -> None:
+        record = EVIDENCE.load_object(
+            REPO_ROOT / "maturity" / "evidence" / "v0.1.0-rc.3-staging.json"
+        )
+        raw_path = REPO_ROOT / record["source_evidence"]["raw_report_path"]
+        raw = EVIDENCE.load_object(raw_path)
+        record["timings_ms"]["backup"] += 1
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "derived drill timings"):
+            EVIDENCE.verify_local(record, raw, EVIDENCE.sha256(raw_path))
 
 
 if __name__ == "__main__":

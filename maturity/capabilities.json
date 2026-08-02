@@ -314,7 +314,7 @@
           "result": "passing"
         },
         {
-          "command": "gh run view 30767346680 --repo cloudsoko/frust --exit-status",
+          "command": "python scripts/verify_staging_evidence.py --verify-github",
           "automated": true,
           "result": "passing"
         }
@@ -347,7 +347,7 @@
           "result": "passing"
         },
         {
-          "command": "gh run view 30767346680 --repo cloudsoko/frust --exit-status",
+          "command": "python scripts/verify_staging_evidence.py --verify-github",
           "automated": true,
           "result": "passing"
         }
