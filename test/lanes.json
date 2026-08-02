@@ -16,6 +16,14 @@
     "surql_monopoly",
     "tenancy_monopoly"
   ],
+  "smokeTargets": [
+    "acceptance_e2e",
+    "conflict_canary",
+    "kernel_hygiene",
+    "realtime_e2e",
+    "root_jwt_auth",
+    "worker_queue"
+  ],
   "liveLibraryPackages": [
     "frust-orm"
   ],
