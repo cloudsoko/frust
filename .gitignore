@@ -14,6 +14,7 @@ node_modules/
 !/wasm-spike/package.json
 !/wasm-spike/pnpm-lock.yaml
 !/wasm-spike/artifacts.lock.json
+!/wasm-spike/transpile.mjs
 !/wasm-spike/script-engine/
 !/wasm-spike/script-engine/**
 !/wasm-spike/plugin-demo/
