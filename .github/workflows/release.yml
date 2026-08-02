@@ -88,22 +88,34 @@ jobs:
       - name: Build locked release binaries
         shell: pwsh
         run: |
-          cargo build --manifest-path frust-kernel/Cargo.toml --package frust-kernel --release --locked --jobs 2
-          if ($LASTEXITCODE -ne 0) { throw "kernel release build failed" }
-          cargo build --manifest-path frust-desk/Cargo.toml --release --locked --jobs 2
-          if ($LASTEXITCODE -ne 0) { throw "Desk release build failed" }
+          if ("${{ runner.os }}" -eq "Linux") {
+            docker run --rm --volume "${PWD}:/src" --workdir /src rust:1.96.0-bookworm `
+              bash -euc 'cargo build --manifest-path frust-kernel/Cargo.toml --package frust-kernel --release --locked --jobs 2; cargo build --manifest-path frust-desk/Cargo.toml --release --locked --jobs 2'
+          } else {
+            cargo build --manifest-path frust-kernel/Cargo.toml --package frust-kernel --release --locked --jobs 2
+            if ($LASTEXITCODE -ne 0) { throw "kernel release build failed" }
+            cargo build --manifest-path frust-desk/Cargo.toml --release --locked --jobs 2
+          }
+          if ($LASTEXITCODE -ne 0) { throw "release binary build failed" }
 
       - name: Stage release payload
         shell: pwsh
         run: |
           $stage = "dist/frust-${{ github.ref_name }}-${{ matrix.label }}"
-          New-Item -ItemType Directory -Force -Path "$stage/bin", "$stage/runtime", "$stage/release" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$stage/bin", "$stage/runtime", "$stage/release", "$stage/licenses" | Out-Null
           Copy-Item "frust-kernel/target/release/frust${{ matrix.executable_suffix }}" "$stage/bin/"
           Copy-Item "frust-desk/target/release/frust-desk${{ matrix.executable_suffix }}" "$stage/bin/"
           Copy-Item "wasm-spike/artifacts/*.wasm" "$stage/runtime/"
           Copy-Item "frust-desk/assets/engine/script_engine.js" "$stage/runtime/"
           Copy-Item "frust-desk/assets/engine/script_engine.core.wasm" "$stage/runtime/"
           Copy-Item "release/compatibility.toml" "$stage/release/"
+          Copy-Item "deploy/recovery-runbook.md" "$stage/release/"
+          Copy-Item "LICENSE" "$stage/licenses/FRUST-AGPL-3.0.txt"
+          Copy-Item "NOTICE" "$stage/licenses/FRUST-NOTICE.txt"
+          Copy-Item "frust-desk/LICENSE" "$stage/licenses/FRUST-DESK-AGPL-3.0.txt"
+          Copy-Item "frust-desk/NOTICE" "$stage/licenses/FRUST-DESK-NOTICE.txt"
+          Copy-Item "topcoat/LICENSE" "$stage/licenses/TOPCOAT-MIT.txt"
+          Copy-Item "deploy/licenses/SURREALDB-BSL-1.1.txt" "$stage/licenses/SURREALDB-BSL-1.1.txt"
 
       - name: Generate SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
@@ -118,9 +130,22 @@ jobs:
         shell: pwsh
         run: |
           $name = "frust-${{ github.ref_name }}-${{ matrix.label }}"
+          Copy-Item "dist/$name/release/sbom.spdx.json" "dist/$name.sbom.spdx.json"
           Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
           $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $name.zip" | Out-File "dist/$name.zip.sha256" -Encoding ascii -NoNewline
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign release payload with GitHub OIDC
+        shell: pwsh
+        run: |
+          $name = "frust-${{ github.ref_name }}-${{ matrix.label }}"
+          cosign sign-blob --yes --bundle "dist/$name.zip.sigstore.json" "dist/$name.zip"
+          if ($LASTEXITCODE -ne 0) { throw "archive signing failed" }
+          cosign sign-blob --yes --bundle "dist/$name.sbom.spdx.json.sigstore.json" "dist/$name.sbom.spdx.json"
+          if ($LASTEXITCODE -ne 0) { throw "SBOM signing failed" }
 
       - name: Attest archive provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
@@ -128,6 +153,7 @@ jobs:
           subject-path: |
             dist/frust-${{ github.ref_name }}-${{ matrix.label }}.zip
             dist/frust-${{ github.ref_name }}-${{ matrix.label }}.zip.sha256
+            dist/frust-${{ github.ref_name }}-${{ matrix.label }}.sbom.spdx.json
 
       - name: Upload locked release payload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -136,6 +162,9 @@ jobs:
           path: |
             dist/frust-${{ github.ref_name }}-${{ matrix.label }}.zip
             dist/frust-${{ github.ref_name }}-${{ matrix.label }}.zip.sha256
+            dist/frust-${{ github.ref_name }}-${{ matrix.label }}.zip.sigstore.json
+            dist/frust-${{ github.ref_name }}-${{ matrix.label }}.sbom.spdx.json
+            dist/frust-${{ github.ref_name }}-${{ matrix.label }}.sbom.spdx.json.sigstore.json
           if-no-files-found: error
           retention-days: 14
 
@@ -152,6 +181,21 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Verify signed payloads before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity='^https://github\.com/cloudsoko/frust/\.github/workflows/release\.yml@refs/tags/v[0-9].*$'
+          issuer='https://token.actions.githubusercontent.com'
+          for payload in dist/*.zip dist/*.sbom.spdx.json; do
+            cosign verify-blob \
+              --bundle "${payload}.sigstore.json" \
+              --certificate-identity-regexp "${identity}" \
+              --certificate-oidc-issuer "${issuer}" \
+              "${payload}"
+          done
       - name: Publish immutable GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -164,3 +208,80 @@ jobs:
             --generate-notes \
             --title "Frust ${GITHUB_REF_NAME}" \
             $prerelease
+
+  staging:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: staging
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - name: Check out the exact release candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Download the signed Linux release payload
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-linux-x86_64
+          path: dist
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Verify signatures, checksum, and provenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $name = "frust-${{ github.ref_name }}-linux-x86_64"
+          $archive = "dist/$name.zip"
+          $identity = '^https://github\.com/cloudsoko/frust/\.github/workflows/release\.yml@refs/tags/v[0-9].*$'
+          $issuer = 'https://token.actions.githubusercontent.com'
+          $checksum = ((Get-Content "$archive.sha256" -Raw).Trim() -split '\s+')[0]
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $checksum) { throw "release archive checksum mismatch" }
+          cosign verify-blob --bundle "$archive.sigstore.json" --certificate-identity-regexp $identity --certificate-oidc-issuer $issuer $archive
+          if ($LASTEXITCODE -ne 0) { throw "release archive signature verification failed" }
+          cosign verify-blob --bundle "dist/$name.sbom.spdx.json.sigstore.json" --certificate-identity-regexp $identity --certificate-oidc-issuer $issuer "dist/$name.sbom.spdx.json"
+          if ($LASTEXITCODE -ne 0) { throw "release SBOM signature verification failed" }
+          gh attestation verify $archive --repo "${{ github.repository }}"
+          if ($LASTEXITCODE -ne 0) { throw "release provenance verification failed" }
+          Expand-Archive -LiteralPath $archive -DestinationPath staging/payload
+
+      - name: Prepare the pre-release baseline checkout
+        shell: pwsh
+        run: |
+          $candidate = (git rev-list -n 1 "${{ github.ref_name }}").Trim()
+          $baseline = (git rev-parse "$candidate^1").Trim()
+          "BASELINE_COMMIT=$baseline" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          git clone "${{ github.server_url }}/${{ github.repository }}.git" staging/baseline
+          git -C staging/baseline config url."${{ github.server_url }}/".insteadOf git@github.com:
+          git -C staging/baseline checkout --detach $baseline
+          git -C staging/baseline submodule update --init --recursive
+
+      - name: Deploy, upgrade, rollback, and restore in staging
+        shell: pwsh
+        run: |
+          ./scripts/staging-drill.ps1 `
+            -Tag "${{ github.ref_name }}" `
+            -Commit "${{ github.sha }}" `
+            -BaselineCommit "$env:BASELINE_COMMIT" `
+            -BaselineCheckout staging/baseline `
+            -PayloadDirectory staging/payload `
+            -EvidenceDirectory staging/evidence `
+            -ProjectName "frust-rc-${{ github.run_id }}" `
+            -DeskPort 3300
+
+      - name: Upload staging and recovery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: staging-evidence-${{ github.ref_name }}-${{ github.run_id }}
+          path: staging/evidence
+          if-no-files-found: error
+          retention-days: 90

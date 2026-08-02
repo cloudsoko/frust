@@ -52,7 +52,7 @@ jobs:
 
       - name: Validate release metadata
         run: |
-          python .github/scripts/release-preflight.py --skip-artifacts
+          python .github/scripts/release-preflight.py --require-license --skip-artifacts
           python -m unittest discover -s .github/scripts -p "test_*.py"
 
       - name: Validate maturity ledger
@@ -65,7 +65,7 @@ jobs:
         run: ./scripts/frust.ps1 build-artifacts
 
       - name: Verify all runtime artifact checksums
-        run: python .github/scripts/release-preflight.py
+        run: python .github/scripts/release-preflight.py --require-license
 
       - name: Refuse generated artifact drift
         run: git diff --exit-code -- wasm-spike/artifacts frust-desk/assets/engine wasm-spike/artifacts.lock.json
