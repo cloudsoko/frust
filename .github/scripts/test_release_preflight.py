@@ -125,6 +125,25 @@ class ArtifactSetTests(unittest.TestCase):
                 PREFLIGHT.check_artifacts(root)
 
 
+class PublicSubmodulePolicyTests(unittest.TestCase):
+    def test_repository_uses_the_approved_public_https_submodules(self) -> None:
+        self.assertEqual(PREFLIGHT.read_public_submodules(), PREFLIGHT.PUBLIC_SUBMODULES)
+
+    def test_rejects_an_ssh_only_submodule_url(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            text = (PREFLIGHT.ROOT / ".gitmodules").read_text(encoding="utf-8")
+            (root / ".gitmodules").write_text(
+                text.replace(
+                    "https://github.com/cloudsoko/frust-desk.git",
+                    "git@github.com:cloudsoko/frust-desk.git",
+                ),
+                encoding="utf-8",
+            )
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                PREFLIGHT.read_public_submodules(root)
+
+
 class LegalReadinessTests(unittest.TestCase):
     def fixture(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
         temporary = tempfile.TemporaryDirectory()
