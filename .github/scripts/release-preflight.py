@@ -42,27 +42,39 @@ def workspace_version() -> str:
     return version
 
 
-def check_pnpm_lock_dependency(package: str, expected: str) -> None:
-    lines = (ROOT / "wasm-spike" / "pnpm-lock.yaml").read_text("utf-8").splitlines()
+def mapping_end(lines: list[str], start: int, indent: int, limit: int) -> int:
+    for index in range(start + 1, limit):
+        line = lines[index]
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            return index
+    return limit
+
+
+def check_pnpm_lock_dependency(package: str, expected: str, lock_text: str | None = None) -> None:
+    if lock_text is None:
+        lock_text = (ROOT / "wasm-spike" / "pnpm-lock.yaml").read_text("utf-8")
+    lines = lock_text.splitlines()
     try:
         importers = lines.index("importers:")
         packages = lines.index("packages:", importers + 1)
         root_importer = lines.index("  .:", importers + 1, packages)
-        dev_dependencies = lines.index("    devDependencies:", root_importer + 1, packages)
-        dependency = lines.index(f"      '{package}':", dev_dependencies + 1, packages)
+        root_end = mapping_end(lines, root_importer, 2, packages)
+        dev_dependencies = lines.index("    devDependencies:", root_importer + 1, root_end)
+        dev_end = mapping_end(lines, dev_dependencies, 4, root_end)
+        dependency = lines.index(f"      '{package}':", dev_dependencies + 1, dev_end)
     except ValueError:
         fail(f"pnpm lockfile has no root devDependency entry for {package}")
 
     values: dict[str, str] = {}
-    for line in lines[dependency + 1 : packages]:
-        if line.strip() and len(line) - len(line.lstrip()) <= 6:
-            break
+    dependency_end = mapping_end(lines, dependency, 6, dev_end)
+    for line in lines[dependency + 1 : dependency_end]:
         match = re.fullmatch(r"        (specifier|version):\s+(.+)", line)
         if match:
             values[match.group(1)] = match.group(2).strip("'\"")
     if values.get("specifier") != expected or values.get("version") != expected:
         fail(f"pnpm lockfile does not pin {package} exactly to {expected}")
-    if f"  '{package}@{expected}':" not in lines[packages + 1 :]:
+    packages_end = mapping_end(lines, packages, 0, len(lines))
+    if f"  '{package}@{expected}':" not in lines[packages + 1 : packages_end]:
         fail(f"pnpm lockfile has no package resolution for {package}@{expected}")
 
 
