@@ -7,3 +7,6 @@
 
 # Container shebangs must remain executable on Linux from Windows checkouts.
 /deploy/**/*.sh text eol=lf
+
+# Evidence hashes bind the canonical JSON bytes across checkout platforms.
+/maturity/evidence/*.json text eol=lf
