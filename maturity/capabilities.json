@@ -297,50 +297,65 @@
       "id": "operations.deployment",
       "name": "Containerized deployment package",
       "surface": "Deployment",
-      "status": "experimental",
-      "implementation": "partial",
-      "operational_proof": "none",
+      "status": "pilot",
+      "implementation": "implemented",
+      "operational_proof": "staging",
       "owner": "operations",
       "evidence": [
         { "path": "deploy/compose.yaml", "kind": "source" },
-        { "path": "deploy/README.md", "kind": "runbook" }
+        { "path": "deploy/README.md", "kind": "runbook" },
+        { "path": ".github/workflows/stage-candidate.yml", "kind": "ci-workflow" },
+        { "path": "maturity/evidence/v0.1.0-rc.3-staging.json", "kind": "automated-test" }
       ],
       "verification": [
         {
           "command": "docker compose --env-file deploy/.env.example -f deploy/compose.yaml config --quiet",
           "automated": true,
-          "result": "unknown"
+          "result": "passing"
+        },
+        {
+          "command": "gh run view 30767346680 --repo cloudsoko/frust --exit-status",
+          "automated": true,
+          "result": "passing"
         }
       ],
       "operations_artifact": "deploy/README.md",
       "known_gaps": [
-        "The image build and multi-service startup have not been recorded as passing in this ledger.",
-        "High availability, upgrades, external secret management, and off-host backup remain operator work."
+        "Only an ephemeral single-host staging topology has been exercised; production infrastructure, high availability, and failover are not certified.",
+        "Capacity limits, durable observability, TLS ingress, external secret management, and production service objectives remain environment work."
       ]
     },
     {
       "id": "operations.recovery",
       "name": "Verified backup and destructive restore",
       "surface": "Recovery",
-      "status": "experimental",
-      "implementation": "partial",
-      "operational_proof": "none",
+      "status": "pilot",
+      "implementation": "implemented",
+      "operational_proof": "staging",
       "owner": "operations",
       "evidence": [
         { "path": "frust-kernel/kernel/src/recovery.rs", "kind": "automated-test" },
-        { "path": "frust-kernel/kernel/tests/tenant_restore_ops.rs", "kind": "automated-test" }
+        { "path": "frust-kernel/kernel/tests/tenant_restore_ops.rs", "kind": "automated-test" },
+        { "path": "deploy/recovery-runbook.md", "kind": "runbook" },
+        { "path": "scripts/staging-drill.ps1", "kind": "automated-test" },
+        { "path": "maturity/evidence/v0.1.0-rc.3-staging.json", "kind": "automated-test" }
       ],
       "verification": [
         {
-          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-kernel recovery",
+          "command": "cargo test --manifest-path frust-kernel/Cargo.toml -p frust-kernel --lib recovery",
           "automated": true,
-          "result": "unknown"
+          "result": "passing"
+        },
+        {
+          "command": "gh run view 30767346680 --repo cloudsoko/frust --exit-status",
+          "automated": true,
+          "result": "passing"
         }
       ],
-      "operations_artifact": null,
+      "operations_artifact": "deploy/recovery-runbook.md",
       "known_gaps": [
-        "No repository-owned recovery runbook or timed restore drill is recorded.",
-        "Off-host storage, retention policy, encryption, and restore objectives are not implemented end to end."
+        "The staging drill used a 6,535-byte tenant backup; production-scale recovery objectives remain unproven against representative data and failure modes.",
+        "Encrypted off-host storage, retention enforcement, geographic failure recovery, and recurring production drills are not implemented end to end."
       ]
     },
     {
@@ -365,8 +380,8 @@
       ],
       "operations_artifact": null,
       "known_gaps": [
-        "The project has no approved root license, which blocks a legitimate public release.",
-        "No signed release, provenance attestation, or consumer installation exercise is recorded."
+        "No stable release or support lifetime is published; v0.1.0-rc.3 remains a prerelease candidate.",
+        "Platform trust channels such as Windows Authenticode and Apple signing or notarization are not provided."
       ]
     },
     {
