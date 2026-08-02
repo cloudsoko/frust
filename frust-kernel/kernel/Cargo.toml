@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "frust-kernel"
 version.workspace = true
 edition.workspace = true
@@ -14,7 +14,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tiny_http = "0.12"
 ureq = { workspace = true, features = ["json"] }
-base64 = "0.22"
+base64 = "0.23"
 # WO-043 (PM ruling B): lettre DIRECTLY, blocking, never `topcoat-mail`.
 # `topcoat-mail::Transport::send` needs a Topcoat web-request `Cx` (it renders
 # `Mail::html` as a `View`), so wiring it would pull topcoat-core+topcoat-view
