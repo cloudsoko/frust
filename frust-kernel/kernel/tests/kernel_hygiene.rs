@@ -68,6 +68,16 @@ fn post(path: &str, token: Option<&str>, body: &str) -> (u16, serde_json::Value)
     (r.status().as_u16(), r.body_mut().read_json().unwrap_or(serde_json::json!({})))
 }
 
+fn get(path: &str, token: Option<&str>) -> (u16, serde_json::Value) {
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+    let mut req = agent.get(format!("http://{}{path}", boot()));
+    if let Some(t) = token {
+        req = req.header("Authorization", &format!("Bearer {t}"));
+    }
+    let mut r = req.call().expect("http");
+    (r.status().as_u16(), r.body_mut().read_json().unwrap_or(serde_json::json!({})))
+}
+
 fn login(user: &str, pass: &str) -> String {
     let (code, v) = post("/login", None, &format!(r#"{{"user":"{user}","pass":"{pass}"}}"#));
     assert_eq!(code, 200, "login {user}: {v}");
@@ -76,7 +86,7 @@ fn login(user: &str, pass: &str) -> String {
 
 /// Does this token still work? `/meta` is the cheapest authenticated read.
 fn works(token: &str) -> bool {
-    post("/meta", Some(token), "{}").0 == 200
+    get("/meta", Some(token)).0 == 200
 }
 
 // ── item 1: admin force-revoke ──────────────────────────────────────────────
