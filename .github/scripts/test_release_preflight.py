@@ -3,6 +3,8 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -83,6 +85,108 @@ class PnpmLockValidationTests(unittest.TestCase):
         ) + f"  '{PACKAGE}@{VERSION}':\n    dependencies: {{}}\n"
         self.assert_rejected(lock_text)
 
+
+class LegalReadinessTests(unittest.TestCase):
+    def fixture(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
+        temporary = tempfile.TemporaryDirectory()
+        root = Path(temporary.name)
+        for relative, repository in (
+            ("", "https://github.com/cloudsoko/frust"),
+            ("frust-desk", "https://github.com/cloudsoko/frust-desk"),
+            ("frust-ui", "https://github.com/cloudsoko/frust-ui"),
+        ):
+            component = root / relative
+            component.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(PREFLIGHT.ROOT / "LICENSE", component / "LICENSE")
+            (component / "NOTICE").write_text(
+                f"{PREFLIGHT.LICENSE_ID}\n{repository}\n", encoding="utf-8"
+            )
+            if relative:
+                manifest = f'[package]\nlicense = "{PREFLIGHT.LICENSE_ID}"\n'
+                manifest_path = component / "Cargo.toml"
+            else:
+                manifest = f'[workspace.package]\nlicense = "{PREFLIGHT.LICENSE_ID}"\n'
+                manifest_path = component / "frust-kernel" / "Cargo.toml"
+                manifest_path.parent.mkdir()
+            manifest_path.write_text(manifest, encoding="utf-8")
+
+        for relative in PREFLIGHT.WORKSPACE_LICENSE_MANIFESTS:
+            manifest_path = root / relative
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text(
+                "[package]\nlicense.workspace = true\n", encoding="utf-8"
+            )
+        for relative in PREFLIGHT.STANDALONE_LICENSE_MANIFESTS:
+            manifest_path = root / relative
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text(
+                f'[package]\nlicense = "{PREFLIGHT.LICENSE_ID}"\n', encoding="utf-8"
+            )
+
+        topcoat = root / "topcoat"
+        topcoat.mkdir()
+        (topcoat / "Cargo.toml").write_text(
+            '[workspace.package]\nlicense = "MIT"\n', encoding="utf-8"
+        )
+        (topcoat / "LICENSE").write_text("MIT fixture\n", encoding="utf-8")
+        for component in ("frust-desk", "frust-ui"):
+            licenses = root / component / "THIRD_PARTY_LICENSES"
+            licenses.mkdir()
+            (licenses / "TOPCOAT-MIT.txt").write_text("MIT fixture\n", encoding="utf-8")
+        surreal = root / "deploy" / "licenses"
+        surreal.mkdir(parents=True)
+        (surreal / "SURREALDB-BSL-1.1.txt").write_text(
+            "Business Source License 1.1\nLicensor: SurrealDB Ltd.\n", encoding="utf-8"
+        )
+        return temporary, root
+
+    def assert_rejected(self, root: Path) -> None:
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            PREFLIGHT.check_license(True, root)
+
+    def test_accepts_canonical_agpl_metadata_and_notices(self) -> None:
+        temporary, root = self.fixture()
+        with temporary:
+            PREFLIGHT.check_license(True, root)
+
+    def test_rejects_modified_license_text(self) -> None:
+        temporary, root = self.fixture()
+        with temporary:
+            license_path = root / "LICENSE"
+            license_path.write_text(
+                license_path.read_text(encoding="utf-8").replace("GNU AFFERO", "GNU MODIFIED", 1),
+                encoding="utf-8",
+            )
+            self.assert_rejected(root)
+
+    def test_rejects_missing_component_notice(self) -> None:
+        temporary, root = self.fixture()
+        with temporary:
+            (root / "frust-desk" / "NOTICE").unlink()
+            self.assert_rejected(root)
+
+    def test_rejects_spdx_metadata_drift(self) -> None:
+        temporary, root = self.fixture()
+        with temporary:
+            (root / "frust-ui" / "Cargo.toml").write_text(
+                '[package]\nlicense = "MIT"\n', encoding="utf-8"
+            )
+            self.assert_rejected(root)
+
+    def test_rejects_standalone_crate_spdx_metadata_drift(self) -> None:
+        temporary, root = self.fixture()
+        with temporary:
+            manifest = root / "wasm-spike" / "script-engine" / "Cargo.toml"
+            manifest.write_text('[package]\nlicense = "MIT"\n', encoding="utf-8")
+            self.assert_rejected(root)
+
+    def test_rejects_third_party_license_drift(self) -> None:
+        temporary, root = self.fixture()
+        with temporary:
+            (root / "frust-desk" / "THIRD_PARTY_LICENSES" / "TOPCOAT-MIT.txt").write_text(
+                "modified\n", encoding="utf-8"
+            )
+            self.assert_rejected(root)
 
 if __name__ == "__main__":
     unittest.main()

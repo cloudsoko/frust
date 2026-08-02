@@ -15,6 +15,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SEMVER_TAG = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$")
+LICENSE_ID = "AGPL-3.0-only"
+AGPL_V3_SHA256 = "8d56b405468aad11f87ab5763f901e276e08d9646ff5c8481b1762b6b789e9ed"
+WORKSPACE_LICENSE_MANIFESTS = (
+    "frust-kernel/app-sdk/Cargo.toml",
+    "frust-kernel/kernel/Cargo.toml",
+    "frust-kernel/orm/Cargo.toml",
+)
+STANDALONE_LICENSE_MANIFESTS = (
+    "frust-kernel/app-sdk/templates/rust-hook/Cargo.toml",
+    "wasm-spike/plugin-demo/Cargo.toml",
+    "wasm-spike/script-engine/Cargo.toml",
+)
 
 
 def fail(message: str) -> None:
@@ -37,8 +49,10 @@ def workspace_version() -> str:
     version = package.get("version")
     if not isinstance(version, str):
         fail("frust-kernel/Cargo.toml has no workspace.package.version")
+    if package.get("license") != LICENSE_ID:
+        fail(f"kernel workspace license must be {LICENSE_ID}")
     if package.get("publish") is not False:
-        fail("kernel workspace packages must remain publish = false until licensing is decided")
+        fail("kernel workspace packages must remain publish = false until crates.io policy is decided")
     return version
 
 
@@ -131,6 +145,16 @@ def check_artifacts() -> None:
         fail("runtime artifact verification failed:\n  " + "\n  ".join(errors))
 
 
+def check_deployment_line_endings() -> None:
+    errors = [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted((ROOT / "deploy" / "bin").glob("*.sh"))
+        if b"\r" in path.read_bytes()
+    ]
+    if errors:
+        fail("deployment shell scripts must use LF line endings: " + ", ".join(errors))
+
+
 def check_submodules() -> None:
     result = subprocess.run(
         ["git", "submodule", "status", "--recursive"],
@@ -146,20 +170,80 @@ def check_submodules() -> None:
         fail("submodules are missing or not at recorded commits:\n  " + "\n  ".join(bad))
 
 
-def check_license(required: bool) -> None:
-    candidates = [
-        path
-        for pattern in ("LICENSE", "LICENSE.*", "COPYING", "COPYING.*")
-        for path in ROOT.glob(pattern)
-        if path.is_file()
-    ]
-    if candidates:
-        print("license: " + ", ".join(path.name for path in sorted(set(candidates))))
+def normalized_text_sha256(path: Path) -> str:
+    text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def read_toml(path: Path) -> dict:
+    return tomllib.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def check_agpl_component(root: Path, relative: str, repository: str) -> None:
+    component = root / relative if relative else root
+    license_path = component / "LICENSE"
+    notice_path = component / "NOTICE"
+    manifest_path = component / "Cargo.toml" if relative else root / "frust-kernel" / "Cargo.toml"
+    label = relative or "root"
+
+    if not license_path.is_file():
+        fail(f"{label} has no LICENSE file")
+    if normalized_text_sha256(license_path) != AGPL_V3_SHA256:
+        fail(f"{label}/LICENSE is not the canonical GNU AGPL version 3 text")
+    if not notice_path.is_file():
+        fail(f"{label} has no NOTICE file")
+    notice = notice_path.read_text(encoding="utf-8")
+    if LICENSE_ID not in notice or repository not in notice:
+        fail(f"{label}/NOTICE must name {LICENSE_ID} and {repository}")
+
+    manifest = read_toml(manifest_path)
+    package = manifest.get("workspace", {}).get("package", {}) if not relative else manifest.get("package", {})
+    if package.get("license") != LICENSE_ID:
+        fail(f"{label}/Cargo.toml must declare license = {LICENSE_ID!r}")
+
+
+def check_first_party_cargo_licenses(root: Path) -> None:
+    for relative in WORKSPACE_LICENSE_MANIFESTS:
+        package = read_toml(root / relative).get("package", {})
+        if package.get("license") != {"workspace": True}:
+            fail(f"{relative} must declare license.workspace = true")
+    for relative in STANDALONE_LICENSE_MANIFESTS:
+        package = read_toml(root / relative).get("package", {})
+        if package.get("license") != LICENSE_ID:
+            fail(f"{relative} must declare license = {LICENSE_ID!r}")
+
+
+def check_license(required: bool, root: Path = ROOT) -> None:
+    if not (root / "LICENSE").is_file():
+        message = "no project license has been selected; public releases are legally blocked"
+        if required:
+            fail(message)
+        print(f"warning: {message}", file=sys.stderr)
         return
-    message = "no project license has been selected; public releases are legally blocked"
-    if required:
-        fail(message)
-    print(f"warning: {message}", file=sys.stderr)
+
+    check_agpl_component(root, "", "https://github.com/cloudsoko/frust")
+    check_agpl_component(root, "frust-desk", "https://github.com/cloudsoko/frust-desk")
+    check_agpl_component(root, "frust-ui", "https://github.com/cloudsoko/frust-ui")
+    check_first_party_cargo_licenses(root)
+
+    topcoat_manifest = read_toml(root / "topcoat" / "Cargo.toml")
+    if topcoat_manifest.get("workspace", {}).get("package", {}).get("license") != "MIT":
+        fail("topcoat/Cargo.toml must retain its upstream MIT license")
+    if not (root / "topcoat" / "LICENSE").is_file():
+        fail("topcoat has no MIT LICENSE file")
+    topcoat_license = normalized_text_sha256(root / "topcoat" / "LICENSE")
+    for component in ("frust-desk", "frust-ui"):
+        bundled = root / component / "THIRD_PARTY_LICENSES" / "TOPCOAT-MIT.txt"
+        if not bundled.is_file() or normalized_text_sha256(bundled) != topcoat_license:
+            fail(f"{component} does not bundle the recorded Topcoat MIT license")
+
+    surreal_license = root / "deploy" / "licenses" / "SURREALDB-BSL-1.1.txt"
+    if not surreal_license.is_file():
+        fail("the packaged SurrealDB license is missing")
+    surreal_text = surreal_license.read_text(encoding="utf-8")
+    if "Business Source License 1.1" not in surreal_text or "SurrealDB Ltd." not in surreal_text:
+        fail("the packaged SurrealDB license does not identify the pinned upstream terms")
+    print(f"license: {LICENSE_ID}; independently licensed components verified")
 
 
 def check_tag(tag: str | None, version: str) -> None:
@@ -183,6 +267,7 @@ def main() -> None:
     check_compatibility(version)
     check_tag(args.tag, version)
     check_license(args.require_license)
+    check_deployment_line_endings()
     if not args.skip_artifacts:
         check_artifacts()
     if not args.skip_submodules:

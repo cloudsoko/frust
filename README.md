@@ -116,3 +116,10 @@ each has been shown to fail on the defect it was written for.
 
 **Use pnpm, not npm** — npm project installs are broken machine-wide on the dev
 box (an injected `allow-scripts` config).
+
+## License
+
+Frust is licensed under the GNU Affero General Public License version 3 only
+(`AGPL-3.0-only`). See `LICENSE` and `NOTICE`. Frust Desk and Frust UI carry the
+same license in their independent repositories. Third-party components retain
+their own licenses and are identified in `NOTICE` and each release SBOM.

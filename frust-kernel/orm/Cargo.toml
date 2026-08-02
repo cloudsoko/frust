@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 description = "Ported framework-orm-adapter: diff-based, idempotent, transactional, ordered, locked schema migrations — resource source swapped to runtime DocType metadata (WO-005 module 3)."
 
