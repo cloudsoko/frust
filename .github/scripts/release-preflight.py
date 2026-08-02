@@ -124,8 +124,11 @@ def check_compatibility(version: str) -> dict:
 
     surreal = compatibility["framework"]["surrealdb"]
     lanes = json.loads((ROOT / "test" / "lanes.json").read_text("utf-8"))
-    if lanes.get("surreal", {}).get("image") != f"surrealdb/surrealdb:v{surreal}":
+    test_store = lanes.get("surreal", {})
+    if test_store.get("image") != f"surrealdb/surrealdb:v{surreal}":
         fail("SurrealDB test image does not match compatibility metadata")
+    if test_store.get("store") != "surrealkv:/tmp/frust-test":
+        fail("SurrealDB test lane must use the production SurrealKV storage engine")
 
     build = compatibility["build"]
     if "jco" in build:
