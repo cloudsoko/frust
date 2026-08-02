@@ -42,6 +42,30 @@ def workspace_version() -> str:
     return version
 
 
+def check_pnpm_lock_dependency(package: str, expected: str) -> None:
+    lines = (ROOT / "wasm-spike" / "pnpm-lock.yaml").read_text("utf-8").splitlines()
+    try:
+        importers = lines.index("importers:")
+        packages = lines.index("packages:", importers + 1)
+        root_importer = lines.index("  .:", importers + 1, packages)
+        dev_dependencies = lines.index("    devDependencies:", root_importer + 1, packages)
+        dependency = lines.index(f"      '{package}':", dev_dependencies + 1, packages)
+    except ValueError:
+        fail(f"pnpm lockfile has no root devDependency entry for {package}")
+
+    values: dict[str, str] = {}
+    for line in lines[dependency + 1 : packages]:
+        if line.strip() and len(line) - len(line.lstrip()) <= 6:
+            break
+        match = re.fullmatch(r"        (specifier|version):\s+(.+)", line)
+        if match:
+            values[match.group(1)] = match.group(2).strip("'\"")
+    if values.get("specifier") != expected or values.get("version") != expected:
+        fail(f"pnpm lockfile does not pin {package} exactly to {expected}")
+    if f"  '{package}@{expected}':" not in lines[packages + 1 :]:
+        fail(f"pnpm lockfile has no package resolution for {package}@{expected}")
+
+
 def check_compatibility(version: str) -> None:
     with (ROOT / "release" / "compatibility.toml").open("rb") as source:
         compatibility = tomllib.load(source)
@@ -60,6 +84,24 @@ def check_compatibility(version: str) -> None:
         fail("WASM artifact lock Rust version does not match compatibility metadata")
     if artifact_lock.get("target") != compatibility["wasm"]["target"]:
         fail("WASM artifact target does not match compatibility metadata")
+
+    surreal = compatibility["framework"]["surrealdb"]
+    lanes = json.loads((ROOT / "test" / "lanes.json").read_text("utf-8"))
+    if lanes.get("surreal", {}).get("image") != f"surrealdb/surrealdb:v{surreal}":
+        fail("SurrealDB test image does not match compatibility metadata")
+
+    build = compatibility["build"]
+    if "jco" in build:
+        fail("legacy build.jco metadata is unsupported; use build.jco_transpile")
+    package = json.loads((ROOT / "wasm-spike" / "package.json").read_text("utf-8"))
+    pnpm = build["pnpm"]
+    if package.get("packageManager") != f"pnpm@{pnpm}":
+        fail("pnpm packageManager does not match compatibility metadata")
+    jco_transpile = build["jco_transpile"]
+    dependency = package.get("devDependencies", {}).get("@bytecodealliance/jco-transpile")
+    if dependency != jco_transpile:
+        fail("jco-transpile package version does not match compatibility metadata")
+    check_pnpm_lock_dependency("@bytecodealliance/jco-transpile", jco_transpile)
 
 
 def check_artifacts() -> None:
