@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -19,6 +22,23 @@ LICENSE_ID = "AGPL-3.0-only"
 AGPL_V3_SHA256 = "8d56b405468aad11f87ab5763f901e276e08d9646ff5c8481b1762b6b789e9ed"
 TOPCOAT_MIT_SHA256 = "d01d24e419be110d18be7e4944ecf1355d730189f35002df029b6cea9ec56a63"
 SURREALDB_BSL_SHA256 = "572bd7844df95c83477520c334a8ab0ab5c4642cef9cb2c7f8c664454b2efe86"
+PUBLIC_SUBMODULES = {
+    "topcoat": {
+        "path": "topcoat",
+        "url": "https://github.com/cloudsoko/topcoat.git",
+        "branch": "frust",
+    },
+    "frust-ui": {
+        "path": "frust-ui",
+        "url": "https://github.com/cloudsoko/frust-ui.git",
+        "branch": "main",
+    },
+    "frust-desk": {
+        "path": "frust-desk",
+        "url": "https://github.com/cloudsoko/frust-desk.git",
+        "branch": "main",
+    },
+}
 WORKSPACE_LICENSE_MANIFESTS = (
     "frust-kernel/app-sdk/Cargo.toml",
     "frust-kernel/kernel/Cargo.toml",
@@ -180,7 +200,92 @@ def check_deployment_line_endings() -> None:
         fail("deployment shell scripts must use LF line endings: " + ", ".join(errors))
 
 
-def check_submodules(legal: dict) -> None:
+def read_public_submodules(root: Path = ROOT) -> dict[str, dict[str, str]]:
+    parser = configparser.ConfigParser()
+    path = root / ".gitmodules"
+    try:
+        with path.open(encoding="utf-8") as source:
+            parser.read_file(source)
+    except (OSError, configparser.Error) as exc:
+        fail(f"cannot read .gitmodules: {exc}")
+
+    actual: dict[str, dict[str, str]] = {}
+    for section in parser.sections():
+        match = re.fullmatch(r'submodule "([^"]+)"', section)
+        if not match:
+            fail(f"unsupported .gitmodules section {section!r}")
+        actual[match.group(1)] = dict(parser.items(section))
+    if actual != PUBLIC_SUBMODULES:
+        fail(
+            "public submodule configuration differs from the approved HTTPS-only map:\n"
+            f"  expected {PUBLIC_SUBMODULES!r}\n  got {actual!r}"
+        )
+    return actual
+
+
+def git_anonymous_prefix() -> list[str]:
+    prefix = ["git"]
+    resolve = os.environ.get("FRUST_GITHUB_RESOLVE")
+    if resolve:
+        if not re.fullmatch(r"[0-9A-Fa-f:.]+", resolve):
+            fail("FRUST_GITHUB_RESOLVE must be an IPv4 or IPv6 address")
+        prefix.extend(["-c", f"http.curloptResolve=github.com:443:{resolve}"])
+    prefix.extend(["-c", "credential.helper=", "-c", "http.extraHeader="])
+    return prefix
+
+
+def check_public_submodule_fetchability(
+    recorded: dict[str, str], modules: dict[str, dict[str, str]]
+) -> None:
+    environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    for name, config in modules.items():
+        expected = recorded[name]
+        with tempfile.TemporaryDirectory(prefix=f"frust-public-{name}-") as temporary:
+            initialize = subprocess.run(
+                [*git_anonymous_prefix(), "-C", temporary, "init", "--quiet"],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
+            if initialize.returncode != 0:
+                fail(f"cannot initialize anonymous fetch probe for {name}: {initialize.stderr.strip()}")
+            fetch = subprocess.run(
+                [
+                    *git_anonymous_prefix(),
+                    "-C",
+                    temporary,
+                    "fetch",
+                    "--quiet",
+                    "--depth=1",
+                    "--no-tags",
+                    config["url"],
+                    expected,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
+            if fetch.returncode != 0:
+                fail(
+                    f"{name} commit {expected} is not anonymously fetchable from "
+                    f"{config['url']}: {fetch.stderr.strip()}"
+                )
+            resolved = subprocess.run(
+                ["git", "-C", temporary, "rev-parse", "FETCH_HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
+            if resolved.returncode != 0 or resolved.stdout.strip() != expected:
+                fail(f"anonymous fetch for {name} resolved an unexpected commit")
+    print("public submodules: recorded commits fetched anonymously over HTTPS")
+
+
+def check_submodules(legal: dict) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+    modules = read_public_submodules()
     result = subprocess.run(
         ["git", "submodule", "status", "--recursive"],
         cwd=ROOT,
@@ -208,6 +313,7 @@ def check_submodules(legal: dict) -> None:
             fail(f"release/compatibility.toml legal.{field} must be a full commit SHA")
         if recorded.get(path) != expected:
             fail(f"release approval pins {path} at {expected}, checked out {recorded.get(path)!r}")
+    return recorded, modules
 
 
 def normalized_text_sha256(path: Path) -> str:
@@ -307,6 +413,7 @@ def main() -> None:
     parser.add_argument("--require-license", action="store_true")
     parser.add_argument("--skip-artifacts", action="store_true")
     parser.add_argument("--skip-submodules", action="store_true")
+    parser.add_argument("--check-public-submodules", action="store_true")
     args = parser.parse_args()
 
     version = workspace_version()
@@ -317,8 +424,12 @@ def main() -> None:
     check_deployment_line_endings()
     if not args.skip_artifacts:
         check_artifacts()
+    if args.skip_submodules and args.check_public_submodules:
+        fail("--check-public-submodules cannot be combined with --skip-submodules")
     if not args.skip_submodules:
-        check_submodules(legal)
+        recorded, modules = check_submodules(legal)
+        if args.check_public_submodules:
+            check_public_submodule_fetchability(recorded, modules)
     print(f"release preflight passed for Frust {version}")
 
 
