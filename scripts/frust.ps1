@@ -82,6 +82,7 @@ mkdir -p wasm-spike/artifacts &&
 cp wasm-spike/script-engine/target/$WasmTarget/release/script_engine.wasm wasm-spike/artifacts/script_engine.wasm &&
 cp wasm-spike/plugin-demo/target/$WasmTarget/release/plugin_demo.wasm wasm-spike/artifacts/plugin_demo.wasm
 "@
+    $rustBuild = $rustBuild -replace "`r`n", "`n"
     Invoke-Native docker @(
         "run", "--rm",
         "--volume", $repoMount,
@@ -97,12 +98,14 @@ corepack enable &&
 corepack install --global pnpm@$PnpmVersion &&
 pnpm --dir wasm-spike install --frozen-lockfile &&
 mkdir -p .frust/build/browser-engine &&
-pnpm --dir wasm-spike exec jco transpile /frust-source/wasm-spike/artifacts/script_engine.wasm -o /frust-source/.frust/build/browser-engine --quiet &&
+node wasm-spike/transpile.mjs /frust-source/wasm-spike/artifacts/script_engine.wasm /frust-source/.frust/build/browser-engine &&
 cp .frust/build/browser-engine/script_engine.core.wasm frust-desk/assets/engine/script_engine.core.wasm &&
 cp .frust/build/browser-engine/script_engine.js frust-desk/assets/engine/script_engine.js
 "@
+    $nodeBuild = $nodeBuild -replace "`r`n", "`n"
     Invoke-Native docker @(
         "run", "--rm",
+        "--env", "CI=true",
         "--volume", $repoMount,
         "--mount", "type=volume,source=frust-wasm-node-modules,target=/frust-source/wasm-spike/node_modules",
         "--workdir", "/frust-source",
