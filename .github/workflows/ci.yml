@@ -138,6 +138,12 @@ jobs:
       - name: Verify runtime inputs
         run: python .github/scripts/release-preflight.py
 
-      - name: Run bounded hermetic live tests
+      - name: Run protected live smoke tests
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: ./scripts/test.ps1 -Lane smoke -TimeoutSeconds 1200 -TestThreads 2
+
+      - name: Run exhaustive hermetic live tests
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: ./scripts/test.ps1 -Lane live -TimeoutSeconds 2400 -TestThreads 2

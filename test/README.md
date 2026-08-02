@@ -6,6 +6,7 @@ real SurrealDB process. Run it from the repository root:
 ```powershell
 ./scripts/test.ps1 -Lane check
 ./scripts/test.ps1 -Lane offline
+./scripts/test.ps1 -Lane smoke
 ./scripts/test.ps1 -Lane live
 ./scripts/test.ps1 -Lane perf
 ./scripts/test.ps1 -Lane all
@@ -16,7 +17,7 @@ or Docker. `-TimeoutSeconds` bounds each Cargo command, and `-TestThreads`
 controls Rust test concurrency. Build output goes to `test/cargo-target` by
 default instead of any developer target directory.
 
-The `live` and `perf` lanes refuse to start when `127.0.0.1:8899` is occupied.
+The `smoke`, `live`, and `perf` lanes refuse to start when `127.0.0.1:8899` is occupied.
 When it is free, the runner owns a randomly named, in-memory
 `surrealdb/surrealdb:v3.2.0` container and waits at most 45 seconds for its
 health endpoint. Cleanup addresses only the container ID returned by that run.
@@ -31,7 +32,12 @@ before executing a lane. New integration targets join the live lane by default.
 The offline lane runs the kernel and app-SDK library tests plus the listed
 service-free integration targets. `frust-orm` currently mixes pure tests and
 live HTTP tests in one Rust library test binary, so its full library target runs
-in the live lane.
+in both the smoke and exhaustive live lanes.
+
+Pull requests run the smoke lane under both root-auth modes. It keeps the live
+ORM library tests and a small set of high-signal REST, auth, conflict, realtime,
+and worker targets. Pushes to `main` and manual CI runs retain the exhaustive
+live lane.
 
 The default live lane does not opt into ignored tests. Named ignored
 measurements that work against a fresh database belong to the perf lane.

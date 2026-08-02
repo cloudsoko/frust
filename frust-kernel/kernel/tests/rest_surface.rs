@@ -38,7 +38,7 @@ fn start_rest(broker: Arc<Broker>, port: u16) -> String {
     });
     // wait for bind
     for _ in 0..50 {
-        if ureq::post(format!("{url}/health")).send("").is_ok() {
+        if ureq::get(format!("{url}/health")).call().is_ok() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));

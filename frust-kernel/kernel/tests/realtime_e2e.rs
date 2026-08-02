@@ -58,7 +58,7 @@ fn start_rest(cfg: &ResolvedTenant, port: u16) -> (String, Arc<Realtime>) {
         let _ = rest.serve(|| {});
     });
     for _ in 0..50 {
-        if ureq::post(format!("{url}/health")).send("").is_ok() {
+        if ureq::get(format!("{url}/health")).call().is_ok() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -80,6 +80,16 @@ fn post(url: &str, token: &str, route: &str, body: serde_json::Value) -> (u16, s
         .post(format!("{url}{route}"))
         .header("Authorization", &format!("Bearer {token}"))
         .send(body.to_string())
+        .unwrap();
+    (r.status().as_u16(), r.body_mut().read_json().unwrap_or(serde_json::json!({})))
+}
+
+fn get(url: &str, token: &str, route: &str) -> (u16, serde_json::Value) {
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+    let mut r = agent
+        .get(format!("{url}{route}"))
+        .header("Authorization", &format!("Bearer {token}"))
+        .call()
         .unwrap();
     (r.status().as_u16(), r.body_mut().read_json().unwrap_or(serde_json::json!({})))
 }
@@ -118,9 +128,9 @@ fn shipped_push_path_partitions_and_budgets() {
     std::thread::sleep(std::time::Duration::from_millis(1500));
 
     // the partition, on shipped code: each clerk ticks ONLY for their row
-    let (_, e1) = post(&url, &t1, &format!("/events/{s1}"), serde_json::json!({}));
-    let (_, e2) = post(&url, &t2, &format!("/events/{s2}"), serde_json::json!({}));
-    let (_, em) = post(&url, &tm, &format!("/events/{sm}"), serde_json::json!({}));
+    let (_, e1) = get(&url, &t1, &format!("/events/{s1}"));
+    let (_, e2) = get(&url, &t2, &format!("/events/{s2}"));
+    let (_, em) = get(&url, &tm, &format!("/events/{sm}"));
     let ids = |e: &serde_json::Value| -> Vec<String> {
         e["events"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap_or("?").to_string()).collect()
     };
@@ -137,12 +147,12 @@ fn shipped_push_path_partitions_and_budgets() {
     let sm2 = sm2["sub"].as_str().unwrap().to_string();
     b.db_write(&c1_caller, &HookChain::default(), WriteOp::Create, "rdoc", None, &doc("payload check")).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1200));
-    let (_, e) = post(&url, &tm, &format!("/events/{sm2}"), serde_json::json!({}));
+    let (_, e) = get(&url, &tm, &format!("/events/{sm2}"));
     let tick = &e["events"].as_array().unwrap()[0];
     assert_eq!(tick.as_object().unwrap().len(), 2, "tick is {{action, id}} only: {tick}");
 
     // ownership: c2 cannot read c1's subscription
-    let (code, _) = post(&url, &t2, &format!("/events/{s1}"), serde_json::json!({}));
+    let (code, _) = get(&url, &t2, &format!("/events/{s1}"));
     assert_eq!(code, 403, "events are owner-only");
 
     // budget: fill the table to the cap, expect a loud 429 with the code
@@ -227,7 +237,7 @@ fn restart_reports_dead_then_refetch_recovers() {
     }
 
     // the dead subscription says so
-    let (_, e) = post(&url, &t1, &format!("/events/{s}"), serde_json::json!({}));
+    let (_, e) = get(&url, &t1, &format!("/events/{s}"));
     assert_eq!(e["alive"], false, "subscription reports dead after restart: {e}");
 
     // reconnect = resubscribe + refetch, under the subscriber's own session
