@@ -16,6 +16,7 @@ jobs:
     uses: ./.github/workflows/stage-candidate.yml
     with:
       tag: ${{ inputs.tag }}
+      orchestration_sha: ${{ github.sha }}
     permissions:
       contents: read
       attestations: read

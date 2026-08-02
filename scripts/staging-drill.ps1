@@ -10,6 +10,9 @@ param(
     [string] $BaselineCommit,
 
     [Parameter(Mandatory = $true)]
+    [string] $CandidateCheckout,
+
+    [Parameter(Mandatory = $true)]
     [string] $BaselineCheckout,
 
     [Parameter(Mandatory = $true)]
@@ -28,6 +31,7 @@ Set-StrictMode -Version Latest
 $root = Split-Path -Parent $PSScriptRoot
 $deploy = Join-Path $root "deploy"
 $composeFile = Join-Path $deploy "compose.yaml"
+$candidate = (Resolve-Path -LiteralPath $CandidateCheckout).Path
 $baseline = (Resolve-Path -LiteralPath $BaselineCheckout).Path
 $payload = (Resolve-Path -LiteralPath $PayloadDirectory).Path
 $evidencePath = [System.IO.Path]::GetFullPath($EvidenceDirectory)
@@ -49,7 +53,7 @@ $failure = $null
 
 New-Item -ItemType Directory -Force -Path $evidencePath | Out-Null
 
-$candidateArtifactLock = Get-FileHash (Join-Path $root "wasm-spike/artifacts.lock.json") -Algorithm SHA256
+$candidateArtifactLock = Get-FileHash (Join-Path $candidate "wasm-spike/artifacts.lock.json") -Algorithm SHA256
 $baselineArtifactLock = Get-FileHash (Join-Path $baseline "wasm-spike/artifacts.lock.json") -Algorithm SHA256
 if ($candidateArtifactLock.Hash -ne $baselineArtifactLock.Hash) {
     throw "baseline and candidate runtime artifact locks differ; build the baseline artifacts separately"
