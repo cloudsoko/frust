@@ -4,7 +4,7 @@ schema = 1
 version = "0.1.0"
 stability = "experimental"
 rust = "1.96.0"
-surrealdb = "3.2.0"
+surrealdb = "3.2.3"
 
 [application]
 manifest_version = 1
@@ -22,5 +22,5 @@ artifact_lock = "wasm-spike/artifacts.lock.json"
 
 [build]
 pnpm = "11.1.2"
-jco = "1.25.2"
+jco_transpile = "0.5.2"
 lockfiles_required = true

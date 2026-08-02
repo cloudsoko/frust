@@ -149,8 +149,8 @@ function Test-LanePolicy {
     if ($Policy.version -ne 1) {
         throw "Unsupported test lane policy version: $($Policy.version)"
     }
-    if ($Policy.surreal.image -ne "surrealdb/surrealdb:v3.2.0") {
-        throw "The hermetic lane must pin SurrealDB exactly to surrealdb/surrealdb:v3.2.0"
+    if ($Policy.surreal.image -ne "surrealdb/surrealdb:v3.2.3") {
+        throw "The hermetic lane must pin SurrealDB exactly to surrealdb/surrealdb:v3.2.3"
     }
     if ($Policy.surreal.host -ne "127.0.0.1" -or $Policy.surreal.hostPort -ne 8899) {
         throw "Existing tests require the isolated database at 127.0.0.1:8899"
