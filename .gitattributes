@@ -1,0 +1,4 @@
+# Reproducible WASM builds require byte-identical inputs on every host.
+/.gitattributes text eol=lf
+/wasm-spike/** text eol=lf
+/wasm-spike/**/*.wasm binary
