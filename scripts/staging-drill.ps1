@@ -225,6 +225,7 @@ try {
             "build", "--pull",
             "--build-context", "artifacts=$(Join-Path $payload 'runtime')",
             "--build-context", "deploy=$(Join-Path $baseline 'deploy')",
+            "--build-context", "legal=$baseline",
             "--build-arg", "FRUST_VERSION=baseline",
             "--build-arg", "VCS_REF=$BaselineCommit",
             "-f", (Join-Path $baseline "deploy/Dockerfile.kernel"),
