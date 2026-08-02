@@ -65,8 +65,7 @@
     "artifact_id": 8839456055,
     "artifact_name": "staging-evidence-v0.1.0-rc.3-30767346680",
     "retention_days": 90,
-    "downloaded_archive_sha256": "b6d67703166cdd3f866c206ab07a764c0520a8ca55cf5eb632c1097d1bba280e",
-    "generated_report_sha256": "42292cd451ea1b9ee0f2d6a4466faa0584c88f4e307490c1df1d3c653803be53",
-    "compose_log_sha256": "4f0251ba43990684c6761fe3f2f50aab19afa877362993f049b473ba4365bc28"
+    "raw_report_path": "maturity/evidence/v0.1.0-rc.3-staging-drill.json",
+    "raw_report_sha256": "42292cd451ea1b9ee0f2d6a4466faa0584c88f4e307490c1df1d3c653803be53"
   }
 }
