@@ -1,7 +1,7 @@
 # Frust deployment foundation
 
 This directory packages the current Frust kernel, Desk, and the behavior-pinned
-SurrealDB 3.2.0 release into a production-like, single-host deployment. It is a
+SurrealDB 3.2.3 release into a production-like, single-host deployment. It is a
 foundation for evaluation and controlled pilots, not a claim that Frust has a
 complete production operations story.
 
