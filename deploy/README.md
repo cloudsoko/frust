@@ -85,6 +85,15 @@ docker compose up -d kernel desk
 
 This is an operator-controlled acceptance switch, not a rollback mechanism.
 
+## Backup, restore, and release rollback
+
+The kernel image contains the version-matched SurrealDB CLI and mounts the
+`recovery-data` volume at `/var/lib/frust/recovery`. Follow
+`recovery-runbook.md` for verified backup, guarded tenant restore, explicit
+upgrade, and image rollback procedures. Completed backups must still be copied
+to encrypted off-host storage; the local volume is the working recovery area,
+not the retention policy.
+
 ## Shutdown and persistence
 
 Use `docker compose down` for an orderly stop. Topcoat handles `SIGTERM` and
@@ -104,7 +113,8 @@ Before exposing this outside a controlled pilot:
 1. Publish immutable images by digest with SBOMs, signatures, and provenance.
 2. Put Desk behind a TLS reverse proxy and define trusted proxy/header policy.
 3. Replace file mail or configure a supported authenticated/TLS SMTP transport.
-4. Implement and rehearse verified off-host backup and restore procedures.
+4. Exercise verified backup and restore against representative data and retain
+   encrypted copies off-host.
 5. Add kernel signal handling and a measured request-drain deadline.
 6. Define CPU, memory, file-descriptor, and volume budgets for the target host.
 7. Send structured logs and metrics to durable external systems.
