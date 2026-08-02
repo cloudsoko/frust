@@ -274,7 +274,18 @@ fn hash_file(path: &Path) -> Result<(u64, String), RecoveryError> {
         bytes += read as u64;
         digest.update(&buf[..read]);
     }
-    Ok((bytes, format!("{:x}", digest.finalize())))
+    Ok((bytes, lowercase_hex(digest.finalize())))
+}
+
+fn lowercase_hex(bytes: impl AsRef<[u8]>) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let bytes = bytes.as_ref();
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        encoded.push(DIGITS[(byte >> 4) as usize] as char);
+        encoded.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 /// Verify the backup container without contacting a database.
