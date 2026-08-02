@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "environment": "ephemeral-staging",
+  "tag": "v0.1.0-rc.3",
+  "commit": "078cb0fbcbeb25c5e8ecd4cf36690d7095b1c04f",
+  "baseline_commit": "30efb12e398353eb7d98645018ec01217bf0e149",
+  "project": "frust-rc-30767346680",
+  "started_at": "2026-08-02T21:12:27.1985238+00:00",
+  "finished_at": "2026-08-02T21:19:47.2476054+00:00",
+  "elapsed_ms": 440049,
+  "images": {
+    "candidate_kernel": "frust/kernel:v0.1.0-rc.3-frust-rc-30767346680",
+    "candidate_desk": "frust/desk:v0.1.0-rc.3-frust-rc-30767346680",
+    "baseline_kernel": "frust/kernel:baseline-frust-rc-30767346680",
+    "baseline_desk": "frust/desk:baseline-frust-rc-30767346680",
+    "database": "frust/surrealdb:3.2.3-frust-rc-30767346680"
+  },
+  "timings_ms": {
+    "build_candidate_kernel_ms": 9400,
+    "build_candidate_desk_ms": 5348,
+    "build_database_ms": 5298,
+    "build_baseline_kernel_ms": 293737,
+    "build_baseline_desk_ms": 76965,
+    "baseline_deploy_ms": 12754,
+    "upgrade_to_candidate_ms": 11063,
+    "rollback_to_baseline_ms": 7335,
+    "redeploy_candidate_ms": 7324,
+    "backup_ms": 561,
+    "restore_ms": 817
+  },
+  "checks": {
+    "baseline_ready": true,
+    "baseline_data_seeded": true,
+    "upgrade_preserved_data": true,
+    "rollback_preserved_data": true,
+    "restore_recovered_backup_state": true,
+    "final_candidate_ready": true
+  },
+  "recovery_reports": {
+    "backup": "{\"evt\":\"recovery_complete\",\"lvl\":\"info\",\"report\":\"backup complete: tenant=staging target=frust/staging output=/var/lib/frust/recovery/baseline bytes=6535 sha256=891e39f1017cff1589fc99003554436593b939813a4cdd673cbba9baa7aac0f7\",\"tenant\":\"-\",\"trace\":\"6a6fb46f28ebd90000\",\"ts\":1785705577686}",
+    "verify": "{\"evt\":\"recovery_complete\",\"lvl\":\"info\",\"report\":\"backup verified: tenant=staging topology=database-per-tenant target=frust/staging bytes=6535 sha256=891e39f1017cff1589fc99003554436593b939813a4cdd673cbba9baa7aac0f7\",\"tenant\":\"-\",\"trace\":\"6a6fb46d01f77e0000\",\"ts\":1785705578032}",
+    "restore": "{\"evt\":\"recovery_complete\",\"lvl\":\"info\",\"report\":\"restore complete: tenant=staging target=frust/staging source=/var/lib/frust/recovery/baseline safety_backup=/var/lib/frust/recovery/pre-restore; all sessions invalidated and keyguard passed\",\"tenant\":\"-\",\"trace\":\"6a6fb46c1ce8240000\",\"ts\":1785705579484}",
+    "manifest": "{\n  \"format_version\": 1,\n  \"created_unix_seconds\": 1785705577,\n  \"tenant\": \"staging\",\n  \"topology\": \"database-per-tenant\",\n  \"namespace\": \"frust\",\n  \"database\": \"staging\",\n  \"tenant_isolated\": true,\n  \"dump_file\": \"dump.surql\",\n  \"dump_bytes\": 6535,\n  \"dump_sha256\": \"891e39f1017cff1589fc99003554436593b939813a4cdd673cbba9baa7aac0f7\"\n}"
+  },
+  "error": null
+}
