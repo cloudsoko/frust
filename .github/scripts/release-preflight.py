@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SEMVER_TAG = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$")
 LICENSE_ID = "AGPL-3.0-only"
 AGPL_V3_SHA256 = "8d56b405468aad11f87ab5763f901e276e08d9646ff5c8481b1762b6b789e9ed"
+TOPCOAT_MIT_SHA256 = "d01d24e419be110d18be7e4944ecf1355d730189f35002df029b6cea9ec56a63"
+SURREALDB_BSL_SHA256 = "572bd7844df95c83477520c334a8ab0ab5c4642cef9cb2c7f8c664454b2efe86"
 WORKSPACE_LICENSE_MANIFESTS = (
     "frust-kernel/app-sdk/Cargo.toml",
     "frust-kernel/kernel/Cargo.toml",
@@ -92,7 +94,7 @@ def check_pnpm_lock_dependency(package: str, expected: str, lock_text: str | Non
         fail(f"pnpm lockfile has no package resolution for {package}@{expected}")
 
 
-def check_compatibility(version: str) -> None:
+def check_compatibility(version: str) -> dict:
     with (ROOT / "release" / "compatibility.toml").open("rb") as source:
         compatibility = tomllib.load(source)
     declared = compatibility.get("framework", {}).get("version")
@@ -111,6 +113,15 @@ def check_compatibility(version: str) -> None:
     if artifact_lock.get("target") != compatibility["wasm"]["target"]:
         fail("WASM artifact target does not match compatibility metadata")
 
+    legal = compatibility.get("legal", {})
+    if legal.get("license") != LICENSE_ID:
+        fail(f"release approval must declare legal.license = {LICENSE_ID!r}")
+    approved = legal.get("approved_candidate")
+    if not isinstance(approved, str) or not SEMVER_TAG.fullmatch(approved):
+        fail("release approval must declare a SemVer legal.approved_candidate")
+    if approved.removeprefix("v").split("-", 1)[0] != version:
+        fail("approved release candidate does not match the framework version")
+
     surreal = compatibility["framework"]["surrealdb"]
     lanes = json.loads((ROOT / "test" / "lanes.json").read_text("utf-8"))
     if lanes.get("surreal", {}).get("image") != f"surrealdb/surrealdb:v{surreal}":
@@ -128,6 +139,7 @@ def check_compatibility(version: str) -> None:
     if dependency != jco_transpile:
         fail("jco-transpile package version does not match compatibility metadata")
     check_pnpm_lock_dependency("@bytecodealliance/jco-transpile", jco_transpile)
+    return compatibility
 
 
 def check_artifacts() -> None:
@@ -155,7 +167,7 @@ def check_deployment_line_endings() -> None:
         fail("deployment shell scripts must use LF line endings: " + ", ".join(errors))
 
 
-def check_submodules() -> None:
+def check_submodules(legal: dict) -> None:
     result = subprocess.run(
         ["git", "submodule", "status", "--recursive"],
         cwd=ROOT,
@@ -168,6 +180,21 @@ def check_submodules() -> None:
     bad = [line for line in result.stdout.splitlines() if line.startswith(("-", "+", "U"))]
     if bad:
         fail("submodules are missing or not at recorded commits:\n  " + "\n  ".join(bad))
+    recorded = {
+        line[42:].split(" ", 1)[0]: line[1:41]
+        for line in result.stdout.splitlines()
+        if len(line) >= 42
+    }
+    for path, field in (
+        ("frust-desk", "frust_desk_commit"),
+        ("frust-ui", "frust_ui_commit"),
+        ("topcoat", "topcoat_commit"),
+    ):
+        expected = legal.get(field)
+        if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{40}", expected):
+            fail(f"release/compatibility.toml legal.{field} must be a full commit SHA")
+        if recorded.get(path) != expected:
+            fail(f"release approval pins {path} at {expected}, checked out {recorded.get(path)!r}")
 
 
 def normalized_text_sha256(path: Path) -> str:
@@ -232,6 +259,8 @@ def check_license(required: bool, root: Path = ROOT) -> None:
     if not (root / "topcoat" / "LICENSE").is_file():
         fail("topcoat has no MIT LICENSE file")
     topcoat_license = normalized_text_sha256(root / "topcoat" / "LICENSE")
+    if topcoat_license != TOPCOAT_MIT_SHA256:
+        fail("topcoat/LICENSE does not match the approved upstream MIT text")
     for component in ("frust-desk", "frust-ui"):
         bundled = root / component / "THIRD_PARTY_LICENSES" / "TOPCOAT-MIT.txt"
         if not bundled.is_file() or normalized_text_sha256(bundled) != topcoat_license:
@@ -243,16 +272,20 @@ def check_license(required: bool, root: Path = ROOT) -> None:
     surreal_text = surreal_license.read_text(encoding="utf-8")
     if "Business Source License 1.1" not in surreal_text or "SurrealDB Ltd." not in surreal_text:
         fail("the packaged SurrealDB license does not identify the pinned upstream terms")
+    if normalized_text_sha256(surreal_license) != SURREALDB_BSL_SHA256:
+        fail("the packaged SurrealDB license does not match the approved upstream text")
     print(f"license: {LICENSE_ID}; independently licensed components verified")
 
 
-def check_tag(tag: str | None, version: str) -> None:
+def check_tag(tag: str | None, version: str, legal: dict) -> None:
     if tag is None:
         return
     if not SEMVER_TAG.fullmatch(tag):
         fail(f"release tag {tag!r} is not vMAJOR.MINOR.PATCH with an optional prerelease suffix")
     if tag.removeprefix("v").split("-", 1)[0] != version:
         fail(f"release tag {tag!r} does not match workspace version {version!r}")
+    if legal.get("approved_candidate") != tag:
+        fail(f"release tag {tag!r} is not the approved candidate in release/compatibility.toml")
 
 
 def main() -> None:
@@ -264,14 +297,15 @@ def main() -> None:
     args = parser.parse_args()
 
     version = workspace_version()
-    check_compatibility(version)
-    check_tag(args.tag, version)
+    compatibility = check_compatibility(version)
+    legal = compatibility.get("legal", {})
+    check_tag(args.tag, version, legal)
     check_license(args.require_license)
     check_deployment_line_endings()
     if not args.skip_artifacts:
         check_artifacts()
     if not args.skip_submodules:
-        check_submodules()
+        check_submodules(legal)
     print(f"release preflight passed for Frust {version}")
 
 
