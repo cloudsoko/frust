@@ -53,7 +53,7 @@ scale fixture remain machine-local for the reasons documented in `.gitignore`.
 
 ## Running it
 
-Three processes are required. Use SurrealDB 3.2.0; the kernel's stored queries
+Three processes are required. Use SurrealDB 3.2.3; the kernel's stored queries
 and authentication behavior are tested against that version.
 
 ```bash
@@ -71,7 +71,7 @@ Or run the development store in Docker:
 
 ```bash
 docker run --rm --name frust-surreal -p 127.0.0.1:8899:8000 \
-  -v frust-surreal-data:/data surrealdb/surrealdb:v3.2.0 \
+  -v frust-surreal-data:/data surrealdb/surrealdb:v3.2.3 \
   start --user root --pass root rocksdb:/data/frust.db
 ```
 

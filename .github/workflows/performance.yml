@@ -56,13 +56,14 @@ jobs:
       - name: Start pinned SurrealDB
         run: |
           docker run --detach --name frust-surreal --publish 127.0.0.1:8899:8000 \
-            surrealdb/surrealdb:v3.2.0 start --user root --pass root memory
+            surrealdb/surrealdb:v3.2.3 start --user root --pass root memory
           for attempt in {1..60}; do
             curl --fail --silent http://127.0.0.1:8899/health >/dev/null && break
             if [ "$attempt" = 60 ]; then docker logs frust-surreal; exit 1; fi
             sleep 1
           done
-          test "$(curl --fail --silent http://127.0.0.1:8899/version)" = "surrealdb-3.2.0"
+          curl --fail --silent http://127.0.0.1:8899/version |
+            grep -Eq '^surrealdb-3\.2\.3(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 
       - name: Run release-mode ignored measurement gates
         run: |
