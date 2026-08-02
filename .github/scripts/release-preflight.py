@@ -124,8 +124,11 @@ def check_compatibility(version: str) -> dict:
 
     surreal = compatibility["framework"]["surrealdb"]
     lanes = json.loads((ROOT / "test" / "lanes.json").read_text("utf-8"))
-    if lanes.get("surreal", {}).get("image") != f"surrealdb/surrealdb:v{surreal}":
+    test_store = lanes.get("surreal", {})
+    if test_store.get("image") != f"surrealdb/surrealdb:v{surreal}":
         fail("SurrealDB test image does not match compatibility metadata")
+    if test_store.get("store") != "surrealkv:/tmp/frust-test":
+        fail("SurrealDB test lane must use the production SurrealKV storage engine")
 
     build = compatibility["build"]
     if "jco" in build:
@@ -142,17 +145,27 @@ def check_compatibility(version: str) -> dict:
     return compatibility
 
 
-def check_artifacts() -> None:
-    lock = json.loads((ROOT / "wasm-spike" / "artifacts.lock.json").read_text("utf-8"))
+def check_artifacts(root: Path = ROOT) -> None:
+    lock = json.loads((root / "wasm-spike" / "artifacts.lock.json").read_text("utf-8"))
     errors: list[str] = []
     for relative, expected in lock.get("artifacts", {}).items():
-        artifact = ROOT / relative
+        artifact = root / relative
         if not artifact.is_file():
             errors.append(f"{relative}: missing")
             continue
         actual = sha256(artifact)
         if actual != expected.upper():
             errors.append(f"{relative}: expected {expected.upper()}, got {actual}")
+    managed = root / "wasm-spike" / "artifacts"
+    expected_wasm = {
+        Path(relative).name
+        for relative in lock.get("artifacts", {})
+        if Path(relative).parent.as_posix() == "wasm-spike/artifacts"
+        and Path(relative).suffix == ".wasm"
+    }
+    actual_wasm = {path.name for path in managed.glob("*.wasm")} if managed.is_dir() else set()
+    for extra in sorted(actual_wasm - expected_wasm):
+        errors.append(f"wasm-spike/artifacts/{extra}: unlisted artifact")
     if errors:
         fail("runtime artifact verification failed:\n  " + "\n  ".join(errors))
 

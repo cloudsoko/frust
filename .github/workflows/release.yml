@@ -22,8 +22,52 @@ jobs:
       - name: Enforce tag, metadata, and legal readiness
         run: python .github/scripts/release-preflight.py --tag "${GITHUB_REF_NAME}" --require-license --skip-artifacts
 
-  build:
+  runtime-artifacts:
     needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the exact tag and recorded submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Cache runtime artifact build outputs
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: |
+            wasm-spike/script-engine
+            wasm-spike/plugin-demo
+          key: release-runtime-artifacts
+      - name: Install pinned Node and pnpm
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.17.0
+      - name: Activate pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack install --global pnpm@11.1.2
+      - name: Rebuild locked runtime artifacts
+        shell: pwsh
+        run: ./scripts/frust.ps1 build-artifacts
+      - name: Verify release metadata and runtime checksums
+        run: python .github/scripts/release-preflight.py --tag "${GITHUB_REF_NAME}" --require-license
+      - name: Refuse generated artifact drift
+        run: git diff --exit-code -- wasm-spike/artifacts frust-desk/assets/engine wasm-spike/artifacts.lock.json
+      - name: Upload verified runtime inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-runtime-inputs
+          path: |
+            wasm-spike/artifacts/script_engine.wasm
+            wasm-spike/artifacts/plugin_demo.wasm
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    needs: runtime-artifacts
     name: Build ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -56,25 +100,13 @@ jobs:
           workspaces: |
             frust-kernel
             frust-desk
-            wasm-spike/script-engine
-            wasm-spike/plugin-demo
           key: release-${{ matrix.label }}
 
-      - name: Install pinned Node and pnpm
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - name: Download verified runtime inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          node-version: 22.17.0
-
-      - name: Activate pnpm
-        shell: pwsh
-        run: |
-          corepack enable
-          corepack install --global pnpm@11.1.2
-
-      - name: Rebuild locked runtime artifacts
-        if: runner.os == 'Linux'
-        shell: pwsh
-        run: ./scripts/frust.ps1 build-artifacts
+          name: release-runtime-inputs
+          path: wasm-spike/artifacts
 
       - name: Verify release metadata and runtime checksums
         shell: pwsh
@@ -106,7 +138,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$stage/bin", "$stage/runtime", "$stage/release", "$stage/licenses" | Out-Null
           Copy-Item "frust-kernel/target/release/frust${{ matrix.executable_suffix }}" "$stage/bin/"
           Copy-Item "frust-desk/target/release/frust-desk${{ matrix.executable_suffix }}" "$stage/bin/"
-          Copy-Item "wasm-spike/artifacts/*.wasm" "$stage/runtime/"
+          Copy-Item "wasm-spike/artifacts/script_engine.wasm" "$stage/runtime/"
+          Copy-Item "wasm-spike/artifacts/plugin_demo.wasm" "$stage/runtime/"
           Copy-Item "frust-desk/assets/engine/script_engine.js" "$stage/runtime/"
           Copy-Item "frust-desk/assets/engine/script_engine.core.wasm" "$stage/runtime/"
           Copy-Item "release/compatibility.toml" "$stage/release/"
