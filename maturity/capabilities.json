@@ -362,20 +362,26 @@
       "id": "engineering.release",
       "name": "Versioned and attestable releases",
       "surface": "Release engineering",
-      "status": "planned",
-      "implementation": "partial",
-      "operational_proof": "none",
+      "status": "pilot",
+      "implementation": "implemented",
+      "operational_proof": "staging",
       "owner": "release-engineering",
       "evidence": [
         { "path": ".github/workflows/release.yml", "kind": "ci-workflow" },
         { "path": "docs/release-policy.md", "kind": "contract" },
-        { "path": "release/compatibility.toml", "kind": "contract" }
+        { "path": "release/compatibility.toml", "kind": "contract" },
+        { "path": "maturity/evidence/v0.1.0-rc.3-staging.json", "kind": "automated-test" }
       ],
       "verification": [
         {
-          "command": "python .github/scripts/release-preflight.py --require-license",
+          "command": "python .github/scripts/release-preflight.py --tag v0.1.0-rc.3 --require-license",
           "automated": true,
-          "result": "unknown"
+          "result": "passing"
+        },
+        {
+          "command": "python scripts/verify_staging_evidence.py --verify-github",
+          "automated": true,
+          "result": "passing"
         }
       ],
       "operations_artifact": null,
