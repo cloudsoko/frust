@@ -124,6 +124,7 @@ class LiveShardTests(unittest.TestCase):
         exhaustive_step = worker.split("- name: Run exhaustive hermetic live shard", 1)[1]
         run_block = exhaustive_step.split("\n      run: >-", 1)[1].split("\n    - name:", 1)[0]
         self.assertEqual(re.findall(r"-TestThreads\s+(\d+)", run_block), ["2"])
+        self.assertEqual(re.findall(r"-TimeoutSeconds\s+(\d+)", run_block), ["2400"])
 
     def listed_targets(self, index: int, count: int) -> list[str]:
         result = subprocess.run(
