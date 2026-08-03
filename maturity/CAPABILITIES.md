@@ -7,9 +7,9 @@ make a capability production-ready.
 ## Summary
 
 - Total capabilities: 16
-- `planned`: 1
+- `planned`: 0
 - `experimental`: 6
-- `pilot`: 9
+- `pilot`: 10
 - `production-ready`: 0
 
 ## Status Rules
@@ -27,7 +27,7 @@ make a capability production-ready.
 | database.migrations | Migrations | Schema migrations and fleet rollout | experimental | partial | automated-only | orm |
 | desk.ui | Desk | Metadata-driven Desk | pilot | implemented | automated-only | desk |
 | developer.app-sdk | SDK and CLI | Application SDK, scaffold, validation, and packaging | experimental | partial | none | developer-experience |
-| engineering.release | Release engineering | Versioned and attestable releases | planned | partial | none | release-engineering |
+| engineering.release | Release engineering | Versioned and attestable releases | pilot | implemented | staging | release-engineering |
 | engineering.test-tooling | Test tooling | Hermetic test lanes and diagnostics | experimental | partial | automated-only | developer-infrastructure |
 | http.rest | REST | Typed REST contract and method routing | pilot | implemented | automated-only | kernel-http |
 | jobs.worker | Jobs | Durable background jobs and worker fairness | experimental | implemented | automated-only | kernel-worker |
@@ -46,7 +46,7 @@ make a capability production-ready.
 - `database.migrations` (`experimental`): Destructive and long-running data changes need operator-facing rehearsal guidance. Fleet canary, resume, and rollback behavior has not been proven in a production topology.
 - `desk.ui` (`pilot`): Accessibility, browser support, and responsive behavior lack a published certification baseline. No production support or rollback runbook is recorded.
 - `developer.app-sdk` (`experimental`): Generated application compatibility has not been certified across released kernel versions. Package signing, publishing, upgrade guidance, and long-term SDK support policy are incomplete.
-- `engineering.release` (`planned`): No stable release or support lifetime is published; v0.1.0-rc.3 remains a prerelease candidate. Platform trust channels such as Windows Authenticode and Apple signing or notarization are not provided.
+- `engineering.release` (`pilot`): No stable release or support lifetime is published; v0.1.0-rc.3 remains a prerelease candidate. Platform trust channels such as Windows Authenticode and Apple signing or notarization are not provided.
 - `engineering.test-tooling` (`experimental`): Flake ownership, quarantine rules, and historical timing budgets are not established. Live-database suites are not fully hermetic or proven stable across supported environments.
 - `http.rest` (`pilot`): Load, abuse, and proxy interoperability are not operationally certified. The public API has no published OpenAPI artifact or automated compatibility gate.
 - `jobs.worker` (`experimental`): Queue saturation, poison jobs, and replay recovery are not covered by an exercised runbook. Service-level objectives and capacity limits are not published.
