@@ -1,0 +1,60 @@
+name: Frust live test worker
+description: Run one verified smoke or exhaustive live-test shard.
+
+inputs:
+  code:
+    description: Whether executable inputs changed.
+    required: true
+  root-auth:
+    description: SurrealDB root authentication mode.
+    required: true
+  lane:
+    description: Test lane to execute.
+    required: true
+  shard-index:
+    description: Zero-based live shard index.
+    required: true
+  shard-count:
+    description: Total number of live shards.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Record documentation-only fast path
+      if: inputs.code != 'true'
+      shell: bash
+      run: echo "No executable inputs changed; live gates remain banked on main and release."
+    - name: Install pinned Rust toolchain
+      if: inputs.code == 'true'
+      shell: bash
+      run: rustup show active-toolchain
+    - name: Cache live test outputs
+      if: inputs.code == 'true'
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      with:
+        workspaces: frust-kernel -> ../test/cargo-target
+        key: integration-${{ inputs.root-auth }}
+    - name: Download verified runtime inputs
+      if: inputs.code == 'true'
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: verified-runtime-inputs
+        path: wasm-spike/artifacts
+    - name: Verify runtime inputs
+      if: inputs.code == 'true'
+      shell: bash
+      run: python .github/scripts/release-preflight.py
+    - name: Run protected live smoke tests
+      if: inputs.code == 'true' && inputs.lane == 'smoke'
+      shell: pwsh
+      run: ./scripts/test.ps1 -Lane smoke -TimeoutSeconds 1200 -TestThreads 4
+    - name: Run exhaustive hermetic live shard
+      if: inputs.code == 'true' && inputs.lane == 'live'
+      shell: pwsh
+      env:
+        SHARD_INDEX: ${{ inputs.shard-index }}
+        SHARD_COUNT: ${{ inputs.shard-count }}
+      run: >-
+        ./scripts/test.ps1 -Lane live -TimeoutSeconds 1200 -TestThreads 4
+        -ShardIndex $env:SHARD_INDEX -ShardCount $env:SHARD_COUNT

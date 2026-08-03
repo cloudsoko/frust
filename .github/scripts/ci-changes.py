@@ -55,13 +55,11 @@ def live_matrix(event: str, *, code: bool) -> dict[str, list[dict[str, str | int
     shard_count = LIVE_SHARD_COUNT if code and lane == "live" else 1
     include = [
         {
-            "root_auth": root_auth,
             "lane": lane,
             "shard_index": shard_index,
             "shard_count": shard_count,
             "shard_label": f"{shard_index + 1}/{shard_count}",
         }
-        for root_auth in auth_matrix(event)
         for shard_index in range(shard_count)
     ]
     return {"include": include}
