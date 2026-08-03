@@ -232,8 +232,8 @@ jobs:
             done
           fi
 
-  live-workers:
-    name: Live worker (${{ matrix.root_auth }}, ${{ matrix.lane }}, ${{ matrix.shard_label }})
+  live-jwt-workers:
+    name: Live JWT worker (${{ matrix.lane }}, ${{ matrix.shard_label }})
     needs: [changes, artifacts]
     if: >-
       always() && needs.changes.result == 'success' &&
@@ -244,61 +244,76 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.live-matrix) }}
     env:
-      FRUST_ROOT_AUTH: ${{ matrix.root_auth }}
+      FRUST_ROOT_AUTH: jwt
       FRUST_DB_ENDPOINT: http://127.0.0.1:8899
       FRUST_DB_ROOT_USER: root
       FRUST_DB_ROOT_PASS: root
     steps:
-      - name: Record documentation-only fast path
-        if: needs.changes.outputs.code != 'true'
-        run: echo "No executable inputs changed; live gates remain banked on main and release."
       - name: Check out recorded source and submodules
-        if: needs.changes.outputs.code == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
           persist-credentials: false
-      - name: Install pinned Rust toolchain
-        if: needs.changes.outputs.code == 'true'
-        run: rustup show active-toolchain
-      - name: Cache live test outputs
-        if: needs.changes.outputs.code == 'true'
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Run live worker
+        uses: ./.github/actions/live-worker
         with:
-          workspaces: frust-kernel -> ../test/cargo-target
-          key: integration-${{ matrix.root_auth }}
-      - name: Download verified runtime inputs
-        if: needs.changes.outputs.code == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: verified-runtime-inputs
-          path: wasm-spike/artifacts
-      - name: Verify runtime inputs
-        if: needs.changes.outputs.code == 'true'
-        run: python .github/scripts/release-preflight.py
-      - name: Run protected live smoke tests
-        if: needs.changes.outputs.code == 'true' && matrix.lane == 'smoke'
-        shell: pwsh
-        run: ./scripts/test.ps1 -Lane smoke -TimeoutSeconds 1200 -TestThreads 4
-      - name: Run exhaustive hermetic live shard
-        if: needs.changes.outputs.code == 'true' && matrix.lane == 'live'
-        shell: pwsh
-        run: >-
-          ./scripts/test.ps1 -Lane live -TimeoutSeconds 1200 -TestThreads 4
-          -ShardIndex ${{ matrix.shard_index }} -ShardCount ${{ matrix.shard_count }}
+          code: ${{ needs.changes.outputs.code }}
+          root-auth: jwt
+          lane: ${{ matrix.lane }}
+          shard-index: ${{ matrix.shard_index }}
+          shard-count: ${{ matrix.shard_count }}
 
-  live-integration:
-    name: Live integration (${{ matrix.root-auth }})
-    needs: [changes, live-workers]
+  live-basic-workers:
+    name: Live Basic worker (${{ matrix.lane }}, ${{ matrix.shard_label }})
+    needs: [changes, artifacts]
+    if: >-
+      always() && github.event_name != 'pull_request' && needs.changes.result == 'success' &&
+      (needs.changes.outputs.code != 'true' || needs.artifacts.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.live-matrix) }}
+    env:
+      FRUST_ROOT_AUTH: basic
+      FRUST_DB_ENDPOINT: http://127.0.0.1:8899
+      FRUST_DB_ROOT_USER: root
+      FRUST_DB_ROOT_PASS: root
+    steps:
+      - name: Check out recorded source and submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Run live worker
+        uses: ./.github/actions/live-worker
+        with:
+          code: ${{ needs.changes.outputs.code }}
+          root-auth: basic
+          lane: ${{ matrix.lane }}
+          shard-index: ${{ matrix.shard_index }}
+          shard-count: ${{ matrix.shard_count }}
+
+  live-integration-jwt:
+    name: Live integration (jwt)
+    needs: [changes, live-jwt-workers]
     if: always() && needs.changes.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    strategy:
-      fail-fast: false
-      matrix:
-        root-auth: ${{ fromJSON(needs.changes.outputs.auth-matrix) }}
     steps:
-      - name: Require every live worker
+      - name: Require every JWT worker
         env:
-          WORKERS: ${{ needs.live-workers.result }}
+          WORKERS: ${{ needs.live-jwt-workers.result }}
+        run: test "$WORKERS" = success
+
+  live-integration-basic:
+    name: Live integration (basic)
+    needs: [changes, live-basic-workers]
+    if: always() && github.event_name != 'pull_request' && needs.changes.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every Basic worker
+        env:
+          WORKERS: ${{ needs.live-basic-workers.result }}
         run: test "$WORKERS" = success
