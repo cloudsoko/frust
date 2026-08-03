@@ -16,60 +16,53 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_NET_RETRY: "10"
-  CARGO_BUILD_JOBS: "2"
+  # The two-job cap is a developer-machine OOM guard. Hosted CI has four
+  # cores and runs isolated work streams, so use the runner instead of
+  # serializing every Rust build.
+  CARGO_BUILD_JOBS: "4"
 
 jobs:
-  quality:
-    name: Static, unit, and reproducibility
+  changes:
+    name: Classify CI changes
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      artifacts: ${{ steps.classify.outputs.artifacts }}
+      auth-matrix: ${{ steps.classify.outputs.auth_matrix }}
+    steps:
+      - name: Check out history for complete path classification
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Classify changed paths and CI tier
+        id: classify
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python .github/scripts/ci-changes.py
+
+  governance:
+    name: Governance and formatting
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out recorded source and submodules
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
-
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
-
-      - name: Cache Rust build outputs
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          workspaces: |
-            frust-kernel
-            frust-desk
-            wasm-spike/script-engine
-            wasm-spike/plugin-demo
-
-      - name: Install pinned Node and pnpm
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.17.0
-
-      - name: Activate pnpm
-        run: corepack enable && corepack install --global pnpm@11.1.2
-
       - name: Validate release metadata
         run: |
           python .github/scripts/release-preflight.py --require-license --skip-artifacts --check-public-submodules
           python -m unittest discover -s .github/scripts -p "test_*.py"
-
       - name: Validate maturity ledger
         run: |
           python scripts/validate_maturity.py --check
           python -m unittest maturity.test_validate_maturity
-
-      - name: Rebuild and compare runtime artifacts
-        shell: pwsh
-        run: ./scripts/frust.ps1 build-artifacts
-
-      - name: Verify all runtime artifact checksums
-        run: python .github/scripts/release-preflight.py --require-license
-
-      - name: Refuse generated artifact drift
-        run: git diff --exit-code -- wasm-spike/artifacts frust-desk/assets/engine wasm-spike/artifacts.lock.json
-
       - name: Check newly governed Rust formatting
         run: |
           cargo fmt --manifest-path frust-kernel/Cargo.toml --package frust-app-sdk -- --check
@@ -77,23 +70,50 @@ jobs:
             frust-kernel/kernel/src/http_contract.rs \
             frust-kernel/kernel/src/recovery.rs
 
-      - name: Lint kernel workspace
-        run: >-
-          cargo clippy --manifest-path frust-kernel/Cargo.toml --workspace --all-targets --locked --
-          -D clippy::correctness -D clippy::suspicious
-
-      - name: Run bounded database-free tests
+  artifacts:
+    name: Runtime artifacts
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out recorded source and submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Restore lock-bound runtime components
+        id: runtime-components
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: wasm-spike/artifacts
+          key: ${{ runner.os }}-runtime-components-${{ hashFiles('wasm-spike/artifacts.lock.json') }}
+      - name: Install pinned Rust toolchain
+        if: needs.changes.outputs.artifacts == 'true' || steps.runtime-components.outputs.cache-hit != 'true'
+        run: rustup show active-toolchain
+      - name: Cache runtime artifact build outputs
+        if: needs.changes.outputs.artifacts == 'true' || steps.runtime-components.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: |
+            wasm-spike/script-engine
+            wasm-spike/plugin-demo
+          key: runtime-artifacts
+      - name: Install pinned Node and pnpm
+        if: needs.changes.outputs.artifacts == 'true' || steps.runtime-components.outputs.cache-hit != 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.17.0
+      - name: Activate pnpm
+        if: needs.changes.outputs.artifacts == 'true' || steps.runtime-components.outputs.cache-hit != 'true'
+        run: corepack enable && corepack install --global pnpm@11.1.2
+      - name: Rebuild runtime artifacts when inputs changed or the cache is empty
+        if: needs.changes.outputs.artifacts == 'true' || steps.runtime-components.outputs.cache-hit != 'true'
         shell: pwsh
-        run: ./scripts/test.ps1 -Lane offline -TimeoutSeconds 1200 -TestThreads 2
-
-      - name: Lint Desk
-        run: >-
-          cargo clippy --manifest-path frust-desk/Cargo.toml --all-targets --locked --
-          -D clippy::correctness -D clippy::suspicious
-
-      - name: Run Desk unit tests
-        run: cargo test --manifest-path frust-desk/Cargo.toml --locked --jobs 2
-
+        run: ./scripts/frust.ps1 build-artifacts
+      - name: Verify all runtime artifact checksums
+        run: python .github/scripts/release-preflight.py --require-license
+      - name: Refuse generated artifact drift
+        run: git diff --exit-code -- wasm-spike/artifacts frust-desk/assets/engine wasm-spike/artifacts.lock.json
       - name: Upload verified runtime inputs for live jobs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -102,50 +122,151 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  lint-kernel:
+    name: Lint kernel
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out recorded source and submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Cache kernel lint outputs
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: frust-kernel
+          key: lint-kernel
+      - name: Lint kernel workspace
+        run: >-
+          cargo clippy --manifest-path frust-kernel/Cargo.toml --workspace --all-targets --locked --
+          -D clippy::correctness -D clippy::suspicious
+
+  offline-tests:
+    name: Offline tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out recorded source and submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Cache offline test outputs
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: frust-kernel -> ../test/cargo-target
+          key: offline-tests
+      - name: Run bounded database-free tests
+        shell: pwsh
+        run: ./scripts/test.ps1 -Lane offline -TimeoutSeconds 1200 -TestThreads 4
+
+  desk:
+    name: Desk lint and tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out recorded source and submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Cache Desk build outputs
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: frust-desk
+          key: desk
+      - name: Lint Desk
+        run: >-
+          cargo clippy --manifest-path frust-desk/Cargo.toml --all-targets --locked --
+          -D clippy::correctness -D clippy::suspicious
+      - name: Run Desk unit tests
+        run: cargo test --manifest-path frust-desk/Cargo.toml --locked --jobs 4
+
+  quality:
+    name: Static, unit, and reproducibility
+    needs: [changes, governance, artifacts, lint-kernel, offline-tests, desk]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every applicable quality lane
+        env:
+          CODE: ${{ needs.changes.outputs.code }}
+          CHANGES: ${{ needs.changes.result }}
+          GOVERNANCE: ${{ needs.governance.result }}
+          ARTIFACTS: ${{ needs.artifacts.result }}
+          LINT_KERNEL: ${{ needs.lint-kernel.result }}
+          OFFLINE_TESTS: ${{ needs.offline-tests.result }}
+          DESK: ${{ needs.desk.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CHANGES" = success
+          if [[ "$CODE" = true ]]; then
+            for result in "$GOVERNANCE" "$ARTIFACTS" "$LINT_KERNEL" "$OFFLINE_TESTS" "$DESK"; do
+              test "$result" = success
+            done
+          fi
+
   live-integration:
     name: Live integration (${{ matrix.root-auth }})
-    needs: quality
+    needs: [changes, artifacts]
+    if: >-
+      always() && needs.changes.result == 'success' &&
+      (needs.changes.outputs.code != 'true' || needs.artifacts.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        root-auth: [jwt, basic]
+        root-auth: ${{ fromJSON(needs.changes.outputs.auth-matrix) }}
     env:
       FRUST_ROOT_AUTH: ${{ matrix.root-auth }}
       FRUST_DB_ENDPOINT: http://127.0.0.1:8899
       FRUST_DB_ROOT_USER: root
       FRUST_DB_ROOT_PASS: root
     steps:
+      - name: Record documentation-only fast path
+        if: needs.changes.outputs.code != 'true'
+        run: echo "No executable inputs changed; live gates remain banked on main and release."
       - name: Check out recorded source and submodules
+        if: needs.changes.outputs.code == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-
       - name: Install pinned Rust toolchain
+        if: needs.changes.outputs.code == 'true'
         run: rustup show active-toolchain
-
-      - name: Cache Rust build outputs
+      - name: Cache live test outputs
+        if: needs.changes.outputs.code == 'true'
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: frust-kernel
+          workspaces: frust-kernel -> ../test/cargo-target
           key: integration-${{ matrix.root-auth }}
-
       - name: Download verified runtime inputs
+        if: needs.changes.outputs.code == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: verified-runtime-inputs
           path: wasm-spike/artifacts
-
       - name: Verify runtime inputs
+        if: needs.changes.outputs.code == 'true'
         run: python .github/scripts/release-preflight.py
-
       - name: Run protected live smoke tests
-        if: github.event_name == 'pull_request'
+        if: needs.changes.outputs.code == 'true' && github.event_name == 'pull_request'
         shell: pwsh
-        run: ./scripts/test.ps1 -Lane smoke -TimeoutSeconds 1200 -TestThreads 2
-
+        run: ./scripts/test.ps1 -Lane smoke -TimeoutSeconds 1200 -TestThreads 4
       - name: Run exhaustive hermetic live tests
-        if: github.event_name != 'pull_request'
+        if: needs.changes.outputs.code == 'true' && github.event_name != 'pull_request'
         shell: pwsh
-        run: ./scripts/test.ps1 -Lane live -TimeoutSeconds 2400 -TestThreads 2
+        run: ./scripts/test.ps1 -Lane live -TimeoutSeconds 2400 -TestThreads 4
