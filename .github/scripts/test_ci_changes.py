@@ -11,6 +11,7 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name("ci-changes.py")
 ROOT = SCRIPT.parents[2]
 TEST_RUNNER = ROOT / "scripts" / "test.ps1"
+LIVE_WORKER = ROOT / ".github" / "actions" / "live-worker" / "action.yml"
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 SPEC = importlib.util.spec_from_file_location("ci_changes", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
@@ -117,6 +118,11 @@ class ChangeClassificationTests(unittest.TestCase):
 
 @unittest.skipUnless(POWERSHELL, "PowerShell is required to verify live test shards")
 class LiveShardTests(unittest.TestCase):
+    def test_exhaustive_workers_keep_datastore_safe_intra_binary_parallelism(self) -> None:
+        worker = LIVE_WORKER.read_text(encoding="utf-8")
+        exhaustive = worker.split("- name: Run exhaustive hermetic live shard", 1)[1]
+        self.assertIn("-TestThreads 2", exhaustive)
+
     def listed_targets(self, index: int, count: int) -> list[str]:
         result = subprocess.run(
             [
