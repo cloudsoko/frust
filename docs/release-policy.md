@@ -56,6 +56,8 @@ exhaustive live lane with both JWT and basic root authentication. Do not tag a
 release commit until its post-merge `Live integration (jwt)` and `Live
 integration (basic)` main-push contexts have both succeeded; this preserves the
 two-mode release guarantee without serializing both modes on every pull request.
+The exhaustive target list is deterministically divided across four workers per
+authentication mode, and each named context aggregates every worker result.
 
 Ignored performance tests are deliberately outside pull-request CI. The weekly
 workflow runs the self-contained measurement gates in release mode and retains

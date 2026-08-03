@@ -9,6 +9,12 @@ param(
     [ValidateRange(1, 32)]
     [int] $TestThreads = 2,
 
+    [ValidateRange(0, 15)]
+    [int] $ShardIndex = 0,
+
+    [ValidateRange(1, 16)]
+    [int] $ShardCount = 1,
+
     [string] $CargoTargetDir,
 
     [switch] $List
@@ -336,6 +342,25 @@ Test-LanePolicy $policy $allTargets
 $liveTargets = @(Get-LiveTargets $policy $allTargets)
 $smokeTargets = @($policy.smokeTargets | ForEach-Object { [string] $_ })
 
+if ($ShardIndex -ge $ShardCount) {
+    throw "ShardIndex $ShardIndex must be lower than ShardCount $ShardCount."
+}
+if ($ShardCount -gt 1 -and $Lane -ne "live") {
+    throw "Sharding is supported only for the live lane."
+}
+if ($Lane -eq "live" -and $ShardCount -gt 1) {
+    $selected = [System.Collections.Generic.List[string]]::new()
+    for ($index = 0; $index -lt $liveTargets.Count; $index++) {
+        if (($index % $ShardCount) -eq $ShardIndex) {
+            $selected.Add($liveTargets[$index])
+        }
+    }
+    $liveTargets = @($selected)
+    if ($liveTargets.Count -eq 0) {
+        throw "Live shard $ShardIndex/$ShardCount selected no targets."
+    }
+}
+
 if ($Lane -eq "check") {
     Write-Host "Offline targets: $(@($policy.offlineTargets).Count)"
     Write-Host "Smoke targets: $($smokeTargets.Count)"
@@ -374,7 +399,7 @@ $liveLibraryArgs += @("--lib", "--", "--test-threads=$TestThreads")
 if ($List) {
     Write-Host "`nOffline integration targets:`n  $(@($policy.offlineTargets) -join "`n  ")"
     Write-Host "`nSmoke integration targets:`n  $($smokeTargets -join "`n  ")"
-    Write-Host "`nLive integration targets:`n  $($liveTargets -join "`n  ")"
+    Write-Host "`nLive integration targets (shard $($ShardIndex + 1)/$ShardCount):`n  $($liveTargets -join "`n  ")"
     Write-Host "`nLive library packages:`n  $(@($policy.liveLibraryPackages) -join "`n  ")"
     Write-Host "`nKnown non-hermetic cases (never selected):"
     foreach ($case in $policy.knownNonHermeticCases) {
@@ -407,7 +432,7 @@ try {
         $env:FRUST_DB_ROOT_PASS = [string] $policy.surreal.password
     }
 
-    if ($Lane -in @("smoke", "live", "all")) {
+    if ($Lane -in @("smoke", "all") -or ($Lane -eq "live" -and $ShardIndex -eq 0)) {
         Invoke-CargoTests $liveLibraryArgs "live library tests"
     }
 
