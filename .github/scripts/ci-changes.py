@@ -49,14 +49,15 @@ def auth_matrix(event: str) -> list[str]:
     return ["jwt"] if event == "pull_request" else ["jwt", "basic"]
 
 
-def changed_paths(base: str, head: str) -> list[str]:
+def changed_paths(base: str, head: str, *, cwd: Path | None = None) -> list[str]:
     if not base or set(base) == {"0"}:
         raise ValueError("a real base commit is required")
     result = subprocess.run(
-        ["git", "diff", "--name-only", "--diff-filter=ACMRTUXB", base, head],
+        ["git", "diff", "--name-only", "--diff-filter=ACDMRTUXB", base, head],
         check=False,
         capture_output=True,
         text=True,
+        cwd=cwd,
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "git diff failed")
