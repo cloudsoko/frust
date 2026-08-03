@@ -46,6 +46,10 @@ sources change or the lock-bound runtime cache is empty; every executable change
 still verifies checksums and refuses generated drift. Documentation-only changes
 retain the required context names but skip their inapplicable work.
 
+Offline hook tests and live integration both consume the verified runtime
+artifact output explicitly; they do not rely on files left behind by another
+step on a shared runner.
+
 Pull requests run the bounded, hermetic SurrealDB smoke lane with JWT root
 authentication. Every protected `main` push and manual CI run executes the
 exhaustive live lane with both JWT and basic root authentication. Do not tag a
