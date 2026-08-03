@@ -56,5 +56,5 @@ runs:
         SHARD_INDEX: ${{ inputs.shard-index }}
         SHARD_COUNT: ${{ inputs.shard-count }}
       run: >-
-        ./scripts/test.ps1 -Lane live -TimeoutSeconds 1200 -TestThreads 4
+        ./scripts/test.ps1 -Lane live -TimeoutSeconds 2400 -TestThreads 2
         -ShardIndex $env:SHARD_INDEX -ShardCount $env:SHARD_COUNT
