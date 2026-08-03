@@ -62,7 +62,9 @@ Each worker keeps the test runner's two-thread default within a test binary:
 live tests provision shared SurrealDB metadata, so increasing intra-binary
 parallelism can create transaction write conflicts. Parallelism comes from the
 four isolated workers while Cargo compilation may still use all four runner
-cores.
+cores. Exhaustive workers retain the 40-minute command budget so a cold Rust
+cache cannot turn the main-push proof into a false failure; the shards overlap
+that work instead of weakening its bound.
 
 Ignored performance tests are deliberately outside pull-request CI. The weekly
 workflow runs the self-contained measurement gates in release mode and retains
