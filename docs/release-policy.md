@@ -34,7 +34,7 @@ governed by `frust-kernel/docs/evolution-policy.md`.
 
 ## Required gates
 
-Protect `main` with these successful checks:
+Protect pull-request merges to `main` with these successful checks:
 
 1. `Static, unit, and reproducibility`
 2. `Live integration (jwt)`
@@ -53,7 +53,8 @@ step on a shared runner.
 Pull requests run the bounded, hermetic SurrealDB smoke lane with JWT root
 authentication. Every protected `main` push and manual CI run executes the
 exhaustive live lane with both JWT and basic root authentication. Do not tag a
-release commit until both main-push contexts have succeeded; this preserves the
+release commit until its post-merge `Live integration (jwt)` and `Live
+integration (basic)` main-push contexts have both succeeded; this preserves the
 two-mode release guarantee without serializing both modes on every pull request.
 
 Ignored performance tests are deliberately outside pull-request CI. The weekly
