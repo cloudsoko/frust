@@ -10,6 +10,24 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Classify security changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - name: Check out history for complete path classification
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify changed paths
+        id: classify
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python .github/scripts/ci-changes.py
+
   dependency-review:
     # GitHub's dependency-review API requires Advanced Security for private repos.
     if: github.event_name == 'pull_request' && github.event.repository.private == false
@@ -18,6 +36,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Reject newly introduced vulnerable dependencies
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
@@ -25,6 +45,7 @@ jobs:
 
   rustsec:
     name: RustSec (${{ matrix.directory }})
+    needs: changes
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,10 +60,16 @@ jobs:
           - wasm-spike/script-engine
           - wasm-spike/plugin-demo
     steps:
+      - name: Record documentation-only fast path
+        if: needs.changes.outputs.code != 'true'
+        run: echo "No executable or dependency inputs changed."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.code == 'true'
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Audit locked Rust dependencies
+        if: needs.changes.outputs.code == 'true'
         uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

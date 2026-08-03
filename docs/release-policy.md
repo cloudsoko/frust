@@ -34,17 +34,28 @@ governed by `frust-kernel/docs/evolution-policy.md`.
 
 ## Required gates
 
-Protect `main` with these successful checks:
+Protect pull-request merges to `main` with these successful checks:
 
 1. `Static, unit, and reproducibility`
 2. `Live integration (jwt)`
-3. `Live integration (basic)`
-4. Dependency review and RustSec checks when dependency inputs change
+3. Dependency review and RustSec checks
 
-The quality gate initializes recorded submodules, uses the pinned Rust/pnpm/JCO
-versions, rebuilds the WASM/browser runtime, and refuses checksum or generated
-artifact drift. The live matrix runs the bounded, hermetic SurrealDB-backed
-lane in both supported root-authentication modes.
+The protected quality context aggregates parallel governance, artifact, kernel
+lint, offline-test, and Desk lanes. Artifact inputs are rebuilt only when their
+sources change or the lock-bound runtime cache is empty; every executable change
+still verifies checksums and refuses generated drift. Documentation-only changes
+retain the required context names but skip their inapplicable work.
+
+Offline hook tests and live integration both consume the verified runtime
+artifact output explicitly; they do not rely on files left behind by another
+step on a shared runner.
+
+Pull requests run the bounded, hermetic SurrealDB smoke lane with JWT root
+authentication. Every protected `main` push and manual CI run executes the
+exhaustive live lane with both JWT and basic root authentication. Do not tag a
+release commit until its post-merge `Live integration (jwt)` and `Live
+integration (basic)` main-push contexts have both succeeded; this preserves the
+two-mode release guarantee without serializing both modes on every pull request.
 
 Ignored performance tests are deliberately outside pull-request CI. The weekly
 workflow runs the self-contained measurement gates in release mode and retains
