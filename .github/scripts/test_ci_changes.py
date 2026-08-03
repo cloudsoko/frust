@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -47,6 +49,44 @@ class ChangeClassificationTests(unittest.TestCase):
         self.assertEqual(CI_CHANGES.auth_matrix("pull_request"), ["jwt"])
         self.assertEqual(CI_CHANGES.auth_matrix("push"), ["jwt", "basic"])
         self.assertEqual(CI_CHANGES.auth_matrix("workflow_dispatch"), ["jwt", "basic"])
+
+    def test_deleted_files_remain_in_the_classified_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary)
+            commands = (
+                ["git", "init", "--quiet"],
+                ["git", "config", "user.name", "CI Test"],
+                ["git", "config", "user.email", "ci@example.invalid"],
+            )
+            for command in commands:
+                subprocess.run(command, cwd=repository, check=True)
+
+            source = repository / "kernel.rs"
+            source.write_text("fn main() {}\n", encoding="utf-8")
+            subprocess.run(["git", "add", "kernel.rs"], cwd=repository, check=True)
+            subprocess.run(["git", "commit", "--quiet", "-m", "add source"], cwd=repository, check=True)
+            base = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repository,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            source.unlink()
+            subprocess.run(["git", "add", "kernel.rs"], cwd=repository, check=True)
+            subprocess.run(
+                ["git", "commit", "--quiet", "-m", "delete source"], cwd=repository, check=True
+            )
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repository,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            self.assertEqual(CI_CHANGES.changed_paths(base, head, cwd=repository), ["kernel.rs"])
 
 
 if __name__ == "__main__":

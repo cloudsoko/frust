@@ -35,6 +35,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Classify changed paths and CI tier
         id: classify
         env:
@@ -53,6 +54,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
       - name: Validate release metadata
@@ -81,6 +83,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Restore lock-bound runtime components
         id: runtime-components
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -133,6 +136,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
       - name: Cache kernel lint outputs
@@ -156,6 +160,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
       - name: Cache offline test outputs
@@ -185,6 +190,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
       - name: Cache Desk build outputs
@@ -251,6 +257,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Install pinned Rust toolchain
         if: needs.changes.outputs.code == 'true'
         run: rustup show active-toolchain
