@@ -119,11 +119,11 @@ class ChangeClassificationTests(unittest.TestCase):
 
 @unittest.skipUnless(POWERSHELL, "PowerShell is required to verify live test shards")
 class LiveShardTests(unittest.TestCase):
-    def test_exhaustive_workers_keep_datastore_safe_intra_binary_parallelism(self) -> None:
+    def test_exhaustive_workers_serialize_datastore_setup(self) -> None:
         worker = LIVE_WORKER.read_text(encoding="utf-8")
         exhaustive_step = worker.split("- name: Run exhaustive hermetic live shard", 1)[1]
         run_block = exhaustive_step.split("\n      run: >-", 1)[1].split("\n    - name:", 1)[0]
-        self.assertEqual(re.findall(r"-TestThreads\s+(\d+)", run_block), ["2"])
+        self.assertEqual(re.findall(r"-TestThreads\s+(\d+)", run_block), ["1"])
         self.assertEqual(re.findall(r"-TimeoutSeconds\s+(\d+)", run_block), ["2400"])
 
     def listed_targets(self, index: int, count: int) -> list[str]:
