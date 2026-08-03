@@ -20,6 +20,7 @@ ARTIFACT_FILES = {
     "rust-toolchain.toml",
     "scripts/frust.ps1",
 }
+LIVE_SHARD_COUNT = 4
 
 
 class ChangeSet(NamedTuple):
@@ -47,6 +48,23 @@ def classify(paths: list[str], *, force_all: bool = False) -> ChangeSet:
 
 def auth_matrix(event: str) -> list[str]:
     return ["jwt"] if event == "pull_request" else ["jwt", "basic"]
+
+
+def live_matrix(event: str, *, code: bool) -> dict[str, list[dict[str, str | int]]]:
+    lane = "smoke" if event == "pull_request" else "live"
+    shard_count = LIVE_SHARD_COUNT if code and lane == "live" else 1
+    include = [
+        {
+            "root_auth": root_auth,
+            "lane": lane,
+            "shard_index": shard_index,
+            "shard_count": shard_count,
+            "shard_label": f"{shard_index + 1}/{shard_count}",
+        }
+        for root_auth in auth_matrix(event)
+        for shard_index in range(shard_count)
+    ]
+    return {"include": include}
 
 
 def changed_paths(base: str, head: str, *, cwd: Path | None = None) -> list[str]:
@@ -91,6 +109,7 @@ def main() -> None:
             "code": str(changes.code).lower(),
             "artifacts": str(changes.artifacts).lower(),
             "auth_matrix": json.dumps(auth_matrix(event), separators=(",", ":")),
+            "live_matrix": json.dumps(live_matrix(event, code=changes.code), separators=(",", ":")),
         }
     )
     print(f"classified {len(paths)} changed path(s)")

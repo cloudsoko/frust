@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -8,6 +9,9 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).with_name("ci-changes.py")
+ROOT = SCRIPT.parents[2]
+TEST_RUNNER = ROOT / "scripts" / "test.ps1"
+POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 SPEC = importlib.util.spec_from_file_location("ci_changes", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 CI_CHANGES = importlib.util.module_from_spec(SPEC)
@@ -50,6 +54,31 @@ class ChangeClassificationTests(unittest.TestCase):
         self.assertEqual(CI_CHANGES.auth_matrix("push"), ["jwt", "basic"])
         self.assertEqual(CI_CHANGES.auth_matrix("workflow_dispatch"), ["jwt", "basic"])
 
+        pull_request = CI_CHANGES.live_matrix("pull_request", code=True)["include"]
+        self.assertEqual(
+            pull_request,
+            [
+                {
+                    "root_auth": "jwt",
+                    "lane": "smoke",
+                    "shard_index": 0,
+                    "shard_count": 1,
+                    "shard_label": "1/1",
+                }
+            ],
+        )
+
+        main = CI_CHANGES.live_matrix("push", code=True)["include"]
+        self.assertEqual(len(main), 2 * CI_CHANGES.LIVE_SHARD_COUNT)
+        for root_auth in ("jwt", "basic"):
+            shards = [entry for entry in main if entry["root_auth"] == root_auth]
+            self.assertEqual([entry["shard_index"] for entry in shards], list(range(4)))
+            self.assertTrue(all(entry["lane"] == "live" for entry in shards))
+
+        documentation = CI_CHANGES.live_matrix("push", code=False)["include"]
+        self.assertEqual(len(documentation), 2)
+        self.assertTrue(all(entry["shard_count"] == 1 for entry in documentation))
+
     def test_deleted_files_remain_in_the_classified_diff(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             repository = Path(temporary)
@@ -87,6 +116,65 @@ class ChangeClassificationTests(unittest.TestCase):
             ).stdout.strip()
 
             self.assertEqual(CI_CHANGES.changed_paths(base, head, cwd=repository), ["kernel.rs"])
+
+
+@unittest.skipUnless(POWERSHELL, "PowerShell is required to verify live test shards")
+class LiveShardTests(unittest.TestCase):
+    def listed_targets(self, index: int, count: int) -> list[str]:
+        result = subprocess.run(
+            [
+                POWERSHELL,
+                "-NoProfile",
+                "-File",
+                str(TEST_RUNNER),
+                "-Lane",
+                "live",
+                "-List",
+                "-ShardIndex",
+                str(index),
+                "-ShardCount",
+                str(count),
+            ],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        lines = result.stdout.splitlines()
+        start = next(i for i, line in enumerate(lines) if line.startswith("Live integration targets"))
+        end = next(i for i, line in enumerate(lines[start + 1 :], start + 1) if line == "Live library packages:")
+        return [line.strip() for line in lines[start + 1 : end] if line.startswith("  ")]
+
+    def test_four_shards_cover_every_live_target_exactly_once(self) -> None:
+        complete = self.listed_targets(0, 1)
+        shards = [self.listed_targets(index, 4) for index in range(4)]
+        selected = [target for shard in shards for target in shard]
+
+        self.assertEqual([len(shard) for shard in shards], [12, 12, 11, 11])
+        self.assertEqual(len(selected), len(set(selected)))
+        self.assertEqual(sorted(selected), sorted(complete))
+
+    def test_invalid_shard_is_rejected(self) -> None:
+        result = subprocess.run(
+            [
+                POWERSHELL,
+                "-NoProfile",
+                "-File",
+                str(TEST_RUNNER),
+                "-Lane",
+                "live",
+                "-List",
+                "-ShardIndex",
+                "4",
+                "-ShardCount",
+                "4",
+            ],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":
