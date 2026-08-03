@@ -59,7 +59,6 @@ class ChangeClassificationTests(unittest.TestCase):
             pull_request,
             [
                 {
-                    "root_auth": "jwt",
                     "lane": "smoke",
                     "shard_index": 0,
                     "shard_count": 1,
@@ -69,14 +68,12 @@ class ChangeClassificationTests(unittest.TestCase):
         )
 
         main = CI_CHANGES.live_matrix("push", code=True)["include"]
-        self.assertEqual(len(main), 2 * CI_CHANGES.LIVE_SHARD_COUNT)
-        for root_auth in ("jwt", "basic"):
-            shards = [entry for entry in main if entry["root_auth"] == root_auth]
-            self.assertEqual([entry["shard_index"] for entry in shards], list(range(4)))
-            self.assertTrue(all(entry["lane"] == "live" for entry in shards))
+        self.assertEqual(len(main), CI_CHANGES.LIVE_SHARD_COUNT)
+        self.assertEqual([entry["shard_index"] for entry in main], list(range(4)))
+        self.assertTrue(all(entry["lane"] == "live" for entry in main))
 
         documentation = CI_CHANGES.live_matrix("push", code=False)["include"]
-        self.assertEqual(len(documentation), 2)
+        self.assertEqual(len(documentation), 1)
         self.assertTrue(all(entry["shard_count"] == 1 for entry in documentation))
 
     def test_deleted_files_remain_in_the_classified_diff(self) -> None:
