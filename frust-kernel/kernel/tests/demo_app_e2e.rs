@@ -1,4 +1,4 @@
-//! WO-019 criterion 7: **the demo app, end to end.**
+//! **The demo app, end to end.**
 //!
 //! One small app, installed from a bundle file through the kernel's manager
 //! surface, then exercised the way a real one would be: a DocType that holds
@@ -11,9 +11,8 @@
 //! zero-compilation-extension claim (REQ-2.1.1) would be false in the only
 //! way that matters.
 //!
-//! This is where every piece built across the WO runs as one app: the manifest
-//! (2), the install gate (3), the route door (1, 4), uninstall's honesty (5),
-//! and server-script delivery (6).
+//! This is where every piece runs as one app: the manifest, the install gate,
+//! the route door, uninstall's honesty, and server-script delivery.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 
@@ -62,7 +61,7 @@ fn ledger_app(version: &str) -> serde_json::Value {
         "client_scripts": [{ "doctype": "ledger_entry", "script": "doc.memo = doc.memo;" }],
         "routes": [{ "path": "entries", "component": "plugin_demo.wasm" }],
         "components": ["plugin_demo.wasm"],
-        // WO-018 typed this slot. A minimal-but-valid workflow, so the demo
+        // A minimal-but-valid workflow, so the demo
         // app also exercises workflow-as-manifest-content end to end.
         "workflows": [{
             "name": "ledger_approval",
@@ -186,8 +185,8 @@ fn the_demo_app_lives_its_whole_life_without_a_restart() {
     assert_eq!(large["band"], serde_json::json!("large"));
     // Money crossed as decimal and came back exact (REQ-6.2.1). Assert the
     // VALUE, not its representation: SurrealDB normalises trailing zeros, so
-    // `4200.00` comes back as `"4200"` â€” string-comparing here is the very
-    // mistake WO-016 recorded, made again.
+    // `4200.00` comes back as `"4200"` — string-comparing here is the classic
+    // representation-vs-value mistake, made again.
     let amount = large["amount"].as_str().unwrap_or_else(|| {
         panic!("money must cross as a decimal STRING, never a float: {}", large["amount"])
     });

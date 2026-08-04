@@ -1,5 +1,5 @@
-//! WO-005 exit criterion 4, test-first (module 2): boot discipline evidence.
-//! Each test gets its own database so they parallelize safely.
+//! Boot discipline evidence. Each test gets its own database so they
+//! parallelize safely.
 
 use frust_kernel::boot::{boot, BootError, BootOptions, NoUserSync};
 use frust_kernel::db::{scoped_db, Db};

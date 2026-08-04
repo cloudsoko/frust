@@ -1,8 +1,9 @@
-//! WO-044 criteria 1 + 2: the root-JWT path is CORRECT and ADR-013 still holds.
+//! Criteria 1 + 2: the root-JWT path is CORRECT and the restored-access-key
+//! guard still holds.
 //!
-//! Deliberately no throughput number in this file. The WO gates the win on
-//! correctness (the WO-026 rule), so the measurement lives in
-//! `examples/rootauth.rs` and runs only after these pass.
+//! Deliberately no throughput number in this file. Correctness gates the win,
+//! so the measurement lives in `examples/rootauth.rs` and runs only after these
+//! pass.
 
 mod common;
 
@@ -11,7 +12,7 @@ mod common;
 // under `FRUST_ROOT_AUTH=basic` they used to fail for the entirely correct
 // reason that there was no token to assert about. The Basic arm of the parity
 // test was already pinned; pinning the JWT arm is the missing half, and it makes
-// the file mode-independent (WO-047).
+// the file mode-independent.
 
 use frust_kernel::contract::BrokerError;
 use frust_kernel::db::{scoped_db, Db};
@@ -33,7 +34,7 @@ fn root_surface(db: &Db) -> Vec<serde_json::Value> {
         db.sql_root("DEFINE TABLE OVERWRITE wo044 SCHEMALESS PERMISSIONS NONE;").expect("ddl"),
         // Both arms run against the same database, so this surface must start
         // from the same state each time — `DEFINE TABLE OVERWRITE` deliberately
-        // PRESERVES records (WO-002 Finding A), so the reset is explicit.
+        // PRESERVES records, so the reset is explicit.
         db.sql_root("DELETE wo044;").expect("reset"),
         db.sql_root("CREATE wo044:one SET v = 1;").expect("create"),
         db.sql_root("UPDATE wo044:one SET v = 2;").expect("update"),
@@ -59,7 +60,7 @@ fn root_surface(db: &Db) -> Vec<serde_json::Value> {
 
 // ── criterion 1: correctness ────────────────────────────────────────────────
 
-/// The point of the whole WO is that *only the credential* changes. If any
+/// The point of the change is that *only the credential* changes. If any
 /// result differs, the optimisation is not an optimisation.
 #[test]
 fn the_jwt_path_returns_identical_results_to_basic() {
@@ -73,7 +74,7 @@ fn the_jwt_path_returns_identical_results_to_basic() {
     let jwt = root_surface(&db);
     assert!(db.has_cached_root_token(), "the JWT arm must actually have used a token");
 
-    // a second handle, forced onto the pre-WO-044 credential
+    // a second handle, forced onto the pre-JWT (Basic) credential
     let mut basic = scoped_db(&cfg);
     basic.force_basic_for_test();
     let basic_out = root_surface(&basic);
@@ -92,11 +93,10 @@ fn the_jwt_path_returns_identical_results_to_basic() {
 /// many queries) rather than the operation (that some cache field was touched).
 #[test]
 fn argon2_runs_once_not_per_request() {
-    // The PER-HANDLE counter, not the process-global metric. WO-044 added
-    // `root_signins()` for exactly this reason and then this test read the
-    // global anyway — so once several tests in this binary each minted their
-    // own token in parallel, the global delta stopped being about this handle.
-    // A detached handle's own count is exact and cannot be raced.
+    // The PER-HANDLE counter, not the process-global metric. When several tests
+    // in this binary each mint their own token in parallel, the global delta
+    // stops being about this handle. A detached handle's own count is exact and
+    // cannot be raced.
     let (mut db, _cfg) = fixture("wo044_once");
     db.force_jwt_for_test();
     for i in 0..25 {
@@ -167,12 +167,12 @@ fn refresh_is_derived_from_the_tokens_own_expiry() {
     println!("root token life {life}s, refresh in {}s", refresh_in.as_secs());
 }
 
-// ── criterion 2: ADR-013 integrity ──────────────────────────────────────────
+// ── criterion 2: restored-access-key guard integrity ─────────────────────────
 
-/// **The load-bearing test of this WO.**
+/// **The load-bearing test of this change.**
 ///
-/// ADR-013's keyguard probes with a DELIBERATELY FORGED Bearer token and reads
-/// the resulting 401 as its healthy answer. If WO-044's re-signin retry lived in
+/// The keyguard probes with a DELIBERATELY FORGED Bearer token and reads
+/// the resulting 401 as its healthy answer. If the root re-signin retry lived in
 /// the shared `sql_with_auth` instead of the root-only path, that forged probe
 /// would be retried as root, succeed, and the guard would report EVERY HEALTHY
 /// STORE compromised — a boot-refusing false positive on every deployment.

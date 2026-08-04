@@ -144,9 +144,9 @@ pub fn render_filter(f: &Filter) -> Result<String, BrokerError> {
     })
 }
 
-/// `LIVE SELECT` for a subscription (WO-012). Query text lives here like
-/// every other statement the kernel sends — the realtime module composes the
-/// subscription, it does not author SurrealQL.
+/// `LIVE SELECT` for a subscription. Query text lives here like every other
+/// statement the kernel sends — the realtime module composes the subscription,
+/// it does not author SurrealQL.
 pub fn render_live_select(table: &str) -> Result<String, BrokerError> {
     if !is_ident(table) {
         return Err(BrokerError::InvalidValue { detail: format!("bad table: {table}") });

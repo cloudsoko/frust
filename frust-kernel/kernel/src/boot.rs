@@ -1,10 +1,10 @@
-//! Boot discipline (WO-005 module 2): the A7 sequence, exactly —
+//! Boot discipline: the boot sequence, exactly —
 //! advisory lock -> meta sync from binary -> re-read from DB ->
 //! user-DocType sync -> boot-check verdict.
 //!
 //! Fail-closed rules:
 //! - DB meta NEWER than binary  -> refuse (`MetaNewerThanBinary`) — the
-//!   database does not get to gaslight the engine (ADR-008 A5).
+//!   database does not get to gaslight the engine.
 //! - DB meta OLDER than binary  -> pending meta migration; refuse unless
 //!   `--accept-meta-migrations` (the two-step ack). A fresh DB (no version
 //!   record) is first boot and applies without ack — nothing exists to lose.
@@ -75,13 +75,13 @@ pub struct BootReport {
     pub meta_version: i64,
     /// DocTypes re-read from the DB after meta sync (self-hosting honesty).
     pub doctypes: usize,
-    /// **WO-052: columns present in the schema that no DocType declares.**
+    /// Columns present in the schema that no DocType declares.
     ///
     /// Named, never merely tolerated. These arise legitimately — an extension
     /// uninstall detaches its field from metadata and deliberately leaves the
-    /// column and its data behind (WO-019's "metadata detaches, data remains",
-    /// extended cross-app by WO-050) — and an orphan nobody can enumerate is
-    /// the silent-wrong shape wearing ops clothing.
+    /// column and its data behind (metadata detaches, data remains) — and an
+    /// orphan nobody can enumerate is the silent-wrong shape wearing ops
+    /// clothing.
     ///
     /// Each entry is `"<doctype>.<field>"`.
     pub orphan_columns: Vec<String>,
@@ -123,18 +123,17 @@ pub fn publish_orphans(tenant: &str, orphans: &[String], cleared: Option<&str>) 
 }
 
 pub fn boot(db: &Db, opts: &BootOptions, sync: &dyn SchemaSync) -> Result<BootReport, BootError> {
-    // WO-040 Chunk C: the meta boot asks the STRATEGY where its record access
-    // belongs instead of assuming. Every topology answers `Database` today
-    // (the Chunk C probe found SurrealDB 3.2.0 refuses a namespace-level
-    // RECORD access with a 400), and the bootstrap DDL is written for that.
+    // The meta boot asks the STRATEGY where its record access belongs instead
+    // of assuming. Every topology answers `Database` today (SurrealDB 3.2.0
+    // refuses a namespace-level RECORD access with a 400), and the bootstrap
+    // DDL is written for that.
     //
     // The refusal matters more than the branch: if a future topology answered
     // `Namespace`, boot would emit database-scoped DDL that lands in the wrong
-    // place, and the ADR-013 keyguard would then probe a location no key lives
-    // at — refusing a forged token for the WRONG REASON and reporting a
-    // vulnerable store SAFE. That is the exact fail-open Chunk A found latent
-    // in `keyguard.rs`, and it stays closed by refusing here rather than by
-    // anyone remembering.
+    // place, and the keyguard would then probe a location no key lives at —
+    // refusing a forged token for the WRONG REASON and reporting a vulnerable
+    // store SAFE. That is the exact fail-open latent in `keyguard.rs`, and it
+    // stays closed by refusing here rather than by anyone remembering.
     if db.target().strategy().access_placement() != crate::tenancy::AccessPlacement::Database {
         return Err(BootError::Db(format!(
             "tenancy strategy {:?} wants its access somewhere the meta boot cannot put it; \
@@ -173,18 +172,18 @@ fn boot_locked(db: &Db, opts: &BootOptions, sync: &dyn SchemaSync) -> Result<Boo
         }
     }
 
-    // WO-008: identity posture repaired on EVERY boot, not just migrations —
-    // operator drift on app_user (the $auth sharp edge) has no standing.
-    // Idempotent OVERWRITE; records survive (Finding A).
+    // Identity posture repaired on EVERY boot, not just migrations — operator
+    // drift on app_user (the $auth sharp edge) has no standing. Idempotent
+    // OVERWRITE; records survive.
     db.sql_root(&format!("{};", identity_ddl()))?;
 
-    // WO-027: key integrity, the same fail-closed lineage as the meta version
-    // above. A `surreal import` of an exported dump restores the JWT signing
-    // key as the literal redaction placeholder, so ANY party can forge a
-    // session for ANY user — and the instance looks perfectly healthy. Checked
-    // AFTER identity_ddl so the access exists to test, and BEFORE anything is
-    // served. There is deliberately no acknowledgement flag: proceeding here
-    // is serving-compromised, not an operator judgement call.
+    // Key integrity, the same fail-closed lineage as the meta version above. A
+    // `surreal import` of an exported dump restores the JWT signing key as the
+    // literal redaction placeholder, so ANY party can forge a session for ANY
+    // user — and the instance looks perfectly healthy. Checked AFTER
+    // identity_ddl so the access exists to test, and BEFORE anything is served.
+    // There is deliberately no acknowledgement flag: proceeding here is
+    // serving-compromised, not an operator judgement call.
     crate::keyguard::assert_access_key_is_not_redacted(db)?;
 
     // A7 step 3: re-read meta from the DB — the kernel now trusts only what
@@ -204,8 +203,8 @@ fn boot_locked(db: &Db, opts: &BootOptions, sync: &dyn SchemaSync) -> Result<Boo
     // A7 step 4: user-DocType sync (module-3 seam)
     let synced = sync.sync_user_doctypes(db)?;
 
-    // WO-013: tenant policy is kernel-owned DDL, re-asserted every boot, and
-    // loaded into the door buckets. No rows = unlimited = unchanged posture.
+    // Tenant policy is kernel-owned DDL, re-asserted every boot, and loaded
+    // into the door buckets. No rows = unlimited = unchanged posture.
     db.sql_root(&format!("{};", crate::meta::tenant_policy_ddl()))?;
     let policies = load_tenant_policies(db)?;
 
@@ -219,8 +218,8 @@ fn boot_locked(db: &Db, opts: &BootOptions, sync: &dyn SchemaSync) -> Result<Boo
             ("meta_version", serde_json::json!(now)),
             ("meta_applied", serde_json::json!(applied)),
             ("doctypes", serde_json::json!(doctypes)),
-            // WO-052: orphans are NAMED at boot. An orphan nobody can list is
-            // the silent-wrong shape in ops clothing.
+            // Orphans are NAMED at boot. An orphan nobody can list is the
+            // silent-wrong shape in ops clothing.
             ("orphan_columns", serde_json::json!(synced.orphans)),
         ],
     );
@@ -233,7 +232,7 @@ fn boot_locked(db: &Db, opts: &BootOptions, sync: &dyn SchemaSync) -> Result<Boo
     Ok(report)
 }
 
-// ── WO-055 G5: readiness, said out loud ─────────────────────────────────────
+// ── readiness, said out loud ────────────────────────────────────────────────
 
 /// What has actually finished booting, per tenant.
 ///
@@ -263,7 +262,7 @@ fn mark_ready(tenant: &str, report: &BootReport) {
 /// **What this can and cannot tell you, stated because the difference matters
 /// operationally:** the kernel does not accept connections until boot
 /// finishes, so over HTTP this has never been observed `false` — during the
-/// ~25 s accepting-boot window (WO-019) the honest signal is a refused
+/// ~25 s accepting-boot window the honest signal is a refused
 /// connection, and a health check must budget for it or it will kill a kernel
 /// that is working. What this endpoint adds is the *positive* signal and the
 /// boot facts to assert against, separated from `/health`, which answers for
@@ -273,8 +272,8 @@ pub fn readiness() -> serde_json::Value {
     serde_json::json!({ "ready": !slots.is_empty(), "tenants": slots.clone() })
 }
 
-/// Reads `_tenant_policy` into the door buckets (WO-013). Boot owns the read
-/// because boot owns meta bootstrapping; `fairness` stays query-text-free.
+/// Reads `_tenant_policy` into the door buckets. Boot owns the read because
+/// boot owns meta bootstrapping; `fairness` stays query-text-free.
 fn load_tenant_policies(db: &Db) -> Result<usize, BootError> {
     use crate::fairness::{Policy, POLICY_TABLE, set_policy};
     let rows = db.sql_root(&format!("SELECT * FROM {POLICY_TABLE};"))?;
@@ -322,8 +321,8 @@ fn read_meta_version(db: &Db) -> Result<Option<i64>, BootError> {
 /// the racing-nodes test counts `_frust_meta` log rows to prove single-apply.
 fn apply_meta(db: &Db, holder: &str, from_version: i64) -> Result<(), BootError> {
     let ddl = meta_ddl();
-    // WO-050: record migrations ride the SAME transaction as the version bump,
-    // so a bumped version can never outrun the data it promises.
+    // Record migrations ride the SAME transaction as the version bump, so a
+    // bumped version can never outrun the data it promises.
     let data = crate::meta::meta_data_migrations();
     let holder = crate::surql::escape_str(holder);
     let txn = format!(

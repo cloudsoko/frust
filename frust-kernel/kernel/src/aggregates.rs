@@ -1,11 +1,11 @@
-﻿//! ADR-010 Tier 2: worker-maintained rollups off the changefeed.
+﻿//! Tier-2 worker-maintained rollups off the changefeed.
 //!
 //! Same algebra as the Tier-1 counters â€” a document's SIGNED CONTRIBUTION â€”
 //! but computed kernel-side, for deltas an EVENT can't see (graph hops,
 //! embedded-line diffs). The worker replays `SHOW CHANGES` from a persisted
 //! versionstamp cursor; each batch applies its rollup deltas AND the cursor
 //! advance in ONE transaction, so replay after a crash is exactly-once by
-//! construction (the ADR-009 recovery story, with rollup state at stake).
+//! construction (the crash-recovery story, with rollup state at stake).
 //!
 //! v3.2.0 feed shapes (probed):
 //!   create: `{update: <full new doc>}`
@@ -25,7 +25,7 @@ use crate::db::Db;
 use crate::surql;
 
 /// Cursor records live here: `agg_cursor:<rollup>` = { vs, updated_at }.
-/// Lag is data (ADR-010): dashboards read the cursor, not a log file.
+/// Lag is data: dashboards read the cursor, not a log file.
 pub const CURSOR_TABLE: &str = "agg_cursor";
 
 /// One decoded feed entry: the doc before and after the mutation.
@@ -233,7 +233,7 @@ pub fn decode_entries(entries: &[serde_json::Value]) -> Result<(Vec<Change>, u64
 /// What one document contributes to its rollup: (key, [(field, amount)]).
 /// The worker adds the after-doc's contribution and subtracts the before-
 /// doc's â€” exactness through edits, key-moves, and deletes falls out.
-/// WO-025: `Send`, deliberately NOT `Sync`. Rollup contributors are moved onto
+/// `Send`, deliberately NOT `Sync`. Rollup contributors are moved onto
 /// the single maintenance thread and never shared — `GroupRevenue` carries a
 /// `RefCell` cache (a single-threaded-assumption artifact), which `Send` allows
 /// and `Sync` would forbid. Requiring `Sync` here would be asking for a
@@ -247,7 +247,7 @@ pub trait Contrib: Send {
         -> Result<Vec<(String, Vec<(String, Decimal)>)>, BrokerError>;
 }
 
-/// Revenue by customer group â€” the 2-hop key (WO-006 Q3, super-linear live).
+/// Revenue by customer group — the 2-hop key (super-linear as a live query).
 /// The hop resolves kernel-side with a memoized customer -> group map; the
 /// EVENT tier can't see it, the worker makes it one cached lookup.
 pub struct GroupRevenue {
@@ -302,7 +302,7 @@ impl Contrib for GroupRevenue {
 }
 
 /// Item-wise sales from embedded lines â€” the shape with NO live door (the
-/// flatten is contract-inexpressible, ADR-010): this rollup IS the report.
+/// flatten is contract-inexpressible): this rollup IS the report.
 pub struct ItemSales {
     pub source: String,
     pub rollup: String,
@@ -341,9 +341,9 @@ impl Contrib for ItemSales {
 /// Reads a numeric line field that may arrive as a JSON number OR as a
 /// DECIMAL, which SurrealDB serialises as a string ("150.00").
 ///
-/// WO-015 found this the hard way: with real decimal amounts the old
+/// A subtlety worth guarding: with real decimal amounts the old
 /// `as_f64()` returned `None` and the rollup silently accumulated ZERO.
-/// WO-016 finished the job â€” the value stays an exact [`Decimal`] from here
+/// The value stays an exact [`Decimal`] from here
 /// through the accumulator and into the written statement, so no money path
 /// in this module touches `f64` (REQ-6.2.1).
 fn numeric(v: Option<&serde_json::Value>) -> Decimal {
@@ -464,7 +464,7 @@ impl<'a> RollupWorker<'a> {
         Ok(changes.len())
     }
 
-    /// WO-016 criterion 4: the upgrade path for rollups written before money
+    /// The upgrade path for rollups written before money
     /// was decimal.
     ///
     /// Rollups are DERIVED data, so the upgrade is **recompute from source**,
@@ -475,7 +475,7 @@ impl<'a> RollupWorker<'a> {
     ///
     /// Cost is one full feed replay per rollup: a one-time upgrade whose
     /// result is reconcilable against the source (which is exactly what the
-    /// WO-007 reconciliation tests assert, now decimal-exact).
+    /// reconciliation tests assert, now decimal-exact).
     pub fn recompute_from_source(&self) -> Result<usize, BrokerError> {
         let rollup = self.handler.rollup();
         self.db.sql_root(&format!(

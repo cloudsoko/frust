@@ -1,11 +1,10 @@
-//! WO-019 criterion 3: install / enable / disable / update, through the
-//! kernel's manager surface.
+//! Install / enable / disable / update, through the kernel's manager surface.
 //!
 //! The load-bearing claim under test is **detach without data loss**: disable
 //! stops an app acting without touching a row, and enable restores what was
-//! there rather than reconstructing it. Criterion 5's honest-uninstall answer
-//! has to describe what these tests actually prove, so they assert the data
-//! survives explicitly rather than by omission.
+//! there rather than reconstructing it. The honest-uninstall answer has to
+//! describe what these tests actually prove, so they assert the data survives
+//! explicitly rather than by omission.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 
@@ -107,8 +106,8 @@ fn installing_an_installed_app_is_refused_and_points_at_update() {
     assert!(msg.contains("use update"), "the refusal says what to do instead: {msg}");
 }
 
-/// **Detach without data loss** — the criterion's load-bearing claim, and the
-/// sentence criterion 5's honest uninstall answer will have to stand behind.
+/// **Detach without data loss** — the load-bearing claim, and the sentence the
+/// honest-uninstall answer will have to stand behind.
 #[test]
 fn disable_detaches_without_touching_data_and_enable_restores() {
     let (rest, db) = rest_for("app_disable");

@@ -1,9 +1,9 @@
-//! WO-033: the two hygiene items, proven over a LIVE serving kernel.
+//! Two hygiene items, proven over a LIVE serving kernel.
 //!
 //! 1. **Admin force-revoke** — a manager kills every session a user holds, and
 //!    the very NEXT request is refused (no `SESSION_TTL` wait), while another
 //!    user's session survives.
-//! 2. **A healthy keyguard check is quiet** — the self-forge probe (ADR-013) is
+//! 2. **A healthy keyguard check is quiet** — the self-forge probe is
 //!    a deliberately-failing call, so it must not make a clean boot cry
 //!    `lvl:error`. Asserted WITH ITS CONTROL: a genuinely restored
 //!    (placeholder-key) store must still be refused loudly, so the quiet path
@@ -91,8 +91,8 @@ fn works(token: &str) -> bool {
 
 // ── item 1: admin force-revoke ──────────────────────────────────────────────
 
-/// The property WO-026 queued: revocation is INSTANT (generation bump), not
-/// TTL-delayed — and it is surgical.
+/// Revocation is INSTANT (generation bump), not TTL-delayed — and it is
+/// surgical.
 ///
 /// The clerk logs in TWICE on purpose: revoking one session while an attacker
 /// holds a second accomplishes nothing, which is why revoke targets the USER.
@@ -138,7 +138,7 @@ fn revoking_a_user_with_no_sessions_is_a_quiet_success() {
 // ── item 2: the quiet probe, and the control that proves it can be loud ─────
 
 /// A healthy store passes the keyguard, and the probe's expected refusal is
-/// logged quietly (WO-033 item 2). The behavioural half is asserted here; the
+/// logged quietly. The behavioural half is asserted here; the
 /// zero-`lvl:error` half is asserted against the real boot in
 /// `boot_quiet.rs`-style fashion by `a_restored_store_is_still_refused_loudly`
 /// below, which is this test's control.

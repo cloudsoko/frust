@@ -1,4 +1,4 @@
-//! WO-043: email batteries, end to end through the broker.
+//! Email batteries, end to end through the broker.
 //!
 //! The browser/`frust serve` proof lives in `frust-e2e/mail.spec.mjs` (criterion
 //! 5, tested-seam≠wired). This file proves the parts a live run cannot isolate:
@@ -40,7 +40,7 @@ fn maildir(name: &str) -> std::path::PathBuf {
 }
 
 /// The kernel-owned mail tables, which `common::seeded_broker` does not build
-/// (it seeds the WO-002 fixture, not the full meta schema).
+/// (it seeds the base purchase-order fixture, not the full meta schema).
 fn install_mail_meta(db: &Db) {
     db.sql_root(&frust_kernel::meta::mail_ddl()).expect("mail meta ddl");
     // v5 added `email` to the SCHEMAFULL identity table
@@ -167,15 +167,15 @@ fn a_notification_added_at_runtime_fires_on_the_very_next_write() {
     assert_eq!(
         field(row, "body"),
         format!("after the rule for {as_stored}."),
-        "the template must render the stored decimal verbatim (no arithmetic, ADR-007)"
+        "the template must render the stored decimal verbatim (no arithmetic on money)"
     );
 }
 
 /// A database that predates meta v5 has no `notification` table, and SurrealDB
 /// answers a SELECT against a missing table with an ERROR, not an empty set. If
 /// that reached the write path it would log `lvl:error` on EVERY save — which is
-/// how operators learn to ignore errors (the WO-033 discipline), and it would do
-/// it on the busiest path there is.
+/// how operators learn to ignore errors, and it would do it on the busiest path
+/// there is.
 #[test]
 fn a_database_with_no_notification_table_is_quiet_not_noisy() {
     // deliberately NOT calling install_mail_meta: this is the pre-v5 shape
@@ -343,11 +343,10 @@ fn a_rule_that_resolves_to_nobody_dead_letters_instead_of_sending_nothing() {
 
 // ── criterion 2: the save floor, MEASURED ───────────────────────────────────
 
-/// **Criterion 2, as the WO states it:** "compare save latency with the mail
-/// worker healthy vs. with a dead/slow transport — the save floor must not
-/// move". So that is the comparison: the same workload, the same rule, a real
-/// worker thread draining concurrently, and the only variable is whether the
-/// transport works.
+/// **Criterion 2:** compare save latency with the mail worker healthy vs. with a
+/// dead/slow transport — the save floor must not move. So that is the
+/// comparison: the same workload, the same rule, a real worker thread draining
+/// concurrently, and the only variable is whether the transport works.
 ///
 /// A third arm (no rule at all) is measured too, because it turned up a real
 /// number worth reporting rather than hiding — see the diagnosis printed below.
@@ -356,12 +355,12 @@ fn a_rule_that_resolves_to_nobody_dead_letters_instead_of_sending_nothing() {
 /// arms are the same workload and pass for the wrong reason), and the dead
 /// transport must actually be slow (or "dead" is indistinguishable from
 /// "healthy" and the comparison proves nothing).
-/// **Own invocation, by the standing rule** (WO-014, sharpened by WO-017's
-/// quiet-machine clause). Its last assertion compares MEASURED durations, so it
-/// is a perf-shaped check living in a functional binary — and WO-052's jwt
-/// suite caught it flapping there: it read 15.05 ms against a 14.30 ms budget
-/// under full parallel load, then passed comfortably the moment the machine was
-/// quiet. That is the instrument reporting the machine, not the kernel.
+///
+/// **Own invocation, on a quiet machine.** Its last assertion compares MEASURED
+/// durations, so it is a perf-shaped check living in a functional binary — under
+/// full parallel load it once read 15.05 ms against a 14.30 ms budget, then
+/// passed comfortably the moment the machine was quiet. That is the instrument
+/// reporting the machine, not the kernel.
 ///
 /// Run it with the gates:
 ///   `cargo test --test mail_notifications -- --ignored --test-threads=1`
@@ -479,7 +478,7 @@ fn the_save_floor_does_not_move_when_smtp_is_dead() {
          rule + DEAD transport {dead:?} | one blocked SMTP send {one_send:?}"
     );
 
-    // ── the WO's criterion: healthy vs dead must be the same floor ──
+    // ── the criterion: healthy vs dead must be the same floor ──
     let (lo, hi) = if healthy < dead { (healthy, dead) } else { (dead, healthy) };
     assert!(
         hi < lo * 2 && hi < lo + Duration::from_millis(20),
@@ -494,19 +493,17 @@ fn the_save_floor_does_not_move_when_smtp_is_dead() {
 
     // ── the honest extra number: attaching a rule DOES cost a save something ──
     //
-    // Not SMTP latency — a durable enqueue, which is one `sql_root` INSERT. That
-    // A rule-attached save costs exactly two extra root round trips: the
-    // `role:` recipient lookup (a read) and the outbox row (a write). So the
-    // yardstick is those two operations, MEASURED here — not a constant, and
-    // not a read used to stand in for a write.
+    // Not SMTP latency — a durable enqueue. A rule-attached save costs exactly
+    // two extra root round trips: the `role:` recipient lookup (a read) and the
+    // outbox row (a write). So the yardstick is those two operations, MEASURED
+    // here — not a constant, and not a read used to stand in for a write.
     //
-    // WO-044 is why this is measured as two separate operations. Before it, root
-    // Basic auth cost ~16 ms per request (SurrealDB argon2-verifies the password
-    // on every call), which swamped the difference between a read and a write
-    // and made "4 × a trivial SELECT" a fine approximation. With the root JWT
-    // the auth cost is ~450 µs and the WRITE is now the dominant term, so a
-    // read-based yardstick understates the floor by ~5×. The optimisation
-    // changed which thing this test has to measure.
+    // Both are measured separately because the write is now the dominant term.
+    // Under root Basic auth (SurrealDB argon2-verifies the password on every
+    // call) auth cost ~16 ms per request, which swamped the read/write
+    // difference and made "4 × a trivial SELECT" a fine approximation. With the
+    // root JWT the auth cost is ~450 µs and the WRITE dominates, so a read-based
+    // yardstick would understate the floor by ~5×.
     let probe = |q: &str| {
         let mut v = Vec::new();
         for i in 0..10 {

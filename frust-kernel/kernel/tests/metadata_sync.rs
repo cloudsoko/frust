@@ -1,7 +1,7 @@
-//! WO-005 module 3 close-out: the sliver's replacement, proven end-to-end.
-//! DocType metadata -> ResourceSpec -> the ported engine (diff, history,
-//! lock, gate) -> live schema — plus the ADR-008/009 additions and the
-//! WO-002 Finding-A assertion.
+//! Metadata sync, proven end-to-end. DocType metadata -> ResourceSpec -> the
+//! ported engine (diff, history, lock, gate) -> live schema — plus the
+//! embedded-child and migration additions and the changefeed-history
+//! assertion.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 
@@ -63,7 +63,7 @@ fn metadata_syncs_through_the_engine() {
     let applied2 = sync.sync(&db).expect("re-sync succeeds").applied;
     assert_eq!(applied2, 0, "unchanged metadata -> empty diff -> no-op");
 
-    // the lattice EVENT is live and enforces (WO-004 semantics, machine code)
+    // the lattice EVENT is live and enforces the docstatus transition rules (machine code)
     db.sql_root("CREATE sinv:1 SET title = 'x', docstatus = 1, status = 'Draft', owner = app_user:nobody;")
         .ok(); // owner type may refuse under root without app_user table; create minimally instead
     db.sql_root("DEFINE TABLE IF NOT EXISTS app_user SCHEMALESS;").unwrap();
@@ -79,15 +79,14 @@ fn metadata_syncs_through_the_engine() {
         "lattice EVENT enforces with machine code, got: {err}"
     );
 
-    // the embedded child field roundtrips nested data (ADR-008 embedded default)
+    // the embedded child field roundtrips nested data (embedded storage is the v0 default)
     db.sql_root("CREATE sinv:3 SET title = 'z', lines = [{ item: 'a', qty: 2 }, { item: 'b', qty: 1 }];")
         .unwrap();
     let lines = db.sql_root("SELECT VALUE lines FROM sinv:3;").unwrap();
     assert_eq!(lines.as_array().and_then(|a| a.first()).and_then(|l| l.as_array()).map(|l| l.len()), Some(2));
 }
 
-/// WO-002 Finding A, asserted in the engine's new home: repeated engine
-/// syncs (DEFINE ... OVERWRITE) preserve changefeed history.
+/// Repeated engine syncs (DEFINE ... OVERWRITE) preserve changefeed history.
 #[test]
 fn resync_preserves_changefeed_history() {
     let (db, cfg) = fresh("msync_feed");
@@ -118,8 +117,8 @@ fn feed_len(db: &Db) -> usize {
         .unwrap_or(0)
 }
 
-/// ADR-008: the child-storage flag is immutable/embedded-only in v0 —
-/// 'related' refuses loudly, naming the missing tooling.
+/// The child-storage flag is immutable/embedded-only in v0 — 'related'
+/// refuses loudly, naming the missing tooling.
 #[test]
 fn related_children_refused_in_v0() {
     let dt: DocTypeDef = serde_json::from_value(serde_json::json!({

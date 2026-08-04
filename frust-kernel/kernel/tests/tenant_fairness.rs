@@ -1,4 +1,4 @@
-//! WO-013: tenant fairness at the two doors (P-8.2), EXECUTED.
+//! Tenant fairness at the two doors (P-8.2), EXECUTED.
 //!
 //! The headline is criterion 3: the noisy-neighbour bound. Frappe's P-8.2
 //! pain was never that neighbours get noisy â€” it was that no bound existed
@@ -29,7 +29,7 @@ fn artifacts() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../wasm-spike/artifacts")
 }
 
-/// Latency-sensitive tests must not race each other (WO-012 finding).
+/// Latency-sensitive tests must not race each other.
 fn lock() -> std::sync::MutexGuard<'static, ()> {
     static G: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
     G.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -101,7 +101,7 @@ fn broker_door_throttles_loudly_and_locally() {
         }
         other => panic!("throttling must be typed, got {other:?}"),
     }
-    // the machine code reaches logs (WO-010 criterion 4 shape)
+    // the machine code reaches logs
     assert_eq!(
         frust_kernel::telemetry::error_code(&BrokerError::TenantThrottled { retry_after_ms: 7 }),
         "E_TENANT_THROTTLED"

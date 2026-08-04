@@ -2,8 +2,8 @@
 //! broker + boot discipline + ported sync engine + in-process hooks +
 //! worker loop + REST surface. Two-process deployment: `frust` + surreal.exe.
 //!
-//! **WO-040 Chunk B2: one process, N tenants.** Every tenant on the roster is
-//! booted (ADR-008 meta discipline is per database, so it runs per tenant),
+//! **One process, N tenants.** Every tenant on the roster is
+//! booted (meta migrations run per database, so this runs per tenant),
 //! gets its own `Broker`, `MetadataSync` and worker — all sharing **one**
 //! wasmtime engine — and the REST surface routes each request to its own
 //! tenant's context by splitting the bearer token.
@@ -60,7 +60,7 @@ fn main() {
 
     // The topology is chosen HERE, once, from validated config — and a config
     // this binary cannot honour refuses the boot rather than quietly serving a
-    // different one (ADR-008's fail-closed posture, applied to tenancy).
+    // different one (fail-closed posture, applied to tenancy).
     //
     // `FRUST_TENANTS` (comma-separated) is the roster; `FRUST_TENANT` is the
     // one-tenant spelling. Blank entries are refused rather than trimmed away:
@@ -105,15 +105,15 @@ fn main() {
         }
     }
 
-    // ── ONE engine for the whole process (WO-040 criterion 2) ──
+    // ── ONE engine for the whole process ──
     //
-    // WO-039's finding: owned hooks would have meant N wasmtime engines and N
+    // Owned hooks would have meant N wasmtime engines and N
     // epoch tickers, multiplying the 60 MB idle footprint by tenant count. The
     // script pool inside `WasmHooks` is already `(tenant, doctype)`-keyed, so
     // one engine serves every tenant.
     let artifacts = std::env::var("FRUST_ARTIFACTS")
         .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../wasm-spike/artifacts").to_string());
-    // WO-022 FINDING: the resident kernel must attach the per-DocType script
+    // The resident kernel must attach the per-DocType script
     // source, or `frust serve` runs only the engine's built-in default and an
     // app's server scripts never fire live. The script source is a `Db`, and
     // the pool keys by tenant, so it is scoped to the first target and the
@@ -123,7 +123,7 @@ fn main() {
         Err(e) => refuse("hooks_unavailable", e.to_string()),
     };
 
-    // ── boot every tenant: ADR-008's meta discipline is per DATABASE ──
+    // ── boot every tenant: meta discipline is per DATABASE ──
     let opts = BootOptions { accept_meta_migrations: accept, ..Default::default() };
     let mut brokers: Vec<Arc<Broker>> = Vec::with_capacity(targets.len());
     for target in &targets {
@@ -190,7 +190,7 @@ fn main() {
             resolver: &resolvers[i],
         });
 
-        // ADR-010 Tier-2: rollup workers from metadata declarations. An
+        // Rollup workers from metadata declarations. An
         // unknown handler name is a boot refusal — a declared rollup silently
         // not running would be staleness with no bound.
         for dt in frust_kernel::sync::load_doctypes(worker_db).unwrap_or_default() {
@@ -218,7 +218,7 @@ fn main() {
         }
     }
 
-    // ── WO-043: the mail worker, on its OWN thread ──
+    // ── the mail worker, on its OWN thread ──
     //
     // Its own thread, not the maintenance closure below: a blocking SMTP send
     // against a dead relay waits out its timeout, and doing that on the
@@ -228,7 +228,7 @@ fn main() {
     // the network wait, not the loop.
     //
     // The transport is resolved ONCE here and an unusable configuration REFUSES
-    // THE BOOT (ADR-008's fail-closed posture): a kernel that starts up and only
+    // THE BOOT (fail-closed posture): a kernel that starts up and only
     // reveals at the first invoice that `FRUST_MAIL` was misspelled has told the
     // operator nothing when it could have told them everything.
     let mailer = match frust_kernel::mail::Mailer::from_env() {
@@ -269,8 +269,8 @@ fn main() {
         realtime: Some(Arc::clone(&realtime)),
     };
     // `move`: the maintenance closure OWNS the resident workers, the rollup
-    // workers and the realtime handle, and runs on exactly one thread
-    // (WO-025). Owning rather than borrowing is what makes it `Send` without
+    // workers and the realtime handle, and runs on exactly one thread.
+    // Owning rather than borrowing is what makes it `Send` without
     // demanding `Sync` from state that is single-threaded by design.
     if let Err(e) = rest.serve(move || {
         for r in &residents {

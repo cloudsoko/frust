@@ -1,4 +1,4 @@
-//! WO-013 phase 1: tenant fairness at the doors (P-8.2).
+//! Tenant fairness at the doors.
 //!
 //! The kernel has exactly two doors — the broker (verbs) and the worker
 //! (jobs) — which is what makes fairness enforceable at all. This module is
@@ -8,9 +8,9 @@
 //! wait hint, never a silent slow: a tenant that is being shaped can see that
 //! it is being shaped (house style, applied to quotas).
 //!
-//! Policy lives in `_tenant_policy` — kernel-owned DDL like `app_user`
-//! (ADR-008 binary-authoritative). Absent policy = unlimited, so fairness is
-//! opt-in per deployment and the default posture is unchanged.
+//! Policy lives in `_tenant_policy` — kernel-owned DDL like `app_user`. Absent
+//! policy = unlimited, so fairness is opt-in per deployment and the default
+//! posture is unchanged.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};

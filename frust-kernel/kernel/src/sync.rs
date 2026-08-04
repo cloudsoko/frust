@@ -1,7 +1,7 @@
-//! WO-005 module 3: runtime DocType metadata -> ResourceSpec -> the ported
-//! migration engine. THE WO-002 SLIVER DIES HERE: schema DDL emission lives
-//! in the kernel, and application goes through frust-orm's diff/gate/apply
-//! pipeline with history, classification, and locking â€” not blind OVERWRITE.
+//! Runtime DocType metadata -> ResourceSpec -> the ported migration engine.
+//! Schema DDL emission lives in the kernel, and application goes through
+//! frust-orm's diff/gate/apply pipeline with history, classification, and
+//! locking — never a blind OVERWRITE.
 
 use frust_orm::resource::{Conn, ConnFactory, EngineCtx, ResourceSpec, StmtResult, StorageLocation, Tenancy};
 use frust_orm::{MigrationOptions, ObjectKind, ResourceMigrator, SchemaSnapshot};
@@ -20,23 +20,23 @@ pub struct DocTypeDef {
     pub name: String,
     #[serde(default)]
     pub app: Option<String>,
-    /// Submittable doctypes get `docstatus` + the lattice EVENT (ADR-009:
-    /// the DB tier's one resident).
+    /// Submittable doctypes get `docstatus` + the lattice EVENT (the DB
+    /// tier's one resident).
     #[serde(default)]
     pub submittable: bool,
     pub fields: Vec<FieldDef>,
-    /// ADR-010 materialized aggregates declared on the SOURCE doctype.
+    /// Materialized aggregates declared on the SOURCE doctype.
     #[serde(default)]
     pub aggregates: Vec<AggregateDef>,
 }
 
-/// One ADR-010 aggregate declaration. `kind: counter` (Tier 1) compiles to a
+/// One aggregate declaration. `kind: counter` (Tier 1) compiles to a
 /// DEFINE EVENT maintaining the rollup inside the write transaction;
 /// `kind: worker` (Tier 2) is maintained by a kernel `RollupWorker` (see
-/// `aggregates`) â€” here it only marks the rollup table write-closed and puts
+/// `aggregates`) — here it only marks the rollup table write-closed and puts
 /// INCLUDE ORIGINAL on the source changefeed. The rollup itself must be
 /// declared as its own DocType: rollups are records, readable through the
-/// contract like anything else (WO-007 criterion 5).
+/// contract like anything else.
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct AggregateDef {
     pub kind: String,
@@ -66,15 +66,14 @@ pub struct FieldDef {
     pub required: bool,
     #[serde(default)]
     pub options: Vec<String>,
-    /// ADR-008: children are embedded by default; the flag is IMMUTABLE after
-    /// first sync and "related" is not implemented until promotion tooling
-    /// exists (its own WO).
+    /// Children are embedded by default; the flag is IMMUTABLE after first
+    /// sync and "related" is not implemented until promotion tooling exists.
     #[serde(default)]
     pub child_storage: Option<String>,
-    /// WO-014 client-behaviour rules (ADR-001 Tier-1: metadata, not code).
-    /// The kernel stores and serves them; the Desk compiles them into
-    /// per-field signals. They are display/validation shaping ONLY â€” the
-    /// schema ASSERTs and hooks remain the enforcement floor (REQ-1.2.2).
+    /// Client-behaviour rules (Tier-1: metadata, not code). The kernel stores
+    /// and serves them; the Desk compiles them into per-field signals. They
+    /// are display/validation shaping ONLY — the schema ASSERTs and hooks
+    /// remain the enforcement floor.
     #[serde(default)]
     pub depends_on: Option<Rule>,
     #[serde(default)]
@@ -119,8 +118,8 @@ pub struct FetchFrom {
     pub field: String,
 }
 
-/// The docstatus lattice EVENT (ADR-009, WO-004-verified semantics):
-/// 0 -> 1 -> 2 only; no edits at 2; machine codes survive to clients.
+/// The docstatus lattice EVENT: 0 -> 1 -> 2 only; no edits at 2; machine
+/// codes survive to clients.
 fn lattice_event(table: &str) -> String {
     format!(
         "DEFINE EVENT OVERWRITE docstatus_lattice ON TABLE {table} WHEN $event = 'UPDATE' THEN {{ \
@@ -135,13 +134,13 @@ fn ident_ok(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// The Tier-1 counter EVENT (ADR-010). One algebra: a doc contributes its
-/// metrics to rollup[key] iff it counts (submittable: docstatus = 1; else:
-/// exists). Any mutation subtracts the before-contribution and adds the
-/// after-contribution â€” create, edit, key-move, delete, and the ERP-critical
-/// cancel path (docstatus 1 -> 2 = pure reversal) all fall out of the same
-/// two UPSERTs. EVENT-body writes bypass table permissions (probed on
-/// v3.2.0), so the rollup stays write-closed to record users.
+/// The Tier-1 counter EVENT. One algebra: a doc contributes its metrics to
+/// rollup[key] iff it counts (submittable: docstatus = 1; else: exists). Any
+/// mutation subtracts the before-contribution and adds the after-contribution
+/// — create, edit, key-move, delete, and the ERP-critical cancel path
+/// (docstatus 1 -> 2 = pure reversal) all fall out of the same two UPSERTs.
+/// EVENT-body writes bypass table permissions (probed on v3.2.0), so the
+/// rollup stays write-closed to record users.
 pub fn counter_event_ddl(dt: &DocTypeDef, agg: &AggregateDef) -> Result<String, BrokerError> {
     validate_agg(agg)?;
     let (t, r, k) = (&dt.name, &agg.rollup, &agg.key);
@@ -223,8 +222,8 @@ pub fn backfill_counter(db: &Db, dt: &DocTypeDef, agg: &AggregateDef) -> Result<
 
 /// DocType metadata -> the resource's desired DDL block. The kernel's
 /// derive-equivalent; consumed by the engine's snapshot/diff, never applied
-/// blindly. `rollup_targets` lists tables maintained by ADR-010 aggregates:
-/// those compile write-closed (EVENT/worker writes bypass permissions; record
+/// blindly. `rollup_targets` lists tables maintained by aggregates: those
+/// compile write-closed (EVENT/worker writes bypass permissions; record
 /// users can read via role, never tamper).
 pub fn doctype_ddl(dt: &DocTypeDef) -> Result<String, BrokerError> {
     doctype_ddl_in(dt, &[])
@@ -253,17 +252,16 @@ pub fn doctype_ddl_in(dt: &DocTypeDef, rollup_targets: &[String]) -> Result<Stri
     } else {
         "CHANGEFEED 7d"
     };
-    // WO-020: the row-WRITE policy (Finding B), ADR-decided as option 2.
+    // The row-WRITE policy.
     //
     // An owner may update their OWN row while it is a DRAFT; a manager may
     // update anytime. The `docstatus = 0` clause is what makes a submitted
-    // document immutable to its owner (closing the P-3.2 hole option 1 would
-    // have reopened) — and v3.2.0 evaluates update permissions against the
-    // AFTER-state (probed, WO-020), so this also means an owner cannot ADVANCE
-    // docstatus: only a manager, or the lattice, moves the lattice. That is
-    // the invariant split, not duplicated enforcement — the row permission
-    // gates WHO may write; the lattice EVENT gates WHICH docstatus moves are
-    // legal at all.
+    // document immutable to its owner — and v3.2.0 evaluates update
+    // permissions against the AFTER-state, so this also means an owner cannot
+    // ADVANCE docstatus: only a manager, or the lattice, moves the lattice.
+    // That is the invariant split, not duplicated enforcement — the row
+    // permission gates WHO may write; the lattice EVENT gates WHICH docstatus
+    // moves are legal at all.
     //
     // The clause is conditional on `docstatus` EXISTING: a non-submittable
     // doctype has no docstatus field, so gating on it would evaluate `NONE = 0`
@@ -275,12 +273,11 @@ pub fn doctype_ddl_in(dt: &DocTypeDef, rollup_targets: &[String]) -> Result<Stri
     };
     let mut stmts = vec![
         format!(
-            // WO-008 criterion 3: the owner clause is null-safe â€” NONE = NONE
-            // can never grant. A NULL-owner row (root/system-written) is
-            // invisible to record principals except via the manager role.
-            // Delete stays MANAGER-ONLY (WO-020 ruled update; delete is
-            // destructive and unruled — conservative default, revisit on
-            // evidence).
+            // The owner clause is null-safe — NONE = NONE can never grant. A
+            // NULL-owner row (root/system-written) is invisible to record
+            // principals except via the manager role. Delete stays
+            // MANAGER-ONLY: it is destructive and unruled — a conservative
+            // default, revisit on evidence.
             "DEFINE TABLE OVERWRITE {t} SCHEMAFULL \
              PERMISSIONS \
                FOR select WHERE (owner != NONE AND owner = $auth.id) OR $auth.role = 'manager' \
@@ -293,9 +290,9 @@ pub fn doctype_ddl_in(dt: &DocTypeDef, rollup_targets: &[String]) -> Result<Stri
         // NONE; record users still get stamped by the DEFAULT
         format!("DEFINE FIELD OVERWRITE owner ON {t} TYPE option<record<app_user>> DEFAULT $auth.id READONLY"),
         format!("DEFINE FIELD OVERWRITE status ON {t} TYPE string DEFAULT 'Draft'"),
-        // WO-008 criterion 2: a record session ($auth set) whose owner stamp
-        // resolved NULL means identity resolution failed quiet â€” refuse the
-        // write with a machine code instead of storing the hole.
+        // A record session ($auth set) whose owner stamp resolved NULL means
+        // identity resolution failed quiet — refuse the write with a machine
+        // code instead of storing the hole.
         format!(
             "DEFINE EVENT OVERWRITE identity_guard ON TABLE {t} WHEN $event = 'CREATE' THEN {{ \
              IF $auth != NONE AND $after.owner = NONE {{ THROW 'FRUST:E_IDENTITY_UNRESOLVED'; }}; \
@@ -324,7 +321,7 @@ pub fn doctype_ddl_in(dt: &DocTypeDef, rollup_targets: &[String]) -> Result<Stri
                     return Err(BrokerError::InvalidValue {
                         detail: format!(
                             "field {name}: child_storage 'related' requires promotion tooling \
-                             (ADR-008: flag is immutable, embedded-only in v0)"
+                             (the flag is immutable, embedded-only in v0)"
                         ),
                     })
                 }
@@ -345,10 +342,10 @@ pub fn doctype_ddl_in(dt: &DocTypeDef, rollup_targets: &[String]) -> Result<Stri
                 }
                 format!("TYPE option<record<{target}>>")
             }
-            // WO-016 / REQ-6.2.1: money is DECIMAL in the schema, not float.
-            // This was the root of the rollup finding â€” every Currency field
-            // was float-typed, so money became a float the moment it landed,
-            // rollups included (a rollup metric is a Currency field too).
+            // Money is DECIMAL in the schema, not float. If a Currency field
+            // were float-typed, money would become a float the moment it
+            // landed, rollups included (a rollup metric is a Currency field
+            // too).
             "Currency" if f.required => "TYPE decimal ASSERT $value >= 0dec".to_string(),
             "Currency" => "TYPE option<decimal> ASSERT $value = NONE OR $value >= 0dec".to_string(),
             "Select" if f.required && !f.options.is_empty() => {
@@ -487,8 +484,8 @@ pub struct MetadataSync {
 
 /// The workflow governing a DocType, or `None` when it is unmanaged.
 ///
-/// WO-018. Lives here for the same reason `load_server_script` does: this is
-/// metadata loading, and `workflow.rs` holds the judgement, not query text.
+/// Lives here for the same reason `load_server_script` does: this is metadata
+/// loading, and `workflow.rs` holds the judgement, not query text.
 pub fn load_workflow(
     db: &Db,
     doctype: &str,
@@ -505,17 +502,17 @@ pub fn load_workflow(
 ///
 /// Lives here rather than in `hooks.rs` because this is metadata loading, and
 /// `surql_monopoly` is right to refuse query text in the hook dispatcher — the
-/// guard caught this during WO-019 criterion 6, and moving the query was the
-/// correct answer rather than widening the allowlist. The doctype name is
-/// escaped on the way in like every other value in this module.
+/// guard flagged this, and moving the query here was the correct answer rather
+/// than widening the allowlist. The doctype name is escaped on the way in like
+/// every other value in this module.
 /// A DocType's whole validate chain plus the field envelope it may write into.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct HookPlan {
     /// Owner first, then extensions in install order.
     pub entries: Vec<ScriptEntry>,
     /// Field names the DocType declares. Carried alongside so an app writing a
-    /// field it never declared can be refused BY NAME (WO-050 criterion 6)
-    /// rather than silently stripped — the failure WO-049 tripped over.
+    /// field it never declared can be refused BY NAME rather than silently
+    /// stripped — the silent-strip failure this guards against.
     pub declared: Vec<String>,
 }
 
@@ -526,10 +523,10 @@ pub struct ScriptEntry {
     /// (no owning bundle), which is still "the owner" for ordering purposes.
     pub app: Option<String>,
     pub script: String,
-    /// WO-053: which lifecycle event this entry subscribes to. Stored (meta
-    /// v8), never inferred — an entry whose hook was lost must not silently
-    /// become a `validate`, so boot backfills it and the reader refuses what
-    /// it cannot name.
+    /// Which lifecycle event this entry subscribes to. Stored (meta v8), never
+    /// inferred — an entry whose hook was lost must not silently become a
+    /// `validate`, so boot backfills it and the reader refuses what it cannot
+    /// name.
     pub hook: crate::contract::HookClass,
     /// Is this the DocType's OWNER — the app named on the doctype record?
     ///
@@ -538,18 +535,18 @@ pub struct ScriptEntry {
     pub is_owner: bool,
 }
 
-/// **WO-050: every app's validate script for this DocType, OWNER FIRST.**
+/// **Every app's validate script for this DocType, OWNER FIRST.**
 ///
-/// The ordering is the guarantee, not a convenience. WO-049 measured what the
-/// single-slot shape did when a second app was allowed in: the extension
-/// *replaced* the owner's hook silently, `owner_ran = null`. So the owner's
-/// entry is placed first here, at the read, and the dispatcher runs the list in
-/// order — an extension can add to the chain and can reject a write, but it can
-/// never displace the invariant the DocType's own app declared.
+/// The ordering is the guarantee, not a convenience. With a single-slot shape,
+/// allowing a second app in meant the extension *replaced* the owner's hook
+/// silently, `owner_ran = null`. So the owner's entry is placed first here, at
+/// the read, and the dispatcher runs the list in order — an extension can add
+/// to the chain and can reject a write, but it can never displace the invariant
+/// the DocType's own app declared.
 ///
 /// Extensions follow in stored order, which is install order: deterministic,
 /// recorded, boring. Two extensions that disagree are refused at install
-/// (ADR-015 refuse-ambiguity), so ordering never has to arbitrate a conflict.
+/// (refuse-ambiguity), so ordering never has to arbitrate a conflict.
 pub fn load_server_scripts(db: &Db, doctype: &str) -> Result<HookPlan, BrokerError> {
     let n = crate::surql::escape_str(doctype);
     let rows = db.sql_root(&format!(
@@ -612,14 +609,14 @@ pub fn load_server_scripts(db: &Db, doctype: &str) -> Result<HookPlan, BrokerErr
     Ok(HookPlan { entries, declared })
 }
 
-/// WO-043: the notification rules watching one DocType.
+/// The notification rules watching one DocType.
 ///
 /// Lives here for the same reason `load_workflow` and `load_server_script` do —
 /// this is metadata loading, and `mail.rs` stays query-free so `surql_monopoly`
 /// covers it without the allowlist growing. A rule whose stored shape no longer
 /// deserialises is a HARD error, not a skip: silently dropping a notification
 /// that an operator can see in the table is precisely the "it never sent and
-/// nobody said why" failure this WO exists to design against.
+/// nobody said why" failure this path is designed against.
 pub fn load_notifications(
     db: &Db,
     doctype: &str,
@@ -635,8 +632,7 @@ pub fn load_notifications(
         // "no rules" mean the same thing here, so mapping THIS ONE error keeps
         // pre-v5 databases working — while every other failure stays loud,
         // because a write path that logged an error on every save would train
-        // operators to ignore errors (the WO-033 discipline). Same shape as the
-        // WO-040 `bodies()` precedent: map the one known condition, never
+        // operators to ignore errors. Map the one known condition, never
         // swallow the class.
         Err(BrokerError::Db { detail })
             if detail.contains(&format!("The table '{}' does not exist", crate::mail::NOTIFICATION_TABLE)) =>
@@ -700,7 +696,7 @@ fn history_fields(db: &Db) -> Result<HashMap<String, BTreeMap<String, String>>, 
     // Before the engine has ever run in this database the history table does
     // not exist, and SurrealDB makes that an error rather than an empty set.
     // No history means no orphans — matched on that ONE condition so a
-    // genuinely broken read still fails loudly (the WO-043 lesson).
+    // genuinely broken read still fails loudly.
     let rows = match db.sql_root(Q) {
         Ok(v) => v,
         Err(e) if format!("{e:?}").contains("'_framework_migration' does not exist") => {
@@ -734,7 +730,7 @@ fn history_fields(db: &Db) -> Result<HashMap<String, BTreeMap<String, String>>, 
     Ok(out)
 }
 
-/// **WO-052: an orphan column is CARRIED, not merely tolerated.**
+/// **An orphan column is CARRIED, not merely tolerated.**
 ///
 /// Appends every field the history holds and the metadata no longer declares
 /// back onto the resource's desired schema, verbatim. Returns the orphaned
@@ -854,7 +850,7 @@ impl MetadataSync {
         db: &Db,
         reclaim: Option<(&str, &str)>,
     ) -> Result<SyncOutcome, BrokerError> {
-        // WO-026: a schema sync can change any doctype — drop cached metadata.
+        // A schema sync can change any doctype — drop cached metadata.
         crate::broker::invalidate_meta(self.base.tenant_id().as_str());
         let doctypes = load_doctypes(db)?;
         // any doctype targeted by an aggregate compiles write-closed
@@ -898,19 +894,18 @@ impl MetadataSync {
         let report = migrator
             .migrate_tenant_with(&ctx, &specs, "default", opts)
             .map_err(|e| BrokerError::Db { detail: format!("metadata sync: {e}") })?;
-        // ── WO-052: orphan columns are drift, not a boot failure ──
+        // ── orphan columns are drift, not a boot failure ──
         //
         // A column present in the schema that no DocType declares is a
         // *legitimate* outcome: an extension uninstall detaches its field from
         // metadata and deliberately leaves the column and its data behind
-        // (WO-019's "metadata detaches, data remains", extended cross-app by
-        // WO-050). The migrator correctly classifies removing it as destructive
-        // and correctly refuses to apply that without acknowledgement.
+        // ("metadata detaches, data remains", including cross-app extensions).
+        // The migrator correctly classifies removing it as destructive and
+        // correctly refuses to apply that without acknowledgement.
         //
         // What was wrong was the CONSEQUENCE. Boot treated the refusal as a
         // fatal error, so a data-safety guard inverted into an availability
         // outage: the kernel would not start, and `BootOptions` had no remedy.
-        // WO-051's gate found a store in exactly that state.
         //
         // So: a refusal to DROP is separated from every other error. It is
         // reported as a named orphan and applied to nothing. Every other error

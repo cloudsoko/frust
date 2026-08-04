@@ -1,4 +1,4 @@
-//! WO-005 exit criterion 3 / REQ-6.1.2: performance floors as CI GATES.
+//! REQ-6.1.2: performance floors as CI GATES.
 //! These are failing tests, not log numbers â€” a regression past the budget
 //! turns the build red. Warm-path medians on the reference machine; generous
 //! enough to absorb machine variance, tight enough to catch a real
@@ -18,7 +18,7 @@ fn artifacts() -> &'static str {
 }
 
 /// REQ-6.1.1 warm submit budget. 25 ms is the spec floor and the RELEASE
-/// gate â€” WO-006 measured 24 ms warm median in release against a 1 M-row
+/// gate — a measured 24 ms warm median in release against a 1 M-row
 /// table, so release builds are held to the floor itself. Debug builds gate
 /// at 60 ms (JIT + unoptimized wasmtime inflate the same path). Adjust ONLY
 /// with a recorded ruling â€” this number is a contract (REQ-6.1.2).
@@ -68,7 +68,7 @@ fn median(mut v: Vec<u128>) -> u128 {
 /// Microseconds, not milliseconds: `as_millis()` truncates every sample to a
 /// whole millisecond, and the realtime gate below adjudicates a 2 ms allowance
 /// on a ~27 ms base. A Â±1 ms-quantized instrument cannot resolve that, and it
-/// was reading noise as tax (WO-017 item 2 escalation: five runs read
+/// was reading noise as tax (an earlier instrument read five runs at
 /// 3/3/0/2/6 ms, one of them measuring the loaded case FASTER than its own
 /// baseline). Ruling: fix the instrument, move neither published number.
 ///
@@ -139,8 +139,8 @@ fn gate_submit_latency() {
     assert!(m <= SUBMIT_GATE_MS, "REQ-6.1.2 REGRESSION: submit median {m} ms > gate {SUBMIT_GATE_MS} ms");
 }
 
-/// GATE: the realtime writer tax, priced into CI rather than around it
-/// (WO-012). Parks the FULL per-table subscription budget on the written
+/// GATE: the realtime writer tax, priced into CI rather than around it.
+/// Parks the FULL per-table subscription budget on the written
 /// table and asserts the DELTA over the same run's unsubscribed baseline
 /// stays inside `LIVE_TAX_BUDGET_MS`.
 ///

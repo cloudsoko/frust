@@ -1,5 +1,4 @@
-//! **The tenancy seam** — WO-040 Chunk A, under [[ADR-003 Tenancy Model]] as
-//! amended.
+//! **The tenancy seam.**
 //!
 //! The framing this module exists to make true in code:
 //!
@@ -7,8 +6,7 @@
 //! > *resolution* is one operation that strategy performs.
 //!
 //! One binary serves every topology; which one is chosen at startup by
-//! validated config (`FRUST_TENANCY`). Chunk A builds the seam and migrates
-//! today's database-per-tenant behaviour onto it — **no new topology yet**.
+//! validated config (`FRUST_TENANCY`).
 //!
 //! ## The monopoly
 //!
@@ -138,7 +136,7 @@ impl ResolvedTenant {
     }
 
     /// The deployment environment this tenant's data sits in, when the
-    /// topology separates them (Chunk C's `namespace-per-tenant-env`).
+    /// topology separates them (`namespace-per-tenant-env`).
     pub fn environment(&self) -> Option<&str> {
         self.environment.as_deref()
     }
@@ -223,9 +221,9 @@ impl std::fmt::Display for DeploymentEnvironment {
 }
 
 /// Where a topology defines its record-access method (and therefore where the
-/// signing key lives — ADR-013's keyguard follows this).
+/// signing key lives — the keyguard follows this).
 ///
-/// ## Probe result (WO-040 Chunk C, SurrealDB 3.2.0)
+/// ## Probe result (SurrealDB 3.2.0)
 ///
 /// **`DEFINE ACCESS ... ON NAMESPACE TYPE RECORD` is refused (HTTP 400).**
 /// `TYPE JWT` at namespace level is accepted, and `TYPE RECORD ON DATABASE`
@@ -253,10 +251,9 @@ pub enum AccessPlacement {
 
 /// What a restore of *this tenant alone* has to cover.
 ///
-/// WO-027 measured the cost of getting this wrong (restore-one = restore-all)
-/// and WO-039 proved per-database export works; this is that knowledge given
-/// a type, so Chunk D's ops path reads it off the strategy instead of
-/// assuming a shape.
+/// Restoring the wrong unit is restore-one = restore-all; per-database export
+/// avoids it. This is that knowledge given a type, so the ops path reads it
+/// off the strategy instead of assuming a shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupPlan {
     pub namespace: NamespaceName,
@@ -268,7 +265,7 @@ pub struct BackupPlan {
     /// the shape above: under `single` the unit *is* a database and the
     /// answer is still **no**, because that database holds every tenant.
     /// Inferring isolation from "a database is named" would report
-    /// restore-one where WO-027 measured restore-all.
+    /// restore-one where the real answer is restore-all.
     pub tenant_isolated: bool,
 }
 
@@ -299,7 +296,7 @@ pub struct ProvisioningPlan {
 /// here, so adding a topology is adding an impl — not hunting for the places
 /// that assumed the old one.
 ///
-/// **Two deviations from the shape sketched in ADR-003, both deliberate and
+/// **Two deviations from the originally sketched shape, both deliberate and
 /// both flagged rather than quietly taken:**
 ///
 /// 1. `resolve` takes a canonical [`TenantId`] and returns a
@@ -333,8 +330,8 @@ pub trait TenancyStrategy: Send + Sync {
 }
 
 /// **Today's topology**: one SurrealDB database per tenant, all under one
-/// namespace. This is what WO-039 found the kernel had already been modelling
-/// (`Db::tenant()` returned `cfg.db`); Chunk A moves it behind the seam
+/// namespace. This is the model the kernel had already been following
+/// (`Db::tenant()` returned `cfg.db`); the seam carries it behind one door
 /// without changing a single thing it does.
 struct DatabasePerTenant {
     namespace: NamespaceName,
@@ -356,8 +353,8 @@ impl TenancyStrategy for DatabasePerTenant {
     }
 
     fn access_placement(&self) -> AccessPlacement {
-        // Per-tenant database => per-tenant signing key. WO-039 proved this
-        // is what makes isolation DB-enforced rather than kernel-enforced.
+        // Per-tenant database => per-tenant signing key. This is what makes
+        // isolation DB-enforced rather than kernel-enforced.
         AccessPlacement::Database
     }
 
@@ -365,9 +362,9 @@ impl TenancyStrategy for DatabasePerTenant {
         BackupPlan {
             namespace: target.namespace.clone(),
             database: Some(target.database.clone()),
-            // WO-039 measured this: `surreal export --db <tenant>` restores
-            // one tenant and leaves the others, including writes made after
-            // the export. This is the P-8.1 unlock, as data.
+            // `surreal export --db <tenant>` restores one tenant and leaves
+            // the others, including writes made after the export — per-tenant
+            // restore, as data.
             tenant_isolated: true,
         }
     }
@@ -432,9 +429,9 @@ impl TenancyStrategy for SingleTenant {
         BackupPlan {
             namespace: target.namespace.clone(),
             database: Some(target.database.clone()),
-            // **restore-one is restore-all** — WO-027's finding, which is the
-            // whole reason database-per-tenant was built. An operator asking
-            // this strategy for a single-tenant restore must be told no.
+            // **restore-one is restore-all** — which is the whole reason
+            // database-per-tenant was built. An operator asking this strategy
+            // for a single-tenant restore must be told no.
             tenant_isolated: false,
         }
     }
@@ -779,14 +776,12 @@ impl Tenancy {
 
     /// The one registered tenant.
     ///
-    /// **The standing limit, and it is not a chunk boundary — it is a gap.**
+    /// **A standing limit — a gap, not a boundary.**
     /// The resident kernel serves exactly one tenant per process, so `frust
-    /// serve` resolves once at boot rather than per request. Chunk A named
-    /// this; Chunk B removed the *cache* coupling but not this one, and the
-    /// rescoped Chunk C is namespace topologies. **No chunk currently owns
-    /// per-request routing.** `main` refuses a roster larger than one instead
-    /// of serving a subset, so the limit is enforced rather than assumed —
-    /// but it is still a limit, and it wants sequencing.
+    /// serve` resolves once at boot rather than per request. Nothing currently
+    /// owns per-request routing. `main` refuses a roster larger than one
+    /// instead of serving a subset, so the limit is enforced rather than
+    /// assumed — but it is still a limit, and it wants sequencing.
     pub fn sole(&self) -> Result<ResolvedTenant, BrokerError> {
         let mut it = self.registry.values();
         match (it.next(), it.next()) {
@@ -976,7 +971,7 @@ mod tests {
         assert!(t.strategy().backup_plan(&a).is_tenant_isolated());
     }
 
-    /// The probe that shaped Chunk C, held as an assertion: no topology may
+    /// The probe that shaped this rule, held as an assertion: no topology may
     /// ask for an access placement SurrealDB 3.2.0 cannot host.
     #[test]
     fn no_topology_asks_for_an_unsupported_access_placement() {
@@ -1041,9 +1036,9 @@ mod tests {
     }
 
     /// The operational consequence of that difference, which is the reason
-    /// the difference matters: WO-027 measured restore-one = restore-all
-    /// under one shared database, and WO-039 measured restore-one under
-    /// database-per-tenant. The strategies must say so.
+    /// the difference matters: restore-one = restore-all under one shared
+    /// database, and restore-one under database-per-tenant. The strategies
+    /// must say so.
     #[test]
     fn only_database_per_tenant_promises_a_tenant_isolated_restore() {
         let shared = build(cfg("single", Some("everyone"), &["acme"])).unwrap();
@@ -1091,9 +1086,9 @@ mod tests {
         assert!(tenancy(&["a", "b"]).unwrap().sole().is_err());
     }
 
-    /// The operational half of the seam. WO-039 proved per-database export
-    /// gives restore-one; this is that fact readable off the strategy so
-    /// Chunk D's ops path does not have to assume a shape.
+    /// The operational half of the seam. Per-database export gives
+    /// restore-one; this is that fact readable off the strategy so the ops
+    /// path does not have to assume a shape.
     #[test]
     fn database_per_tenant_plans_a_tenant_isolated_restore() {
         let t = tenancy(&["acme"]).unwrap();

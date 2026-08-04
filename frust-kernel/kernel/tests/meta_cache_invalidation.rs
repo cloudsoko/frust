@@ -1,11 +1,10 @@
-//! WO-026 criterion 2 â€” **invalidation is the work, not the caching.**
+//! **Invalidation is the work, not the caching.**
 //!
 //! The DocType metadata cache removes a DB round trip from every request. A
-//! cache that serves stale metadata after a sync or an app update would be the
-//! WO-020 Finding-A silent-wrong class reborn â€” and it would do it in the path
-//! that decides field permissions. So these tests exist to prove the cache
-//! CANNOT go stale through any kernel-mediated mutation, and they are the gate
-//! on P-1.2 re-scoring to killed.
+//! cache that serves stale metadata after a sync or an app update would be a
+//! silent-wrong bug — and it would do it in the path that decides field
+//! permissions. So these tests exist to prove the cache CANNOT go stale
+//! through any kernel-mediated mutation.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 
