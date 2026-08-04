@@ -1,8 +1,8 @@
-﻿//! Observability (REQ-6.4). Structured JSON-lines logs with
+﻿//! Observability. Structured JSON-lines logs with
 //! end-to-end trace IDs, an in-process metrics registry rendered as
 //! Prometheus text, and per-tenant attribution â€” all in the kernel's own
 //! output. No collector, no sidecar, no new crates: the two-process
-//! deployment stays two processes (P-2.3).
+//! deployment stays two processes.
 //!
 //! Trace context is THREAD-LOCAL: the kernel is sync and each request/job
 //! runs to completion on one thread (tiny_http accept loop, worker tick),
@@ -186,7 +186,7 @@ pub fn emit(level: Level, event: &str, fields: &[(&str, serde_json::Value)]) {
 }
 
 /// Extracts the machine code from an error's display form, so `FRUST:E_*`
-/// and friends stay grep-able fields (REQ-6.4 criterion 4: codes survive).
+/// and friends stay grep-able fields (machine codes survive as fields).
 pub fn error_code(err: &crate::contract::BrokerError) -> String {
     use crate::contract::BrokerError as E;
     let detail = format!("{err:?}");

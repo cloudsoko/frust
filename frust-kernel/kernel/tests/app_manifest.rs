@@ -1,5 +1,5 @@
 //! The App manifest — one file format, validated before
-//! anything applies, with REQ-6.6's gate discipline extending to bundles.
+//! anything applies, with the migration gate discipline extending to bundles.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 
@@ -144,7 +144,7 @@ fn an_invalid_bundle_never_reaches_the_migrator() {
     );
 }
 
-/// REQ-6.6.1 becomes UX: the plan shows the DDL that WOULD run, takes no lock,
+/// The migration dry-run becomes UX: the plan shows the DDL that WOULD run, takes no lock,
 /// and leaves the schema untouched. Crucially it is the sync engine's own
 /// dry-run — not a second migration path built for bundles.
 #[test]

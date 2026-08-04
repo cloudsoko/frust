@@ -1,4 +1,4 @@
-//! WO-024 load driver — pure measurement, no optimization.
+//! Load driver — pure measurement, no optimization.
 //!
 //! Drives `frust serve`'s real submit path (login once, then N concurrent
 //! clients POSTing /write) and reports throughput + p50/p95/p99. Blocking

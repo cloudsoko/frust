@@ -175,7 +175,7 @@ fn update_advances_the_version_and_adds_the_field() {
     assert_eq!(apps["apps"][0]["version"], serde_json::json!("1.1.0"));
 }
 
-/// REQ-6.6.2 doing bundle duty: a destructive update is refused without an
+/// The prod-strictness gate doing bundle duty: a destructive update is refused without an
 /// explicit acknowledgement, and the refusal NAMES what it would destroy.
 #[test]
 fn a_destructive_update_is_refused_until_acknowledged() {

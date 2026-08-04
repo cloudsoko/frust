@@ -1,9 +1,10 @@
-//! WO-040 criterion 4 — THE FOOTPRINT GUARD.
+//! Tenancy footprint guard.
 //!
-//! P-1.4 ("60 MB idle", killed by WO-024) is the verdict this tenancy build is
-//! most likely to undo, which is why WO-039 probed first. This holds N tenant
-//! brokers in ONE process and reports resident memory, so the claim "per-tenant
-//! cost is kilobytes, not a wasm engine" is measured rather than argued.
+//! The idle-memory floor (~60 MB idle) is the verdict this tenancy build is
+//! most likely to undo, which is why footprint was probed first. This holds N
+//! tenant brokers in ONE process and reports resident memory, so the claim
+//! "per-tenant cost is kilobytes, not a wasm engine" is measured rather than
+//! argued.
 //!
 //! The whole point of `Broker::with_shared_hooks` is on trial here: every tenant
 //! shares ONE `Arc<WasmHooks>` — one wasmtime engine, one epoch ticker, one
@@ -44,7 +45,7 @@ fn main() {
 
     let baseline = rss_bytes();
 
-    // ONE engine for the whole process — the WO-040 criterion-2 change under test.
+    // ONE engine for the whole process — the shared-hooks change under test.
     let hooks: Arc<dyn frust_kernel::broker::HookDispatch> =
         Arc::from(Box::new(WasmHooks::load(&artifacts).expect("load hooks")) as Box<dyn frust_kernel::broker::HookDispatch>);
     let after_engine = rss_bytes();

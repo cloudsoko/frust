@@ -13,9 +13,9 @@
 //!
 //! 2. **The gate discipline is reused literally, not analogously.** A bundle's
 //!    DocTypes become `ResourceSpec`s and go through the *same*
-//!    `ResourceMigrator` with the *same* `MigrationOptions` that REQ-6.6
-//!    already governs. Dry-run-before-install is not a new feature; it is
-//!    REQ-6.6.1 machinery surfaced as UX. There is no second migration path,
+//!    `ResourceMigrator` with the *same* `MigrationOptions` that the migration
+//!    gate already governs. Dry-run-before-install is not a new feature; it is
+//!    that gate's machinery surfaced as UX. There is no second migration path,
 //!    for the same reason there is no second permission compiler.
 //!
 //! Like `routes.rs`, this module is **absent from `surql_monopoly`'s
@@ -149,7 +149,7 @@ pub struct InstallPlan {
 impl InstallPlan {
     /// Destructive statements the schema half would perform, flattened for
     /// display. Non-empty means the install needs an explicit acknowledgment
-    /// under prod strictness (REQ-6.6.2).
+    /// under prod strictness.
     pub fn destructive(&self) -> Vec<String> {
         self.schema.planned.iter().flat_map(|p| p.destructive.clone()).collect()
     }
@@ -361,7 +361,7 @@ impl Manifest {
         errs
     }
 
-    /// REQ-6.6.1 as UX: what installing this bundle *would* do, computed
+    /// The migration dry-run as UX: what installing this bundle *would* do, computed
     /// without taking a lock or touching schema.
     ///
     /// This is the sync engine's own dry-run, not a reimplementation — the

@@ -1,4 +1,4 @@
-//! The workflow engine (REQ-4.1.2).
+//! The workflow engine.
 //!
 //! Multi-step, role-gated approval flows as **runtime metadata**. This module
 //! is the *judge* half of the two-layer approval design:

@@ -35,7 +35,7 @@ fn fuel_metering_overhead_on_the_hook_path() {
     let p95 = samples[samples.len() * 95 / 100] as f64 / 1000.0;
     println!(
         "hook chain (plugin + script) WITH fuel metering: p50 {p50:.1} us, p95 {p95:.1} us\n\
-         (baseline without metering: ~55.7 us warm; gate REQ-6.1.1: 1000 us)"
+         (baseline without metering: ~55.7 us warm; script-hook floor: 1000 us)"
     );
     assert!(p50 < 1000.0, "hook chain stays inside the 1 ms script-hook floor: {p50:.1} us");
 }

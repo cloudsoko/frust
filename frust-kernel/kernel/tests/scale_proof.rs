@@ -115,7 +115,7 @@ fn median(mut v: Vec<u128>) -> u128 {
     v[v.len() / 2]
 }
 
-/// Warm submit medians through the broker (the REQ-6.1.1 path: hooks both
+/// Warm submit medians through the broker (the warm-path: hooks both
 /// classes + authenticated write under the caller's session).
 fn submit_median(b: &Broker, caller: &Caller, n: usize) -> u128 {
     let doc = vec![
@@ -207,7 +207,7 @@ fn scale_proof_1m() {
     println!("\n-- submit floor (broker path, warm median of 40) --");
     let pre_cf_bytes = store_bytes();
     let m_plain = submit_median(&broker, &caller, 40);
-    println!("submit warm median, changefeed OFF: {m_plain} ms  (REQ-6.1.1 floor: 25 ms)");
+    println!("submit warm median, changefeed OFF: {m_plain} ms  (warm-path floor: 25 ms)");
 
     // ── Criterion 5: changefeed cost — latency delta + storage growth ──
     println!("\n-- changefeed on: latency delta + storage --");

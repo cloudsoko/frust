@@ -1,4 +1,4 @@
-//! REQ-6.1.2: performance floors as CI GATES.
+//! Performance floors as CI GATES.
 //! These are failing tests, not log numbers â€” a regression past the budget
 //! turns the build red. Warm-path medians on the reference machine; generous
 //! enough to absorb machine variance, tight enough to catch a real
@@ -17,11 +17,11 @@ fn artifacts() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../wasm-spike/artifacts")
 }
 
-/// REQ-6.1.1 warm submit budget. 25 ms is the spec floor and the RELEASE
+/// Warm submit budget. 25 ms is the spec floor and the RELEASE
 /// gate — a measured 24 ms warm median in release against a 1 M-row
 /// table, so release builds are held to the floor itself. Debug builds gate
 /// at 60 ms (JIT + unoptimized wasmtime inflate the same path). Adjust ONLY
-/// with a recorded ruling â€” this number is a contract (REQ-6.1.2).
+/// with a recorded ruling â€” this number is a contract.
 const SUBMIT_GATE_MS: u128 = if cfg!(debug_assertions) { 60 } else { 25 };
 const HOOK_GATE_MS: u128 = 30;
 
@@ -122,13 +122,13 @@ fn submit_batch_us(
 }
 
 /// Warm submit median in whole milliseconds â€” the shape the absolute floor
-/// gates are written against (REQ-6.1.1).
+/// gates are written against.
 fn submit_median_with_subs(cfg: &ResolvedTenant, db: &Db, n: usize) -> u128 {
     median(submit_batch_us(&broker(cfg), cfg, db, n, 20, 40)) / 1000
 }
 
 /// GATE: warm submit (form -> hooks -> authenticated write) median under
-/// budget. REQ-6.1.1's contract, measured exactly as specified â€” the write
+/// budget. The warm-path contract, measured exactly as specified â€” the write
 /// path alone, no optional features loaded into it.
 #[test]
 fn gate_submit_latency() {
@@ -136,7 +136,7 @@ fn gate_submit_latency() {
     let (db, cfg) = setup("perf_gate");
     let m = submit_median_with_subs(&cfg, &db, 0);
     println!("submit warm median: {m} ms (gate {SUBMIT_GATE_MS} ms)");
-    assert!(m <= SUBMIT_GATE_MS, "REQ-6.1.2 REGRESSION: submit median {m} ms > gate {SUBMIT_GATE_MS} ms");
+    assert!(m <= SUBMIT_GATE_MS, "PERF REGRESSION: submit median {m} ms > gate {SUBMIT_GATE_MS} ms");
 }
 
 /// GATE: the realtime writer tax, priced into CI rather than around it.

@@ -1,6 +1,6 @@
-//! Tenant fairness at the two doors (P-8.2), EXECUTED.
+//! Tenant fairness at the two doors (noisy-neighbour bound), EXECUTED.
 //!
-//! The headline is criterion 3: the noisy-neighbour bound. Frappe's P-8.2
+//! The headline is criterion 3: the noisy-neighbour bound. Frappe's fairness
 //! pain was never that neighbours get noisy â€” it was that no bound existed
 //! to state. This test states one and holds it.
 //!

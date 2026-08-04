@@ -144,7 +144,7 @@ impl Rest {
     /// exactly right per worker.)
     ///
     /// Fixed-size pool, sized to cores and capped: memory must stay in the
-    /// tens-of-MB class (P-1.4), so thread-per-request is not an option.
+    /// tens-of-MB class, so thread-per-request is not an option.
     /// `on_tick` is `Send` but NOT `Sync`: it is MOVED onto the one
     /// maintenance thread and never shared, which is what lets it own
     /// non-`Sync` state (the rollup workers' `RefCell` caches) safely.
@@ -294,7 +294,7 @@ impl Rest {
             return;
         }
 
-        // metrics: Prometheus text, no auth, no shell (REQ-6.4.2)
+        // metrics: Prometheus text, no auth, no shell
         if url.split('?').next() == Some("/metrics") {
             let text = crate::telemetry::render_prometheus();
             let response = tiny_http::Response::from_string(text)
@@ -582,7 +582,7 @@ impl Rest {
             //
             // An orphan column belongs to no manifest, so no app update can
             // reclaim it — there is nothing to re-publish. It gets its own
-            // named act instead, with the REQ-6.6.2 acknowledgment shape: the
+            // named act instead, with the destructive-change acknowledgment shape: the
             // refusal names the column AND how many rows still hold data in it,
             // because "drop a column" and "drop 4,000 values" are the same
             // action described at two very different levels of honesty.
@@ -692,7 +692,7 @@ impl Rest {
                 Ok(serde_json::json!({ "outbox": rows }))
             }
 
-            // ── workflow (REQ-4.1.2) ──
+            // ── workflow ──
             //
             // Any authenticated caller: the workflow itself decides what this
             // role may do, which is the whole point of role-gated transitions.
@@ -733,7 +733,7 @@ impl Rest {
                 Ok(serde_json::json!({ "apps": rows }))
             }
 
-            // REQ-6.6.1 as UX: the preview an operator sees BEFORE installing.
+            // The migration dry-run as UX: the preview an operator sees BEFORE installing.
             ["app", "plan"] => {
                 require_manager(caller)?;
                 let manifest = self.manifest_from(&json)?;
@@ -1153,7 +1153,7 @@ impl Rest {
         Ok(serde_json::json!({ "app": app, "path": path, "status": status, "body": out }))
     }
 
-    /// **Uninstall, stated honestly.** (REQ-6.6.3.)
+    /// **Uninstall, stated honestly.**
     ///
     /// Metadata detaches. Data remains. The manifest that described the
     /// metadata is itself removed â€” which makes uninstall **the one operation
@@ -1165,7 +1165,7 @@ impl Rest {
     /// in the manifest), and the registry row.
     ///
     /// What it does NOT remove: **the tables and every row in them.** An app's
-    /// data outlives the app, deliberately. REQ-6.6.3 draws the line â€” schema
+    /// data outlives the app, deliberately. The uninstall contract draws the line â€” schema
     /// revert is not data recovery â€” and the same line holds here: this is not
     /// a delete button wearing a lifecycle costume. Dropping tables is a
     /// separate, destructive, explicitly-acknowledged act, and Frappe's
@@ -1256,7 +1256,7 @@ impl Rest {
     /// Install or update: **validate â†’ plan â†’ gate â†’ apply â†’ record**, in that
     /// order, and no step runs if an earlier one refused.
     ///
-    /// The gate is REQ-6.6.2 doing bundle duty: a destructive change is refused
+    /// The gate is the prod-strictness rule doing bundle duty: a destructive change is refused
     /// without an explicit acknowledgement, and the refusal *names what it
     /// would have destroyed* â€” a gate that only says "no" teaches operators to
     /// pass the flag reflexively.
@@ -1331,7 +1331,7 @@ impl Rest {
         // Frappe or merely adds a customs post: install-time gating catches the
         // install and says nothing about the owner's NEXT release. An extension
         // reads `Y.z`; owner v2 removes it; both apps' CI is green; the
-        // extension dies quietly. A silently-disabled extension is P-2.2 reborn,
+        // extension dies quietly. A silently-disabled extension is the silent-override pain reborn,
         // so the refusal names the casualty and its app.
         //
         // This seam already exists with no new storage: every
@@ -1428,7 +1428,7 @@ impl Rest {
             // without this, publishing owner v2 would silently delete every
             // extension's fields and every extension's link in the validate
             // chain. Silent loss of another app's declared surface is the
-            // P-2.2 shape again, one path over.
+            // the silent-loss shape again, one path over.
             let prior = ctx.broker.db.sql_root(&format!(
                 "SELECT fields, server_script FROM doctype WHERE name = '{n}' LIMIT 1;"
             ))?;
