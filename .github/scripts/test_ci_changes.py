@@ -156,7 +156,11 @@ class LiveShardTests(unittest.TestCase):
         shards = [self.listed_targets(index, 4) for index in range(4)]
         selected = [target for shard in shards for target in shard]
 
-        self.assertEqual([len(shard) for shard in shards], [12, 12, 11, 11])
+        # Shards must stay balanced (a fixed size list here would break on
+        # every added test binary; coverage and uniqueness are asserted below).
+        sizes = [len(shard) for shard in shards]
+        self.assertLessEqual(max(sizes) - min(sizes), 1, sizes)
+        self.assertGreater(min(sizes), 0, sizes)
         self.assertEqual(len(selected), len(set(selected)))
         self.assertEqual(sorted(selected), sorted(complete))
 
