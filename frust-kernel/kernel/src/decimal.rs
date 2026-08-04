@@ -1,4 +1,4 @@
-//! WO-016: exact decimal accumulation for the aggregates layer (REQ-6.2.1).
+//! Exact decimal accumulation for the aggregates layer (REQ-6.2.1).
 //!
 //! Rollup deltas are folded per batch in the kernel before being written, so
 //! that fold has to be exact — an `f64` there reintroduces the very error the
@@ -6,8 +6,8 @@
 //! a scaled `i128` mantissa plus a scale, which is all money needs and costs
 //! no dependency.
 //!
-//! WO-021 (REQ-6.2.2): multiply and divide, with rounding that is NEVER
-//! implicit. The WO-016 restraint is now spec-decided:
+//! REQ-6.2.2: multiply and divide, with rounding that is NEVER
+//! implicit. The earlier exact-only restraint is now spec-decided:
 //!
 //! - `mul` is **exact** — the product scale is the sum of the input scales, no
 //!   rounding happens, and the caller must `round` explicitly. A `*` that
@@ -40,7 +40,7 @@ pub enum Mode {
 
 /// Money arithmetic can fail, and when it does it fails TYPED — never a panic,
 /// never a silent wrap. Money math that wraps is worse than money math that
-/// stops (REQ-6.2.2 / the WO-021 overflow guard).
+/// stops (REQ-6.2.2, the overflow guard).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MoneyError {
     /// A product or scaled numerator exceeded the `i128` mantissa range.
@@ -330,7 +330,7 @@ mod tests {
         assert!(d("-5") < d("-4.999"));
     }
 
-    // ── WO-021: multiply, divide, round ──────────────────────────────────
+    // ── multiply, divide, round ──────────────────────────────────
 
     /// Criterion 1: `mul` is EXACT — the scale grows, nothing is rounded.
     #[test]
@@ -345,7 +345,7 @@ mod tests {
     }
 
     /// Criterion 2: half-even is REAL, and proven AGAINST half-up — the
-    /// control that proves the test bites (the WO-016 pattern). `2.125` is the
+    /// control that proves the test bites. `2.125` is the
     /// discriminating value: banker's rounds to the even 2.12, commercial to
     /// 2.13.
     #[test]

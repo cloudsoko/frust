@@ -1,6 +1,6 @@
-﻿//! WO-005 module 4: the in-process dispatcher over the dynamic-doc envelope
-//! (ADR-006 edge 3) â€” things the toy {id,status,total} shape could not carry.
-//! Direct against WasmHooks; no DB needed.
+﻿//! In-process dispatcher over the dynamic-doc envelope — things the toy
+//! {id,status,total} shape could not carry. Direct against WasmHooks; no DB
+//! needed.
 
 use frust_kernel::broker::HookDispatch;
 use frust_kernel::contract::{BrokerError, Value};
@@ -38,9 +38,9 @@ fn dynamic_doc_roundtrips_all_fields() {
     assert_eq!(get(&out, "notes"), Some(&Value::Text("carry me through untouched".into())));
 }
 
-/// Decimal is first-class and never becomes a float crossing the boundary
-/// (ADR-006 edge 3 money guarantee) â€” even through the JS script engine,
-/// which re-imposes the decimal kind on the way out.
+/// Decimal is first-class and never becomes a float crossing the boundary (the
+/// money guarantee) — even through the JS script engine, which re-imposes the
+/// decimal kind on the way out.
 #[test]
 fn decimal_stays_decimal_across_the_boundary() {
     let h = hooks();

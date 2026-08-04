@@ -1,17 +1,16 @@
-//! Module 5: the job worker (ADR-009 Half 2, verbatim).
+//! The job worker.
 //!
 //! The loop: replay-from-cursor (versionstamp changefeed) -> LIVE tail ->
 //! advance cursor. LIVE is a latency optimization over a changefeed-backed
-//! log (WO-004 verdict: viable-with-bridge). The atomic conditional claim is
-//! the ONLY serialization point â€” duplicate delivery is harmless by
-//! construction (ADR-009 ruling #1). Cold start beyond retention = rescan
-//! `status='queued'`, jobs are records (ADR-009 ruling #2).
+//! log (proven viable with a bridge). The atomic conditional claim is
+//! the ONLY serialization point — duplicate delivery is harmless by
+//! construction. Cold start beyond retention = rescan
+//! `status='queued'`; jobs are records.
 //!
 //! This module speaks HTTP `/sql` for claim/run (the wire-protocol transport
-//! contract); the LIVE tail is WO-004's proven WS path, wired in when the
-//! worker runs as a daemon. For the kernel v0 milestone the executed,
-//! test-covered core is claim + run + retention rescan â€” the two exit
-//! criteria (6, 7) and criterion 5's authority-re-derivation.
+//! contract); the LIVE tail is the proven WS path, wired in when the
+//! worker runs as a daemon. The executed, test-covered core is claim + run +
+//! retention rescan, plus run-time authority re-derivation.
 
 use crate::broker::{Broker, Caller, HookChain};
 use crate::contract::{BrokerError, Value, WriteOp};
@@ -38,15 +37,15 @@ pub struct Job {
     pub kind: String,
     pub requested_by: String,
     pub payload: serde_json::Value,
-    /// The originating trace (stamped at enqueue) â€” adopted at run so one
-    /// trace spans REST -> enqueue -> claim -> job effect (REQ-6.4.1).
+    /// The originating trace (stamped at enqueue) — adopted at run so one
+    /// trace spans REST -> enqueue -> claim -> job effect.
     pub trace: Option<String>,
     pub lease: JobLease,
 }
 
-/// Outcome of running one job. `Denied` is the criterion-5 hard case:
-/// authority was revoked between enqueue and run â€” a typed, NON-RETRYABLE
-/// failure (ADR-006 edge 4).
+/// Outcome of running one job. `Denied` is the hard case:
+/// authority was revoked between enqueue and run — a typed, NON-RETRYABLE
+/// failure.
 #[derive(Debug, Clone, PartialEq)]
 pub enum JobOutcome {
     Done,
@@ -161,7 +160,7 @@ fn retry_update(attempt: u32, detail: &str) -> (bool, String) {
 pub struct Worker<'a> {
     pub db: &'a Db,
     /// Needed only to run job effects; claim/rescan don't require it, so a
-    /// claim-only worker (the criterion-6 race) can omit it.
+    /// claim-only worker (isolating the claim race) can omit it.
     pub broker: Option<&'a Broker>,
     pub worker_id: String,
 }
@@ -185,10 +184,10 @@ impl<'a> Worker<'a> {
         }
     }
 
-    /// The atomic conditional claim - the ONLY serialization point (ADR-009
-    /// ruling #1). A queued job is preferred; if it is not queued, the same id
-    /// may be reclaimed only when its lease has expired. Both paths are
-    /// conditional `UPDATE`s, so exactly one contender receives a row.
+    /// The atomic conditional claim - the ONLY serialization point. A queued
+    /// job is preferred; if it is not queued, the same id may be reclaimed only
+    /// when its lease has expired. Both paths are conditional `UPDATE`s, so
+    /// exactly one contender receives a row.
     pub fn try_claim(&self, job_id: &str) -> Result<Option<Job>, BrokerError> {
         if let Some(job) = self.try_claim_from(job_id, ClaimSource::Queued)? {
             return Ok(Some(job));
@@ -285,11 +284,11 @@ impl<'a> Worker<'a> {
     }
 
     /// Claim the next queued job by scanning the queue (cold-start / rescan
-    /// path, ADR-009 ruling #2 â€” the LIVE tail feeds specific ids in the
-    /// daemon, but rescan is always correct and is the recovery path).
+    /// path — the LIVE tail feeds specific ids in the daemon, but rescan is
+    /// always correct and is the recovery path).
     ///
-    /// WO-013: the claim round is built from PER-TENANT heads, then ordered
-    /// round-robin â€” never from one global window.
+    /// The claim round is built from PER-TENANT heads, then ordered
+    /// round-robin — never from one global window.
     ///
     /// The window approach fails exactly where fairness matters: with 500
     /// jobs queued for A and 5 for B, any window smaller than A's backlog
@@ -351,10 +350,10 @@ impl<'a> Worker<'a> {
         Ok(None)
     }
 
-    /// Run a claimed job under RE-DERIVED authority (ADR-006 edge 4): the job
-    /// carries who requested it, never a snapshot of what they may do. We
-    /// re-sign-in as that principal now; if their access was revoked, the
-    /// write is denied and the job fails NON-RETRYABLY.
+    /// Run a claimed job under RE-DERIVED authority: the job carries who
+    /// requested it, never a snapshot of what they may do. We re-sign-in as
+    /// that principal now; if their access was revoked, the write is denied
+    /// and the job fails NON-RETRYABLY.
     pub fn run(&self, job: &Job, resolve: &dyn AuthorityResolver) -> JobOutcome {
         // adopt the originating trace: the job's spans join the trace that
         // enqueued it, crossing the async boundary through the record itself
@@ -443,7 +442,7 @@ impl<'a> Worker<'a> {
         let chain = HookChain::default();
         match broker.db_write(caller, &chain, WriteOp::Create, doctype, None, &doc) {
             Ok(_) => JobOutcome::Done,
-            // Permission denied at run = typed, NON-RETRYABLE (criterion 5).
+            // Permission denied at run = typed, NON-RETRYABLE.
             Err(BrokerError::PermissionDenied { detail }) => JobOutcome::Denied(detail),
             // A rejected hook is a deterministic non-retryable business
             // failure, not a transient one.
@@ -580,12 +579,11 @@ fn run_pass(user: &str) -> String {
     format!("pw-{user}")
 }
 
-/// The resident run loop (ADR-009 Half 2, verbatim): replay-from-cursor over
-/// the changefeed -> claim & run each job -> advance cursor, then poll the
-/// tail. In v0 the "LIVE tail" is a short poll of the same changefeed cursor
-/// (WO-004 proved LIVE and changefeed-replay are interchangeable for
-/// fidelity; polling trades latency for zero WS plumbing in the daemon â€”
-/// upgradeable to true LIVE without touching claim/run).
+/// The resident run loop: replay-from-cursor over the changefeed -> claim &
+/// run each job -> advance cursor, then poll the tail. The "LIVE tail" is a
+/// short poll of the same changefeed cursor (LIVE and changefeed-replay are
+/// interchangeable for fidelity; polling trades latency for zero WS plumbing
+/// in the daemon — upgradeable to true LIVE without touching claim/run).
 pub struct ResidentWorker<'a> {
     pub worker: Worker<'a>,
     pub resolver: &'a dyn AuthorityResolver,
@@ -594,7 +592,7 @@ pub struct ResidentWorker<'a> {
 impl ResidentWorker<'_> {
     /// Drain all currently-claimable jobs; returns how many ran. Called on a
     /// timer by `frust serve`. Rescan-based, so it is always correct
-    /// regardless of cursor state (ADR-009 ruling #2).
+    /// regardless of cursor state.
     pub fn tick(&self) -> Result<usize, BrokerError> {
         let mut ran = 0;
         while let Some(job) = self.worker.claim_next()? {
@@ -605,7 +603,7 @@ impl ResidentWorker<'_> {
     }
 }
 
-// ── WO-043: the mail worker ─────────────────────────────────────────────────
+// ── The mail worker ─────────────────────────────────────────────────────────
 
 /// One queued message, as the outbox holds it.
 #[derive(Debug, Clone)]
@@ -625,9 +623,9 @@ pub struct MailRow {
 /// because a ten-second SMTP timeout must not become ten seconds of stale
 /// aggregates.
 ///
-/// This is the ADR-010 Tier-2 posture with a different effect: lifecycle event →
+/// This is the deferred-work posture with a different effect: lifecycle event →
 /// enqueue → background drain. No async runtime, no second executor; lettre's
-/// blocking `SmtpTransport` is what makes that possible (PM ruling B).
+/// blocking `SmtpTransport` is what makes that possible.
 pub struct MailWorker<'a> {
     pub db: &'a Db,
     pub mailer: &'a crate::mail::Mailer,
@@ -680,10 +678,10 @@ impl MailWorker<'_> {
             .unwrap_or_default())
     }
 
-    /// The same atomic conditional claim the job queue uses (ADR-009 ruling #1),
-    /// for the same reason: it is the only serialization point, and duplicate
-    /// delivery must be impossible rather than unlikely — a customer receiving
-    /// the same invoice email twice is a support ticket.
+    /// The same atomic conditional claim the job queue uses, for the same
+    /// reason: it is the only serialization point, and duplicate delivery must
+    /// be impossible rather than unlikely — a customer receiving the same
+    /// invoice email twice is a support ticket.
     fn try_claim_mail(&self, id: &str) -> Result<Option<MailRow>, BrokerError> {
         let rid = crate::surql::render_value(&Value::RecordId(id.to_string()))?;
         let out = self.db.sql_root(&format!(
@@ -732,7 +730,7 @@ impl MailWorker<'_> {
     /// Send one claimed message and record the outcome. `true` = delivered.
     fn send_one(&self, row: &MailRow) -> bool {
         // adopt the enqueueing request's trace, so one trace spans
-        // save → enqueue → delivery (REQ-6.4.1), across the thread boundary
+        // save → enqueue → delivery, across the thread boundary
         let trace = row
             .trace
             .as_deref()

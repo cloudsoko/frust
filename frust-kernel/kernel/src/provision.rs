@@ -1,4 +1,4 @@
-//! **Tenant provisioning** — WO-040 Chunk C. Turns a
+//! **Tenant provisioning.** Turns a
 //! [`crate::tenancy::ProvisioningPlan`] into the DDL that creates a tenant's
 //! home, and runs it.
 //!
@@ -15,8 +15,7 @@
 //!
 //! It does not mint signing keys. `DEFINE ACCESS` here is `access_ddl()` — the
 //! same `IF NOT EXISTS` form the meta boot uses, so provisioning a tenant
-//! twice never rotates its key and never signs everyone out (ADR-013's
-//! reasoning, unchanged).
+//! twice never rotates its key and never signs everyone out.
 
 use crate::contract::BrokerError;
 use crate::tenancy::{AccessPlacement, ProvisioningPlan, ProvisioningStep, ResolvedTenant};
@@ -37,8 +36,8 @@ fn step_ddl(step: &ProvisioningStep) -> Result<String, BrokerError> {
         ProvisioningStep::DefineAccess { placement } => match placement {
             AccessPlacement::Database => crate::meta::access_ddl(),
             // Unreachable today and refused loudly rather than rendered into
-            // something SurrealDB would reject with a shrug: the Chunk C probe
-            // proved `DEFINE ACCESS ... ON NAMESPACE TYPE RECORD` is a 400 on
+            // something SurrealDB would reject with a shrug: probing proved
+            // `DEFINE ACCESS ... ON NAMESPACE TYPE RECORD` is a 400 on
             // 3.2.0. If a topology ever answers `Namespace`, this is the line
             // that has to be designed, not guessed.
             AccessPlacement::Namespace => {

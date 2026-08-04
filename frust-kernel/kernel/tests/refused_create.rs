@@ -1,10 +1,10 @@
-//! WO-057: a CREATE that persists nothing must not report success.
+//! A CREATE that persists nothing must not report success.
 //!
-//! WO-020's Finding A closed this for UPDATE (`E_WRITE_NO_ROWS`) — a write the
-//! database refuses comes back as an EMPTY RESULT SET, not an error, so
-//! returning `Ok` made a refused write look like a completed one. The guard
-//! was written as `(WriteOp::Update, None)`, and CREATE fell through the
-//! catch-all: WO-056 reproduced `POST /write/{write-closed rollup}` answering
+//! This was already closed for UPDATE (`E_WRITE_NO_ROWS`): a write the database
+//! refuses comes back as an EMPTY RESULT SET, not an error, so returning `Ok`
+//! made a refused write look like a completed one. The guard was written as
+//! `(WriteOp::Update, None)`, and CREATE fell through the catch-all —
+//! `POST /write/{write-closed rollup}` answered
 //! `200 {"action":"created","created":null,"record":null}` while creating no
 //! row.
 //!
@@ -31,8 +31,8 @@ fn mgr() -> Caller {
 }
 
 /// A source DocType with a Tier-1 aggregate, and the rollup it feeds. Declaring
-/// the aggregate is what compiles the rollup **write-closed** (ADR-010): the
-/// EVENT writes it, record users never can.
+/// the aggregate is what compiles the rollup **write-closed**: the EVENT writes
+/// it, record users never can.
 fn setup(name: &str) -> (Broker, Db, ResolvedTenant) {
     let cfg = single_tenant(&name.to_string()).expect("tenancy");
     let db = scoped_db(&cfg);
@@ -73,8 +73,8 @@ fn count_of(db: &Db, table: &str) -> usize {
         .unwrap_or(0) as usize
 }
 
-/// **The WO-056 repro.** A create the database refuses must come back as a
-/// typed refusal — never as a success carrying nothing.
+/// A create the database refuses must come back as a typed refusal — never as
+/// a success carrying nothing.
 #[test]
 fn a_create_that_persists_nothing_is_refused_not_reported_as_created() {
     let (broker, db, _cfg) = setup("wo057_closed");
@@ -93,7 +93,7 @@ fn a_create_that_persists_nothing_is_refused_not_reported_as_created() {
 
     let err = out.expect_err(
         "a CREATE that persisted no row must be a typed refusal — reporting success for a \
-         write that did not happen is the silent-wrong class (WO-020 Finding A)",
+         write that did not happen is the silent-wrong class",
     );
     let msg = format!("{err:?}");
     assert!(msg.contains("E_WRITE_NO_ROWS"), "typed, same family as the UPDATE guard: {msg}");
@@ -103,12 +103,12 @@ fn a_create_that_persists_nothing_is_refused_not_reported_as_created() {
     assert_eq!(
         count_of(&db, "party_total"),
         before,
-        "the rollup must still be write-closed; this WO changes the RESPONSE, not the refusal"
+        "the rollup must still be write-closed; the fix changes the RESPONSE, not the refusal"
     );
 }
 
-/// **The other side (the WO-055 lesson).** A legitimate create still returns
-/// its record — or the fix has traded a false success for a false failure.
+/// **The other side.** A legitimate create still returns its record — or the
+/// fix has traded a false success for a false failure.
 #[test]
 fn a_legitimate_create_still_returns_its_record() {
     let (broker, db, _cfg) = setup("wo057_open");
@@ -145,8 +145,8 @@ fn a_legitimate_create_still_returns_its_record() {
     );
 }
 
-/// The UPDATE half stays exactly as WO-020 left it — this WO adds a sibling
-/// arm, it does not rewrite the guard.
+/// The UPDATE half is unchanged — this adds a sibling arm, it does not rewrite
+/// the guard.
 #[test]
 fn the_update_guard_is_unchanged() {
     let (broker, _db, _cfg) = setup("wo057_update");

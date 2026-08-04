@@ -1,7 +1,7 @@
-//! WO-007: the ADR-010 aggregates ladder, Tiers 1-2, proven.
+//! The aggregates ladder, Tiers 1-2, proven.
 //!
 //! Functional proofs run against the dev instance (:8899, ns frust). The 1 M
-//! before/after benchmark runs against the WO-006 fixture (:8898), ignored by
+//! before/after benchmark runs against the 1 M-row fixture (:8898), ignored by
 //! default:
 //!
 //!   cargo test --release --test aggregates_ladder -- --ignored --nocapture
@@ -20,8 +20,8 @@ use frust_kernel::db::{scoped_db, Db};
 use frust_kernel::tenancy::{single_tenant, ResolvedTenant};
 use frust_kernel::sync::{backfill_counter, counter_event_ddl, AggregateDef, DocTypeDef, MetadataSync};
 
-/// Pass-through dispatcher: hooks still fire on every write (ADR-006 edge 6),
-/// they just don't mutate â€” WO-007 proves aggregate exactness, not hook flow.
+/// Pass-through dispatcher: hooks still fire on every write, they just don't
+/// mutate — these tests prove aggregate exactness, not hook flow.
 struct PassHooks;
 impl HookDispatch for PassHooks {
     fn validate(&self, doctype: &str, doc: &[(String, Value)]) -> Result<Vec<(String, Value)>, BrokerError> {
@@ -34,7 +34,7 @@ fn fresh(name: &str) -> (Db, ResolvedTenant) {
     let db = scoped_db(&cfg);
     db.sql_root_ns(&format!("REMOVE DATABASE IF EXISTS {name}; DEFINE DATABASE {name};"))
         .expect("provision test database");
-    // the kernel-owned identity posture (WO-008) â€” tests consume it, never
+    // the kernel-owned identity posture — tests consume it, never
     // hand-roll it
     db.sql_root(&format!(
         "{}; {}; \
@@ -60,7 +60,7 @@ fn broker(cfg: &ResolvedTenant) -> Broker {
 
 /// Live GROUP BY (root) vs rollup docs: every live bucket matches exactly;
 /// rollup buckets absent from live must have fully reversed to ~0.
-/// WO-016: reconciliation is DECIMAL-EXACT, not epsilon-close.
+/// Reconciliation is DECIMAL-EXACT, not epsilon-close.
 ///
 /// Money now travels as decimal (JSON strings), counts as decimal too, so
 /// the old `as_f64()` + `1e-6` comparison would both misread the values and
@@ -258,7 +258,7 @@ fn tier1_ar_counter_reverses_on_cancel() {
     );
     let c0 = db.sql_root("SELECT n, outstanding FROM ar_by_customer WHERE k = 'cust4:c0';").unwrap();
     let c0 = &c0.as_array().unwrap()[0];
-    // decimal-exact reversal: EXACTLY zero, not "close to" zero (WO-016)
+    // decimal-exact reversal: EXACTLY zero, not "close to" zero
     assert!(
         frust_kernel::decimal::Decimal::from_json(c0.get("n")).is_zero(),
         "fully-canceled customer: count reversed to exactly 0"
@@ -407,7 +407,7 @@ fn tier2_item_rollup_from_line_diffs() {
         use frust_kernel::decimal::Decimal;
         let k = row["k"].as_str().unwrap();
         let (eq, ea) = expect.remove(k).unwrap_or((0.0, 0.0));
-        // decimal-exact against the live flatten (WO-016 criterion 3)
+        // decimal-exact against the live flatten
         assert_eq!(
             Decimal::from_json(row.get("qty")),
             Decimal::parse(&eq.to_string()).unwrap_or(Decimal::ZERO),
@@ -429,10 +429,10 @@ fn tier2_item_rollup_from_line_diffs() {
 
 // â”€â”€ The 1 M before/after â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-/// Criterion 1's headline on the WO-006 fixture: monthly revenue 7.7 s live
+/// Criterion 1's headline on the 1 M-row fixture: monthly revenue 7.7 s live
 /// -> rollup read < 100 ms, exact after a concurrent burst at 1 M.
 #[test]
-#[ignore = "WO-007 scale leg: needs the WO-006 fixture instance on :8898"]
+#[ignore = "scale leg: needs the 1 M-row fixture instance on :8898"]
 fn tier1_counter_at_1m() {
     let cfg = frust_kernel::tenancy::Tenancy::from_config(
         frust_kernel::db::ConnConfig {
@@ -453,7 +453,7 @@ fn tier1_counter_at_1m() {
     let db = scoped_db(&cfg);
     let n = db.sql_root("SELECT count() FROM sales_invoice GROUP ALL;").unwrap();
     let n = n.as_array().unwrap()[0]["count"].as_i64().unwrap();
-    println!("=== WO-007 1M leg: {n} invoices, {} build ===", if cfg!(debug_assertions) { "DEBUG" } else { "RELEASE" });
+    println!("=== 1M leg: {n} invoices, {} build ===", if cfg!(debug_assertions) { "DEBUG" } else { "RELEASE" });
 
     // rollup table (write-closed) + broker metadata + the generated EVENT
     db.sql_root(
@@ -504,7 +504,7 @@ fn tier1_counter_at_1m() {
                 let caller = Caller { user: "analyst".into(), pass: "pw-analyst".into(), role: "manager".into() };
                 for i in 0..25 {
                     let doc = vec![
-                        ("title".to_string(), Value::Text("wo007 burst".into())),
+                        ("title".to_string(), Value::Text("burst invoice".into())),
                         ("status".to_string(), Value::Text("Draft".into())),
                         ("month".to_string(), Value::Text("2026-03".into())),
                         ("posting_date".to_string(), Value::Datetime("2026-03-15T00:00:00Z".into())),

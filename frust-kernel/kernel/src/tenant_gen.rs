@@ -1,19 +1,18 @@
-//! **Per-tenant cache generations** — WO-040 Chunk B, removing the coupling
-//! Chunk A left named.
+//! **Per-tenant cache generations.**
 //!
-//! WO-026 bought the kernel's throughput by caching the two things every
-//! request needed: the token→principal lookup and the DocType metadata. Both
-//! are invalidated by *generation* — bump a counter, and every cached entry
-//! stops matching. That design is deliberately coarse: a forgotten bump costs
-//! a cache miss, where a forgotten per-entry removal would leave a revoked
-//! token live. Correctness over hit-rate, in an auth path.
+//! The kernel caches the two things every request needs: the token→principal
+//! lookup and the DocType metadata. Both are invalidated by *generation* —
+//! bump a counter, and every cached entry stops matching. That design is
+//! deliberately coarse: a forgotten bump costs a cache miss, where a forgotten
+//! per-entry removal would leave a revoked token live. Correctness over
+//! hit-rate, in an auth path.
 //!
-//! **The counters were process-global.** With one process serving N tenants,
-//! coarse stopped meaning "drop this tenant's cache" and started meaning
-//! "drop everyone's" — so one tenant's logout, revoke, or schema sync
-//! cold-started every other tenant's caches. Never wrong, but a
-//! noisy-neighbour vector aimed squarely at the caches that took throughput
-//! from 15 to 124 req/s. WO-039 found it; this fixes it.
+//! The counters are per-tenant, not process-global. With one process serving
+//! N tenants, a global counter would make "drop this tenant's cache" mean
+//! "drop everyone's" — so one tenant's logout, revoke, or schema sync would
+//! cold-start every other tenant's caches. Never wrong, but a noisy-neighbour
+//! vector aimed squarely at the caches that carry the kernel's throughput.
+//! Per-tenant generations confine each bump to its own tenant.
 //!
 //! **Why `Arc<AtomicU64>` handles rather than a lookup per read.** The
 //! generation is read on *every* request. A `Mutex<HashMap>` lookup on that
@@ -30,7 +29,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 /// One tenant's generations, held by its `Broker`.
 #[derive(Clone, Debug)]
 pub struct TenantGenerations {
-    /// Bumped by logout and admin revoke (WO-026 / WO-033).
+    /// Bumped by logout and admin revoke.
     pub session: Arc<AtomicU64>,
     /// Bumped by every kernel-mediated write to DocType metadata.
     pub meta: Arc<AtomicU64>,

@@ -1,5 +1,5 @@
-//! SurrealDB wire transport (WO-005 contract line: HTTP `/sql` + WS RPC,
-//! no SDK crate unless typed responses earn the build cost).
+//! SurrealDB wire transport: HTTP `/sql` + WS RPC, no SDK crate unless typed
+//! responses earn the build cost.
 //!
 //! Blocking ureq; async callers wrap in spawn_blocking. Root and record-user
 //! sessions; token cache per user.
@@ -12,10 +12,10 @@ use crate::tenancy::ResolvedTenant;
 
 /// **How to reach the store — never *which* store.**
 ///
-/// WO-040 Chunk A split `ns`/`db` out of this struct and into
-/// [`ResolvedTenant`]. That split is the seam: with placement gone from the
-/// connection config, no module can pick a namespace or database by filling
-/// in a field, because there is no longer a field to fill in.
+/// This struct carries no `ns`/`db`; placement lives in [`ResolvedTenant`].
+/// That split is the seam: with placement gone from the connection config, no
+/// module can pick a namespace or database by filling in a field, because
+/// there is no longer a field to fill in.
 #[derive(Debug, Clone)]
 pub struct ConnConfig {
     pub endpoint: String,
@@ -78,17 +78,14 @@ mod conn_config_tests {
     }
 }
 
-/// **WO-041: one HTTP agent per ENDPOINT**, shared by every `Db` that talks
-/// to it.
+/// **One HTTP agent per ENDPOINT**, shared by every `Db` that talks to it.
 ///
-/// Until now `db.rs` called `ureq::post(..)` — the bare free function — which
-/// opens a fresh TCP connection per call and drops it. WO-026 measured that
-/// model and exonerated it *for throughput* (`bare ≈ fresh ≈ pooled within
-/// 10%`), which was true and still is. The dimension it never measured is
-/// **resource exhaustion**, and WO-040 Chunk B's load leg found it: TIME_WAIT
-/// climbing at request rate (118 → 1252 → 4274 → 6150 across three benches).
-/// On Windows's ~14k ephemeral ports with a ~4-minute TIME_WAIT, sustained
-/// ~50 req/s reaches port exhaustion in minutes.
+/// A bare `ureq::post(..)` — the free function — opens a fresh TCP connection
+/// per call and drops it. That model is fine *for throughput* (`bare ≈ fresh
+/// ≈ pooled within 10%`), but it leaks sockets: TIME_WAIT climbs at request
+/// rate (measured at 118 → 1252 → 4274 → 6150 across three benches). On
+/// Windows's ~14k ephemeral ports with a ~4-minute TIME_WAIT, sustained ~50
+/// req/s reaches port exhaustion in minutes.
 ///
 /// **The A/B that settled it** (`examples/connprobe.rs`, 200 sequential
 /// queries against the dev store):
@@ -106,8 +103,7 @@ mod conn_config_tests {
 /// SurrealDB, so pool size follows query *rate*, not tenant *count* — N
 /// tenants add no sockets. The registry lock is taken once per `Db`
 /// construction and never on the query path, the same shape `tenant_gen` uses
-/// for its generation handles: don't trade a resource win for a lock
-/// (WO-024/025's lesson).
+/// for its generation handles: don't trade a resource win for a lock.
 pub(crate) fn agent_for(endpoint: &str) -> ureq::Agent {
     static AGENTS: OnceLock<Mutex<HashMap<String, ureq::Agent>>> = OnceLock::new();
     let mut map = AGENTS
@@ -126,7 +122,7 @@ pub(crate) fn agent_for(endpoint: &str) -> ureq::Agent {
                 .clamp(2, 16)
                 + 8;
             ureq::Agent::config_builder()
-                // **WO-055 (G1): a non-2xx must not throw its body away.**
+                // **A non-2xx must not throw its body away.**
                 // ureq's default turns a 4xx into `Error::StatusCode(404)` and
                 // drops the response, which is why every failed login used to
                 // read `signin transport: http status: 404` — the status alone
@@ -170,8 +166,8 @@ fn surreal_message_of(text: &str) -> String {
         .map_or_else(|_| text.trim().to_string(), |v| surreal_message(&v))
 }
 
-/// **WO-055 G1: is this signin failure a rejection of the CREDENTIALS, or is
-/// the store itself missing or broken?**
+/// **Is this signin failure a rejection of the CREDENTIALS, or is the store
+/// itself missing or broken?**
 ///
 /// Measured against SurrealDB 3.2.0, because the status alone cannot answer it:
 ///
@@ -198,7 +194,7 @@ fn is_credential_rejection(status: u16, body: &str) -> bool {
     status == 404 && surreal_message_of(body).contains("No record was returned")
 }
 
-// ── WO-044: the root token ───────────────────────────────────────────────────
+// ── the root token ───────────────────────────────────────────────────
 
 /// A minted root JWT and when it stops being trustworthy.
 struct CachedRoot {
@@ -212,11 +208,11 @@ struct CachedRoot {
 
 /// Per-endpoint root credential state.
 ///
-/// `Basic` is the pre-WO-044 behaviour, kept as a **loud** fallback: if
-/// `/signin` will not mint a root token (an older store, a differently
-/// configured root user), the kernel keeps working exactly as it did before and
-/// says so at error level with a `frust_root_auth{mode="basic"}` gauge. Silently
-/// paying a 21× tax would be the failure this WO exists to remove.
+/// `Basic` is the fallback path, kept **loud**: if `/signin` will not mint a
+/// root token (an older store, a differently configured root user), the kernel
+/// keeps working exactly as it did before and says so at error level with a
+/// `frust_root_auth{mode="basic"}` gauge. Silently paying a 21× tax is the
+/// failure this loudness exists to prevent.
 #[derive(Default)]
 struct RootAuth {
     cached: Option<CachedRoot>,
@@ -225,19 +221,19 @@ struct RootAuth {
     basic_only: bool,
     /// Test-only: pin this handle to the JWT path regardless of
     /// `FRUST_ROOT_AUTH`. A test that asserts JWT-path behaviour has to OWN its
-    /// arm — WO-047 found three of WO-044's tests floating on the process env
-    /// instead, so they failed under `FRUST_ROOT_AUTH=basic` for the entirely
-    /// correct reason that there was no token to assert about. The Basic arm was
-    /// already pinned (`force_basic_for_test`); this is the missing half.
+    /// arm — one left floating on the process env fails under
+    /// `FRUST_ROOT_AUTH=basic` for the entirely correct reason that there was
+    /// no token to assert about. The Basic arm is pinned by
+    /// `force_basic_for_test`; this is the missing half.
     force_jwt: bool,
 }
 
 /// `FRUST_ROOT_AUTH=jwt|basic` — default `jwt`.
 ///
 /// Exists for two reasons, and the second is why it is not just a test hook:
-/// the WO's own A/B needs both paths measurable **in one process**, and an
-/// operator who hits an unforeseen incompatibility deserves a documented way
-/// back to the previous behaviour rather than a downgrade. An unrecognised
+/// the A/B that justified this needs both paths measurable **in one process**,
+/// and an operator who hits an unforeseen incompatibility deserves a documented
+/// way back to the previous behaviour rather than a downgrade. An unrecognised
 /// value refuses rather than guessing, the same posture as `FRUST_MAIL`.
 ///
 /// Read once per process: this must never touch the query path.
@@ -264,8 +260,8 @@ fn root_auth_mode() -> &'static str {
 
 /// The registry, keyed by `endpoint|user` — the same shape as [`agent_for`], and
 /// for the same reason: **the registry lock is taken once per `Db`
-/// construction and never on the query path** (WO-024/025). What the query path
-/// touches is the per-endpoint handle below, an uncontended `RwLock` read.
+/// construction and never on the query path**. What the query path touches is
+/// the per-endpoint handle below, an uncontended `RwLock` read.
 ///
 /// Keyed by endpoint AND user because a root token is scope-free (`ID: root`,
 /// no `ns`/`db` claims — probed), so every tenant sharing a store shares one
@@ -331,18 +327,18 @@ fn is_auth_failure(e: &BrokerError) -> bool {
 
 pub struct Db {
     target: ResolvedTenant,
-    /// The shared, connection-reusing HTTP client for this endpoint (WO-041).
+    /// The shared, connection-reusing HTTP client for this endpoint.
     /// Resolved once at construction so the query path never touches the
     /// registry.
     agent: ureq::Agent,
-    /// **WO-044:** this endpoint's root credential, resolved once at
-    /// construction like the agent above. The query path reads it under a
-    /// shared `RwLock`; it never takes the registry lock and never runs argon2.
+    /// This endpoint's root credential, resolved once at construction like the
+    /// agent above. The query path reads it under a shared `RwLock`; it never
+    /// takes the registry lock and never runs argon2.
     root: std::sync::Arc<std::sync::RwLock<RootAuth>>,
     tokens: OnceLock<Mutex<HashMap<String, String>>>,
     /// Conflict retries observed (criterion-6 telemetry + the canary test).
     conflict_retries: std::sync::atomic::AtomicU64,
-    /// WO-044: signins performed by THIS handle — the per-handle counterpart of
+    /// Signins performed by THIS handle — the per-handle counterpart of
     /// `frust_root_signin_total`, so a test can assert "argon2 ran once" exactly
     /// rather than racing a process-global counter.
     root_signins: std::sync::atomic::AtomicU64,
@@ -383,7 +379,7 @@ impl Db {
         self.target.tenant_id().as_str()
     }
 
-    /// The record access method name (WO-027 key guard).
+    /// The record access method name (used by the restored-access-key guard).
     pub fn access(&self) -> &str {
         &self.target.conn().access
     }
@@ -403,7 +399,7 @@ impl Db {
         if !(200..300).contains(&status) {
             // The status stays IN the message: `keyguard` recognises its
             // deliberately-forged probe's healthy refusal by finding "401"
-            // here, and ADR-013's guard is fail-closed — an error it cannot
+            // here, and the keyguard is fail-closed — an error it cannot
             // recognise refuses boot. (It did exactly that when an earlier
             // cut of this change fed it a parse error instead.)
             return Err(BrokerError::Db {
@@ -445,17 +441,17 @@ impl Db {
     }
 
     /// The kernel's own root call — labelled explicitly rather than sniffed from
-    /// the header, because WO-044 made root a Bearer token too.
+    /// the header, because root is now a Bearer token too.
     fn sql_as_root(&self, auth: &str, query: &str) -> Result<serde_json::Value, BrokerError> {
         self.sql_with_auth_at(auth, query, "root", crate::telemetry::Level::Error)
     }
 
-    /// WO-033 item 2: `sql_with_auth`, but a failure logs at **Debug**.
+    /// `sql_with_auth`, but a failure logs at **Debug**.
     ///
-    /// One caller only — the keyguard's self-forge probe (ADR-013), whose
-    /// refusal is the HEALTHY answer. Without this a clean boot emits an
-    /// `lvl:error / E_DB` line every time, which trains operators to ignore
-    /// boot errors: exactly the "errors are real" discipline WO-010 built.
+    /// One caller only — the keyguard's self-forge probe, whose refusal is the
+    /// HEALTHY answer. Without this a clean boot emits an `lvl:error / E_DB`
+    /// line every time, which trains operators to ignore boot errors,
+    /// undermining the "errors are real" discipline.
     ///
     /// **Only the log level changes. The `Result` is returned untouched**, so
     /// the keyguard still distinguishes an auth refusal (`Ok(false)`, healthy)
@@ -474,11 +470,11 @@ impl Db {
         fail_level: crate::telemetry::Level,
     ) -> Result<serde_json::Value, BrokerError> {
         let _tenant = crate::telemetry::enter_tenant(self.tenant_id());
-        // WO-044: label by CREDENTIAL CLASS, not by scheme. Root is now a Bearer
-        // token too, so the old `starts_with("Basic")` test would have silently
-        // relabelled every root call as a session call the moment the JWT landed
-        // — a metric quietly measuring the wrong thing, which is worse than no
-        // metric. The kernel's own root calls are tagged explicitly.
+        // Label by CREDENTIAL CLASS, not by scheme. Root is now a Bearer token
+        // too, so a `starts_with("Basic")` test would silently relabel every
+        // root call as a session call the moment the JWT landed — a metric
+        // quietly measuring the wrong thing, which is worse than no metric. The
+        // kernel's own root calls are tagged explicitly.
         crate::telemetry::inc(
             "frust_db_calls_total",
             &[("kind", kind), ("tenant", self.tenant_id())],
@@ -548,7 +544,7 @@ impl Db {
                 if raw.contains("Not enough permissions") {
                     return Err(BrokerError::PermissionDenied { detail: raw.clone() });
                 }
-                // the identity_guard EVENT's machine code (WO-008)
+                // the identity_guard EVENT's machine code
                 if raw.contains("FRUST:E_IDENTITY_UNRESOLVED") {
                     return Err(BrokerError::IdentityUnresolved);
                 }
@@ -558,7 +554,7 @@ impl Db {
         }
     }
 
-    /// **WO-044: the root credential, cached as a JWT.**
+    /// **The root credential, cached as a JWT.**
     ///
     /// SurrealDB argon2-verifies a Basic root password on **every request** —
     /// measured at 16.56 ms against 0.79 ms for a Bearer token running the
@@ -617,7 +613,7 @@ impl Db {
                 Ok(auth)
             }
             // **Loud** fallback, never silent. The kernel keeps working exactly
-            // as it did before WO-044 — but an operator paying 16 ms a query
+            // as it did on Basic auth — but an operator paying 16 ms a query
             // deserves to be told, not left to discover it in a profile.
             Err(e) => {
                 guard.basic_only = true;
@@ -722,9 +718,9 @@ impl Db {
         self.root_signins.store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Pin this handle to the pre-WO-044 Basic credential — the per-handle
-    /// equivalent of `FRUST_ROOT_AUTH=basic`, which is what makes the A/B
-    /// measurable inside one process.
+    /// Pin this handle to the Basic credential — the per-handle equivalent of
+    /// `FRUST_ROOT_AUTH=basic`, which is what makes the A/B measurable inside
+    /// one process.
     #[doc(hidden)]
     pub fn force_basic_for_test(&mut self) {
         self.detach_root_for_test();
@@ -775,8 +771,8 @@ impl Db {
     /// Run a root query, re-minting **once** if the store rejects the token.
     ///
     /// **This retry is deliberately root-only and lives here, not in
-    /// `sql_with_auth`.** ADR-013's keyguard probes with a *deliberately
-    /// forged* Bearer and reads the 401 as its healthy answer; if the shared
+    /// `sql_with_auth`.** The keyguard probes with a *deliberately forged*
+    /// Bearer and reads the 401 as its healthy answer; if the shared
     /// path retried auth failures by signing in as root, the forged probe would
     /// succeed on retry and the guard would report every healthy store
     /// compromised. The blast radius of that mistake is every boot, so the
@@ -947,13 +943,12 @@ impl Db {
             .header("Content-Type", "application/json")
             .send(body)
             .map_err(|e| BrokerError::Db { detail: format!("signin transport: {e}") })?;
-        // **WO-055 G1.** Read the body whatever the status, then classify:
-        // rejected credentials are the caller's problem (401), anything else
-        // is ours (500). The old code mapped every non-success to `Db`, so a
-        // typo answered `500 signin transport: http status: 404` - a false
-        // report that the server was broken, on the busiest error path there
-        // is, with an internal transport detail leaked to an unauthenticated
-        // caller.
+        // Read the body whatever the status, then classify: rejected
+        // credentials are the caller's problem (401), anything else is ours
+        // (500). Mapping every non-success to `Db` made a typo answer `500
+        // signin transport: http status: 404` - a false report that the server
+        // was broken, on the busiest error path there is, with an internal
+        // transport detail leaked to an unauthenticated caller.
         let (status, text) = Self::read_text(&mut res)?;
         let parsed: serde_json::Value =
             serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);

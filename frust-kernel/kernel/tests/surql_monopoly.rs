@@ -13,21 +13,20 @@ use std::path::Path;
 // compiler), db.rs (transport), broker.rs (verbs via surql helpers), boot.rs
 // (meta under the lock), meta.rs (static DDL only), sync.rs (DocType->DDL),
 // worker.rs (queue claim/finish, all values escaped via surql.rs),
-// aggregates.rs (WO-007 ruling: Tier-2 feed replay + delta upserts — table
-// idents validated once in RollupWorker::new, keys via surql::escape_str,
-// record ids via surql::render_value),
-// rest.rs (WO-009 ruling: the session store + meta/audit/lag routes — every
-// doctype/rollup is ident()-checked, tokens are charset-validated AND
-// escaped, user/role/jwt go through surql::escape_str; data routes still
-// speak only the broker).
+// aggregates.rs (Tier-2 feed replay + delta upserts — table idents validated
+// once in RollupWorker::new, keys via surql::escape_str, record ids via
+// surql::render_value),
+// rest.rs (the session store + meta/audit/lag routes — every doctype/rollup is
+// ident()-checked, tokens are charset-validated AND escaped, user/role/jwt go
+// through surql::escape_str; data routes still speak only the broker).
 const ALLOWED: [&str; 10] = [
     "surql.rs", "db.rs", "broker.rs", "boot.rs", "meta.rs", "sync.rs", "worker.rs",
     "aggregates.rs", "rest.rs",
-    // provision.rs (WO-040 chunk C ruling): tenant provisioning DDL. Every
-    // value it interpolates is a typed NamespaceName/DatabaseName whose
-    // constructor is private to `tenancy` and accepts nothing but a plain
-    // identifier — the parameters CANNOT hold a client string, so this is a
-    // stronger guarantee than "the caller remembers to escape".
+    // provision.rs: tenant provisioning DDL. Every value it interpolates is a
+    // typed NamespaceName/DatabaseName whose constructor is private to
+    // `tenancy` and accepts nothing but a plain identifier — the parameters
+    // CANNOT hold a client string, so this is a stronger guarantee than "the
+    // caller remembers to escape".
     "provision.rs",
 ];
 const KEYWORDS: [&str; 8] =

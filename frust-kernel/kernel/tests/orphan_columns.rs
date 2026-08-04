@@ -1,8 +1,9 @@
-//! WO-052: orphan columns — the M4 blocker's fix.
+//! Orphan columns: carrying a column the metadata no longer declares.
 //!
-//! **Criterion 2 is the point of this file and it comes first.** WO-050 tested
-//! install, exercise, uninstall and re-install — every lifecycle step *within
-//! one kernel lifetime* — and never restarted the kernel after an uninstall.
+//! **This regression is the point of the file, and it comes first.** Earlier
+//! lifecycle tests exercised install, exercise, uninstall and re-install — every
+//! lifecycle step *within one kernel lifetime* — and never restarted the kernel
+//! after an uninstall.
 //! The defect lived exactly one process boundary past the suite's horizon: the
 //! uninstall left a column the metadata no longer declared, and the next boot's
 //! sync classified it destructive and refused to start, with no operator
@@ -110,8 +111,8 @@ fn orphan_gauge(tenant: &str, column: &str) -> Option<f64> {
 ///
 /// Against pre-fix behaviour this failed with
 /// `E_BOOT_DB: refusing destructive change(s) ["REMOVE FIELD crm_tag"]`,
-/// which is the exact production symptom WO-051 hit bringing the dev stack back
-/// up. It is the one step WO-050's suite never took.
+/// which is the exact production symptom seen bringing the dev stack back
+/// up. It is the one step the earlier lifecycle suite never took.
 #[test]
 fn the_kernel_restarts_after_an_extension_uninstall() {
     let (rest, _db, cfg) = setup("wo052_restart");
@@ -345,9 +346,9 @@ fn reclaiming_an_orphan_requires_an_explicit_acknowledgment() {
     );
 }
 
-/// **No boot flag was added.** The amendment ruled drift = orphan, so boot never
+/// **No boot flag was added.** Drift is treated as an orphan, so boot never
 /// faces an unacknowledged destructive plan — and an `allow_destructive` startup
-/// switch would be the ADR-013 footgun shape.
+/// switch would be a footgun.
 #[test]
 fn boot_options_gained_no_destructive_flag() {
     let src = include_str!("../src/boot.rs");

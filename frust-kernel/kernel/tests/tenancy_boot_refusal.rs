@@ -1,4 +1,4 @@
-//! **WO-040 Chunk B: the SHIPPED BINARY refuses a bad tenancy config.**
+//! **The SHIPPED BINARY refuses a bad tenancy config.**
 //!
 //! `tenancy.rs`'s unit tests prove `Tenancy::from_config` rejects incomplete
 //! and contradictory settings. That is a proof about a function. This is the
@@ -44,11 +44,8 @@ fn refuses(case: &str, env: &[(&str, &str)], expect: &str) {
     assert!(log.contains(expect), "{case}: refusal did not say {expect:?}:\n{log}");
 }
 
-/// **WO-040 Chunk B2 inverted this test.** Chunk B refused a roster larger
-/// than one, because per-request routing did not exist and serving only the
-/// first name would have been the silent misbehaviour. B2 built the routing,
-/// so the same config must now **boot** — and boot *every* tenant on it, not
-/// just the first.
+/// A multi-tenant roster must **boot** *every* tenant on it, not just the
+/// first: serving only the first name would be a silent misbehaviour.
 #[test]
 fn a_multi_tenant_roster_now_boots_every_tenant_on_it() {
     const A: &str = "wo040c_boot_a";
@@ -96,10 +93,8 @@ fn a_contradictory_database_per_tenant_config_refuses() {
     );
 }
 
-/// **WO-040 Chunk C inverted this one too.** Chunk B refused the namespace
-/// topologies as "not built into this binary"; Chunk C built them, so a
-/// correct config must now boot — and the boot line must say which topology
-/// and *where*, because that is what an operator checks.
+/// A correct namespace-topology config must boot — and the boot line must say
+/// which topology and *where*, because that is what an operator checks.
 #[test]
 fn a_namespace_topology_now_boots_and_reports_where_it_put_the_tenant() {
     const T: &str = "wo040d_boot_ns";
@@ -157,7 +152,7 @@ fn an_unknown_topology_refuses() {
 /// refusals above are the config being rejected, not the binary being broken.
 ///
 /// The database is provisioned first because the kernel refuses to boot into
-/// one that does not exist (ADR-008's fail-closed boot, `E_BOOT_DB`). That
+/// one that does not exist (the fail-closed boot guard, `E_BOOT_DB`). That
 /// refusal is correct and is *not* what this file is testing — provisioning
 /// is a separate act from configuring, and the kernel is right not to
 /// conflate them.

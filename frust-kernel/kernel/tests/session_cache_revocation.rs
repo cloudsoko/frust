@@ -1,11 +1,11 @@
-//! WO-026 — the session cache sits in a PERMISSION path, so revocation is the
-//! gate, not the throughput.
+//! The session cache sits in a PERMISSION path, so revocation is the gate,
+//! not the throughput.
 //!
 //! Caching the token→principal lookup removes the last per-request DB round
 //! trip. It also creates the possibility of serving a revoked principal, which
-//! would be the WO-020 Finding-A silent-wrong class reborn in the worst
-//! possible place. These tests prove logout is IMMEDIATE (generation bump) and
-//! that a cache hit is behaviourally identical to a miss.
+//! would be a silent-wrong defect reborn in the worst possible place. These
+//! tests prove logout is IMMEDIATE (generation bump) and that a cache hit is
+//! behaviourally identical to a miss.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 

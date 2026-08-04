@@ -1,5 +1,5 @@
-﻿//! The broker (WO-005 module 1): one implementation of the ADR-006 verbs
-//! serving Desk, REST, and plugins. Everything else consumes this.
+﻿//! The broker: one implementation of the document verbs serving Desk,
+//! REST, and plugins. Everything else consumes this.
 
 use serde::Deserialize;
 
@@ -8,7 +8,7 @@ use crate::db::Db;
 use crate::surql;
 
 /// The acting principal. Identity is captured here; authority is always
-/// re-derived by executing under this principal's DB session (ADR-006 edge 4).
+/// re-derived by executing under this principal's DB session.
 #[derive(Debug, Clone)]
 pub struct Caller {
     pub user: String,
@@ -16,9 +16,9 @@ pub struct Caller {
     pub role: String,
 }
 
-/// Hook chain for the cycle trap (ADR-006 edge 6): every db-write from
-/// inside a hook carries it. `(record-id, hook-class)` re-entry traps
-/// immediately; depth 8 is the fan-out backstop.
+/// Hook chain for the cycle trap: every db-write from inside a hook
+/// carries it. `(record-id, hook-class)` re-entry traps immediately;
+/// depth 8 is the fan-out backstop.
 #[derive(Debug, Clone, Default)]
 pub struct HookChain(Vec<(String, HookClass)>);
 
@@ -45,19 +45,19 @@ impl HookChain {
     }
 }
 
-/// The fold-in seam: hooks fire through this trait over ADR-006's dynamic
-/// doc envelope. Module 1 wired the external hook-runner; module 4 swaps in
-/// in-process wasmtime (`hooks::WasmHooks`) with the broker unchanged.
+/// The seam hooks fire through: this trait carries the dynamic doc
+/// envelope. Both the external hook-runner and in-process wasmtime
+/// (`hooks::WasmHooks`) implement it, with the broker unchanged.
 pub trait HookDispatch: Send + Sync {
     fn validate(&self, doctype: &str, doc: &[(String, Value)]) -> Result<Vec<(String, Value)>, BrokerError>;
 
-    /// WO-053: fire one lifecycle class. Returns the (possibly mutated)
+    /// Fire one lifecycle class. Returns the (possibly mutated)
     /// document for a mutating class, the input unchanged otherwise; `Err`
     /// rejects and blocks the write.
     ///
     /// Defaulted to a no-op so the many test doubles that implement only
     /// `validate` keep compiling and simply deliver nothing — the honest
-    /// behaviour for a dispatcher that predates the vocabulary.
+    /// behaviour for a dispatcher that does not fire lifecycle classes.
     fn fire(
         &self,
         _class: crate::contract::HookClass,
@@ -68,9 +68,9 @@ pub trait HookDispatch: Send + Sync {
     }
 }
 
-/// External hook-runner (the WO-002 composition process on :8787). Retained
+/// External hook-runner (the legacy composition process on :8787). Retained
 /// so the composition still runs; it speaks the toy `{id,status,total}` JSON,
-/// so this adapter marshals the dynamic doc down to it and back â€” the toy
+/// so this adapter marshals the dynamic doc down to it and back — the toy
 /// shape now lives ONLY at this legacy boundary, not in the broker.
 pub struct ExternalHookRunner {
     pub endpoint: String,
@@ -94,11 +94,10 @@ impl HookDispatch for ExternalHookRunner {
             "status": if text(get("status")).is_empty() { "Draft".to_string() } else { text(get("status")) },
             "total": num(get("total")),
         });
-        // WO-041: through the shared per-endpoint agent, like every other
-        // HTTP caller in the kernel. This is the legacy WO-002 hook runner and
-        // not on the hot path, but "one agent per endpoint" is a process-wide
-        // rule — an exception here would be a port leak waiting for the day
-        // someone puts it on a hot path.
+        // Through the shared per-endpoint agent, like every other HTTP caller
+        // in the kernel. This legacy hook runner is not on the hot path, but
+        // "one agent per endpoint" is a process-wide rule — an exception here
+        // would be a port leak waiting for the day someone puts it on a hot path.
         let mut res = crate::db::agent_for(&self.endpoint)
             .post(format!("{}/validate", self.endpoint))
             .send(hook_doc.to_string())
@@ -147,7 +146,7 @@ pub struct DocTypeMeta {
 #[derive(Debug, Clone, Deserialize)]
 pub struct FieldMeta {
     pub fieldname: String,
-    /// WO-028: the broker needs the declared type to re-type a record read
+    /// The broker needs the declared type to re-type a record read
     /// back for a hook — SurrealDB returns a decimal as a JSON string, so a
     /// `Currency` field would otherwise re-enter the hook as text.
     #[serde(default)]
@@ -165,8 +164,8 @@ fn docstatus_of(doc: &[(String, Value)]) -> Option<i64> {
 }
 
 /// Engine-level fields present on every synced table. `docstatus` is the
-/// lifecycle floor â€” readable everywhere it exists (WO-009: the Desk renders
-/// state it cannot see otherwise).
+/// lifecycle floor — readable everywhere it exists so the Desk can render
+/// state it cannot see otherwise.
 const ENGINE_FIELDS: [&str; 4] = ["id", "status", "owner", "docstatus"];
 
 // â”€â”€ The broker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -193,14 +192,12 @@ fn json_to_value(v: &serde_json::Value) -> Value {
 
 /// Are two field values the SAME VALUE (not merely the same representation)?
 ///
-/// WO-028's subtle half. A hook that reads a field and hands it straight back
-/// must not register as a change, or every hooked update rewrites the whole
-/// document and the lost-update race reopens. The trap is decimals: money
-/// crosses the hook boundary as a string (REQ-6.2.1), and SurrealDB normalises
-/// trailing zeros — so `50.98` read back can differ *textually* from `50.980`
-/// while being the identical amount. That is WO-016's
-/// representation-versus-value lesson landing in a new place, and comparing
-/// representations here would silently widen every write.
+/// A hook that reads a field and hands it straight back must not register as
+/// a change, or every hooked update rewrites the whole document and the
+/// lost-update race reopens. The trap is decimals: money crosses the hook
+/// boundary as a string, and SurrealDB normalises trailing zeros — so `50.98`
+/// read back can differ *textually* from `50.980` while being the identical
+/// amount. Comparing representations here would silently widen every write.
 fn same_value(a: &Value, b: &Value) -> bool {
     use crate::decimal::Decimal;
     let as_num = |v: &Value| -> Option<Decimal> {
@@ -223,35 +220,34 @@ fn same_value(a: &Value, b: &Value) -> bool {
 /// to make loud rather than silent, because the next read after a bump always
 /// goes to the database.
 ///
-/// **WO-040 Chunk B: the generation is per tenant.** It was one process-global
-/// counter, so a schema sync in any tenant cold-started every other tenant's
-/// metadata cache — correct, but a noisy-neighbour vector on a WO-026 cache.
+/// The generation is per tenant. A single process-global counter would let a
+/// schema sync in any tenant cold-start every other tenant's metadata cache —
+/// correct, but a noisy-neighbour vector on a per-request cache.
 pub fn invalidate_meta(tenant: &str) {
     crate::tenant_gen::invalidate_meta(tenant);
 }
 
 pub struct Broker {
     pub db: Db,
-    /// **WO-040 criterion 2:** shared, not owned. One wasmtime engine (and its
-    /// one epoch ticker) serves EVERY tenant — the WO-039 finding that an owned
-    /// `Box` would have made N tenants cost N engines + N threads, multiplying
-    /// the 60 MB idle footprint (P-1.4) by tenant count. Safe because the script
-    /// pool inside `WasmHooks` is already keyed `(tenant, doctype)`.
+    /// Shared, not owned. One wasmtime engine (and its one epoch ticker)
+    /// serves EVERY tenant — an owned `Box` would have made N tenants cost
+    /// N engines + N threads, multiplying the 60 MB idle footprint by tenant
+    /// count. Safe because the script pool inside `WasmHooks` is already keyed
+    /// `(tenant, doctype)`.
     pub hooks: std::sync::Arc<dyn HookDispatch>,
-    /// **WO-040 Chunk B:** this tenant's cache generations, resolved ONCE
-    /// here so the per-request path stays a single atomic load rather than a
-    /// registry lookup — trading a cross-tenant coupling for a cross-thread
-    /// one would be the worse deal at 16 workers.
+    /// This tenant's cache generations, resolved ONCE here so the per-request
+    /// path stays a single atomic load rather than a registry lookup — trading
+    /// a cross-tenant coupling for a cross-thread one would be the worse deal
+    /// at 16 workers.
     pub gens: crate::tenant_gen::TenantGenerations,
     /// (generation, meta) per doctype — see `load_doctype`.
     meta_cache: std::sync::Mutex<std::collections::HashMap<String, (u64, DocTypeMeta)>>,
-    /// **WO-043:** (generation, rules) per doctype, on the SAME generation
-    /// counter as the metadata cache — a notification is metadata, and the
-    /// route that writes one bumps the counter, so a new rule fires on the very
-    /// next write with no restart (criterion 1) while a write to a doctype with
-    /// no rules stays a hashmap hit rather than a query. Uncached, this would
-    /// have added a fourth DB round-trip to every write and re-created P-1.2 in
-    /// a new place.
+    /// (generation, rules) per doctype, on the SAME generation counter as the
+    /// metadata cache — a notification is metadata, and the route that writes
+    /// one bumps the counter, so a new rule fires on the very next write with
+    /// no restart while a write to a doctype with no rules stays a hashmap hit
+    /// rather than a query. Uncached, this would have added a fourth DB
+    /// round-trip to every write and reloaded metadata per request all over again.
     notif_cache: std::sync::Mutex<std::collections::HashMap<String, (u64, std::sync::Arc<Vec<crate::mail::NotificationDef>>)>>,
     /// Every broker query carries a server-side timeout (benchmark policy).
     pub query_timeout: &'static str,
@@ -264,8 +260,8 @@ impl Broker {
         Self::with_shared_hooks(db, std::sync::Arc::from(hooks))
     }
 
-    /// **The multi-tenant constructor (WO-040).** N tenant brokers built from
-    /// ONE `Arc<WasmHooks>`: one engine, one ticker, one component load, for the
+    /// **The multi-tenant constructor.** N tenant brokers built from ONE
+    /// `Arc<WasmHooks>`: one engine, one ticker, one component load, for the
     /// whole process. This is what keeps per-tenant cost at a `Db` plus a
     /// metadata cache — kilobytes — instead of a wasm engine apiece.
     pub fn with_shared_hooks(db: Db, hooks: std::sync::Arc<dyn HookDispatch>) -> Self {
@@ -280,13 +276,13 @@ impl Broker {
         }
     }
 
-    /// WO-026: the DocType metadata cache, invalidated by GENERATION.
+    /// The DocType metadata cache, invalidated by GENERATION.
     ///
     /// `load_doctype` ran a `SELECT` on **every** read, write and aggregate —
-    /// which the WO-026 probe measured as one of three DB round trips per
-    /// request, i.e. one third of the concurrency write ceiling. It is also
-    /// literally P-1.2 ("metadata loaded per request"), the Frappe pain point
-    /// this project criticized and then reproduced in mechanism.
+    /// one of three DB round trips per request, i.e. one third of the
+    /// concurrency write ceiling. It is also literally the "metadata loaded
+    /// per request" Frappe pain point this project criticized and then
+    /// reproduced in mechanism.
     ///
     /// **Invalidation is the work, not the caching.** A cache that serves stale
     /// metadata after a sync is the silent-wrong class this project exists to
@@ -320,13 +316,13 @@ impl Broker {
         Ok(meta)
     }
 
-    /// The current record, as the hook must see it (WO-028).
+    /// The current record, as the hook must see it.
     ///
     /// Read under the CALLER'S session, deliberately — this must not become a
     /// door to rows the caller cannot see. A caller who cannot read the record
     /// gets an empty baseline, and the write that follows is refused by the
-    /// same row permission with `E_WRITE_NO_ROWS` (ADR-012 Finding A), which is
-    /// the answer they would have got anyway.
+    /// same row permission with `E_WRITE_NO_ROWS`, which is the answer they
+    /// would have got anyway.
     fn record_for_hook(
         &self,
         caller: &Caller,
@@ -346,7 +342,7 @@ impl Broker {
                 // Type from the DocType, not from the JSON shape: SurrealDB
                 // returns a decimal as a STRING, so a `Currency` field would
                 // otherwise re-enter the hook as text and leave it as text —
-                // reopening the float/representation door WO-016 closed.
+                // reopening the float/representation door money handling closed.
                 let ft = meta.fields.iter().find(|f| f.fieldname == k).map(|f| f.fieldtype.as_str());
                 let val = match (ft, &v) {
                     (Some("Currency"), serde_json::Value::String(s)) => Value::Decimal(s.clone()),
@@ -394,8 +390,8 @@ impl Broker {
         let span = crate::telemetry::Span::begin("broker_verb")
             .field("verb", verb)
             .field("doctype", doctype);
-        // WO-013: the broker door admits before the verb runs. Absent policy
-        // is unlimited, so this is a compare-and-return on the hot path.
+        // The broker door admits before the verb runs. Absent policy is
+        // unlimited, so this is a compare-and-return on the hot path.
         let result = match crate::fairness::admit_verb(self.db.tenant_id()) {
             Ok(()) => run(),
             Err(e) => Err(e),
@@ -511,7 +507,7 @@ impl Broker {
         Ok(filtered)
     }
 
-    /// db-aggregate: closed metric surface (ADR-006 edge 5).
+    /// db-aggregate: closed metric surface.
     pub fn db_aggregate(
         &self,
         caller: &Caller,
@@ -575,8 +571,8 @@ impl Broker {
         Ok(rows.as_array().cloned().unwrap_or_default())
     }
 
-    /// db-write: hooks ALWAYS fire (no hook-free writes, ADR-006 edge 6);
-    /// the write itself executes under the caller's session.
+    /// db-write: hooks ALWAYS fire (no hook-free writes); the write itself
+    /// executes under the caller's session.
     pub fn db_write(
         &self,
         caller: &Caller,
@@ -591,12 +587,11 @@ impl Broker {
         })
     }
 
-    /// WO-018: take a workflow action on a document (REQ-4.1.2).
+    /// Take a workflow action on a document.
     ///
     /// **The kernel judges, then writes.** The judgement is ordinary Rust in
     /// `workflow.rs`, evaluated here *before* any state or docstatus value is
-    /// assembled — ADR-009 A2's "kernel logic evaluated before the kernel
-    /// attempts the transition", literally.
+    /// assembled — the kernel's logic runs before it attempts the transition.
     ///
     /// The write itself is a plain `db_write`, deliberately: hooks fire on it
     /// (both runtimes), the changefeed records it, and the trace carries it.
@@ -642,7 +637,7 @@ impl Broker {
             let Some(doc) = rows.first() else {
                 return Err(BrokerError::UnknownDoctype { name: key });
             };
-            // WO-031: empty state == not-yet-entered == initial (a Desk-created
+            // Empty state == not-yet-entered == initial (a Desk-created
             // doc carries an empty workflow_state).
             let current = wf
                 .state_or_initial(doc.get(crate::workflow::STATE_FIELD).and_then(|v| v.as_str()))
@@ -674,7 +669,7 @@ impl Broker {
                 Ok(_) => span.ok(),
                 Err(e) => span.err(e),
             }
-            // WO-043: the transition event. The inner write above has already
+            // The transition event. The inner write above has already
             // fired `on_update` (and `on_submit`, if this action crossed
             // docstatus into 1) — because a transition IS an update, and a rule
             // watching updates would be wrong to miss one. `on_transition` is
@@ -720,7 +715,7 @@ impl Broker {
         let Some(doc) = rows.first() else {
             return Err(BrokerError::UnknownDoctype { name: key });
         };
-        // WO-031: empty state == not-yet-entered == initial (see db_transition).
+        // Empty state == not-yet-entered == initial (see db_transition).
         let state = wf
             .state_or_initial(doc.get(crate::workflow::STATE_FIELD).and_then(|v| v.as_str()))
             .to_string();
@@ -746,16 +741,17 @@ impl Broker {
         let _chain = chain.push(&format!("{}:{record_key}", meta.name), HookClass::Validate)?;
         // _chain is carried into nested writes once hooks gain db-write.
 
-        // The FULL document goes to the hooks now (ADR-006 edge 3). We inject
-        // the record id so hooks that key on it still work, run validate
-        // (both classes, chained by the dispatcher), then take the mutated
-        // doc back verbatim â€” no field-by-field cherry-picking.
-        // WO-028: make the contract above TRUE. It was not: `doc` is the
-        // caller's PARTIAL payload, so on an update a hook saw only the fields
-        // being written. The accounting seed's reconciliation script then did
-        // `doc.lines || []` on an absent field, wrote `[]` back, and MERGE
-        // faithfully destroyed the stored child rows. Any hook that derives or
-        // echoes a field had the same power.
+        // The FULL document goes to the hooks now. We inject the record id so
+        // hooks that key on it still work, run validate (both classes, chained
+        // by the dispatcher), then take the mutated doc back verbatim — no
+        // field-by-field cherry-picking.
+        //
+        // The hook must see the full document, not the caller's PARTIAL
+        // payload: otherwise on an update a hook sees only the fields being
+        // written. A reconciliation script doing `doc.lines || []` on an absent
+        // field would write `[]` back, and MERGE would faithfully destroy the
+        // stored child rows. Any hook that derives or echoes a field has the
+        // same power.
         //
         // So on an update we read the current record UNDER THE CALLER'S OWN
         // SESSION (never root — reading a record to hand to a hook must not
@@ -776,7 +772,7 @@ impl Broker {
         if !hook_doc.iter().any(|(k, _)| k == "id") {
             hook_doc.push(("id".into(), Value::Text(format!("{}:{record_key}", meta.name))));
         }
-        // ── WO-053: before_insert, ahead of validate and creates only ──
+        // ── before_insert, ahead of validate and creates only ──
         //
         // Stated, not inherited: it fires only for a CREATE (there is no
         // "insert" to be before on an update), it is shown the same full
@@ -790,7 +786,7 @@ impl Broker {
             hook_doc = self.hooks.fire(HookClass::BeforeInsert, doctype, &hook_doc)?;
         }
 
-        // ── WO-053: the docstatus edges, BEFORE the write ──
+        // ── the docstatus edges, BEFORE the write ──
         //
         // The edge is computed from the baseline against the document about to
         // be written — the pre-commit twin of the post-commit derivation the
@@ -799,11 +795,9 @@ impl Broker {
         // and a rejection has to prevent the transition rather than annotate it
         // after the fact.
         //
-        // What that buys, and it is exactly what ADR-009 requires: a rejected
-        // 0→1 leaves docstatus 0 and the lattice EVENT never runs, because the
-        // WRITE never happens. The lattice stays the floor; no hook is anywhere
-        // near it. Nothing here touches the EVENT — the escalation clause this
-        // WO carried is not reached.
+        // What that buys: a rejected 0→1 leaves docstatus 0 and the lattice
+        // EVENT never runs, because the WRITE never happens. The lattice stays
+        // the floor; no hook is anywhere near it. Nothing here touches the EVENT.
         let edge_before = docstatus_of(&baseline).unwrap_or(0);
         let edge_after = docstatus_of(&hook_doc).unwrap_or(edge_before);
         for (from_to, class) in
@@ -821,24 +815,24 @@ impl Broker {
         let mut entries = self.hooks.validate(doctype, &hook_doc)?;
         // the injected id is a hook input, never a stored column
         entries.retain(|(k, _)| k != "id");
-        // WO-009: hook output is bounded by the metadata envelope â€” a hook
-        // cannot invent fields the doctype doesn't declare (SCHEMAFULL would
-        // reject them; SCHEMALESS gets the same discipline here)
+        // Hook output is bounded by the metadata envelope — a hook cannot
+        // invent fields the doctype doesn't declare (SCHEMAFULL would reject
+        // them; SCHEMALESS gets the same discipline here)
         entries.retain(|(k, _)| {
             meta.fields.iter().any(|f| &f.fieldname == k)
                 || ENGINE_FIELDS.contains(&k.as_str())
                 || k == "docstatus"
         });
 
-        // WO-028, the half that matters: persist ONLY what actually changed.
+        // The half that matters: persist ONLY what actually changed.
         //
         // Handing hooks the full document (above) means their output is now a
         // full document too. Writing all of it back would turn every hooked
         // partial update into a whole-record write — and under the concurrent
-        // loop WO-025 shipped, two disjoint partial updates to the same record
-        // would then clobber each other (both read version A, both write their
-        // own full merge, last writer wins, one delta silently lost). That
-        // would trade one silent-data-loss for another.
+        // request loop, two disjoint partial updates to the same record would
+        // then clobber each other (both read version A, both write their own
+        // full merge, last writer wins, one delta silently lost). That would
+        // trade one silent-data-loss for another.
         //
         // MERGE's atomic partial-write property is what made the old path safe;
         // the bug was letting the hook WIDEN the field set, not the merge. So a
@@ -866,8 +860,8 @@ impl Broker {
         let out = self.db.sql_as(&caller.user, &caller.pass, &q)?;
         let row = out.as_array().and_then(|a| a.first()).cloned();
 
-        // WO-018 FINDING: an UPDATE the DB refuses returns an EMPTY RESULT
-        // SET, not an error. Returning `Null` here made a permission-denied
+        // An UPDATE the DB refuses returns an EMPTY RESULT SET, not an error.
+        // Returning `Null` here made a permission-denied
         // write look like a successful one — the caller got `Ok`, nothing
         // changed, and nobody was told. That is silent misbehaviour on the
         // write path, which is the failure mode this project exists to refuse.
@@ -885,18 +879,17 @@ impl Broker {
                     record.unwrap_or("?")
                 ),
             }),
-            // WO-057: the CREATE half of the same finding. WO-020 wrote this
-            // guard for UPDATE and CREATE fell through the catch-all below, so
-            // a create the database refused came back as `Ok(Null)` - and the
+            // The CREATE half of the same finding. The guard above was written
+            // for UPDATE and CREATE fell through the catch-all below, so a
+            // create the database refused came back as `Ok(Null)` - and the
             // REST door dressed it up as `{"action":"created","record":null}`.
             // A write that persisted nothing must never report success.
             //
             // A CREATE returning no row has ONE meaning, unlike UPDATE's two:
-            // the insert was refused. The table is write-closed (ADR-010
-            // rollups, and the kernel-owned registries that share the pattern)
-            // or this role may not create in it. There is no legitimate
-            // zero-row create to confuse it with - a create that succeeds
-            // always returns its record.
+            // the insert was refused. The table is write-closed (rollups, and
+            // the kernel-owned registries that share the pattern) or this role
+            // may not create in it. There is no legitimate zero-row create to
+            // confuse it with - a create that succeeds always returns its record.
             (WriteOp::Create, None) => Err(BrokerError::PermissionDenied {
                 detail: format!(
                     "E_WRITE_NO_ROWS: create in {} stored nothing: the table is write-closed \
@@ -906,7 +899,7 @@ impl Broker {
             }),
             _ => {
                 let stored = row.unwrap_or(serde_json::Value::Null);
-                // ── WO-043: the lifecycle events, AFTER the write committed ──
+                // ── the lifecycle events, AFTER the write committed ──
                 //
                 // Docstatus edges are derived by comparing the baseline the hook
                 // was shown with what the DB actually stored, rather than by
@@ -938,7 +931,7 @@ impl Broker {
         }
     }
 
-    // ── WO-043: notifications ───────────────────────────────────────────────
+    // ── notifications ───────────────────────────────────────────────────────
 
     /// This DocType's notification rules, generation-cached (see `notif_cache`).
     fn notification_rules(
@@ -972,12 +965,12 @@ impl Broker {
     /// save failed when it did not, which is a worse lie than a missing email.
     /// So the failure path is: log at ERROR with the reason, count it in
     /// `/metrics`, and return. That is the honest shape of "the mutation
-    /// survived, the notification did not" (criterion 4).
+    /// survived, the notification did not".
     ///
     /// `stored` is the record the DB returned from the write — not the caller's
     /// payload and not the hook's view. That matters for money: a Currency field
     /// comes back as SurrealDB stored it, so a template renders the stored
-    /// decimal string and nothing recomputes it (ADR-007).
+    /// decimal string and nothing recomputes it.
     fn fire_notifications(
         &self,
         doctype: &str,
@@ -1066,7 +1059,7 @@ impl Broker {
     }
 
     /// Enqueue one rendered message. A row in the outbox, nothing more — the
-    /// request path never opens a socket (criterion 2).
+    /// request path never opens a socket.
     fn enqueue_mail(
         &self,
         rule: &crate::mail::NotificationDef,
@@ -1133,7 +1126,7 @@ impl Broker {
         Ok(())
     }
 
-    /// enqueue: identity captured, authority re-derived at run (ADR-006 #4).
+    /// enqueue: identity captured, authority re-derived at run.
     pub fn enqueue(
         &self,
         caller: &Caller,
@@ -1153,11 +1146,11 @@ impl Broker {
             return Err(BrokerError::InvalidValue { detail: "bad job kind".into() });
         }
         let payload_s = surql::render_value(&Value::Object(payload.to_vec()))?;
-        // identity, not authority: who asked â€” permissions re-evaluate at run.
-        // The job record carries the ORIGINATING TRACE (REQ-6.4.1): the worker
-        // adopts it at run, so one trace spans enqueue -> claim -> effect.
-        // the job carries its TENANT (worker-door fairness, WO-013) and its
-        // originating TRACE (REQ-6.4.1) â€” both are accounting the queue owes
+        // identity, not authority: who asked — permissions re-evaluate at run.
+        // The job record carries the ORIGINATING TRACE: the worker adopts it at
+        // run, so one trace spans enqueue -> claim -> effect. The job also
+        // carries its TENANT (worker-door fairness) — both are accounting the
+        // queue owes
         let q = format!(
             "CREATE job SET kind = '{job_kind}', payload = {payload_s}, status = 'queued', \
              requested_by = '{}', tenant = '{}', trace = '{}', enqueued_at = time::now();",

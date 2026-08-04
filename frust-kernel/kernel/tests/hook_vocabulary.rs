@@ -1,4 +1,4 @@
-//! WO-053: REQ-2.2.1's lifecycle set, and each event's contract **stated**.
+//! The lifecycle hook set, and each event's contract **stated**.
 //!
 //! The founding MUST names four subscription points. Until this WO exactly one
 //! of them reached a script. The other three are here — and the one that
@@ -140,7 +140,7 @@ fn before_insert_stamps_a_create_and_skips_updates() {
 
 /// **THE LOAD-BEARING TEST.** A rejecting `on_submit` blocks the transition:
 /// the document stays at docstatus 0, and it does so because the write never
-/// happened — the lattice EVENT (ADR-009's one resident) is not involved,
+/// happened — the lattice EVENT is not involved,
 /// consulted, or modified.
 #[test]
 fn a_rejected_on_submit_leaves_docstatus_0_and_the_lattice_untouched() {
@@ -264,9 +264,9 @@ fn on_cancel_fires_on_the_edge_into_2() {
     assert!(format!("{err:?}").contains("cancel refused"));
 }
 
-// ── composition per class (ADR-015, generalized) ───────────────────────────
+// ── composition per class ─────────────────────────────────────────────────
 
-/// WO-049's silent-override scenario, **re-run per class**. Two apps subscribe
+/// The silent-override scenario, **re-run per class**. Two apps subscribe
 /// to the same event on the same DocType; both must run, owner first, neither
 /// silently replacing the other.
 #[test]
@@ -322,7 +322,7 @@ fn a_subscription_is_confined_to_its_class() {
     assert_eq!(row["docstatus"], serde_json::json!(0));
 }
 
-// ── the door (WO-019's rule, grown) ────────────────────────────────────────
+// ── the door ──────────────────────────────────────────────────────────────
 
 /// A hook point that does not exist is refused AT INSTALL, naming the ones
 /// that do — never accepted and then silently never fired.

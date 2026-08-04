@@ -1,9 +1,9 @@
-//! WO-005 module 6 / exit criterion 2 completion: REST is the THIRD consumer
+//! REST is the THIRD consumer
 //! of the one permission compiler. Same role metadata, byte-equal row/field
 //! filtering via (a) direct broker db_read [the plugin/Desk path] and (b) the
 //! REST endpoint [external clients + Desk-as-client]. One test, the doors.
 //!
-//! Uses the WO-002 skeleton dataset (ns frust / db skeleton, purchase_order,
+//! Uses the skeleton dataset (ns frust / db skeleton, purchase_order,
 //! clerk1/clerk2/manager). Boots a Rest on an ephemeral port in-process.
 
 use std::sync::Arc;
@@ -19,8 +19,7 @@ fn artifacts() -> &'static str {
 
 mod common;
 
-/// WO-020 criterion 5: SELF-SEEDING (was `DbConfig::default()` over ambient
-/// `skeleton`). The REST-vs-broker byte-equality proof now stands on a fixture
+/// SELF-SEEDING: the REST-vs-broker byte-equality proof stands on a fixture
 /// this file builds itself.
 fn broker() -> Arc<Broker> {
     let (b, _cfg) = common::seeded_broker("rs_fixture");
@@ -46,8 +45,8 @@ fn start_rest(broker: Arc<Broker>, port: u16) -> String {
     url
 }
 
-/// WO-009 criterion 1: sessions. Login proves credentials; the ROLE comes
-/// back from the DB, not from anything the client claimed.
+/// Sessions: login proves credentials; the ROLE comes back from the DB, not
+/// from anything the client claimed.
 fn login(url: &str, user: &str) -> (String, String) {
     let mut res = ureq::post(format!("{url}/login"))
         .send(serde_json::json!({ "user": user, "pass": format!("pw-{user}") }).to_string())
@@ -131,7 +130,7 @@ fn rest_structured_filter() {
     assert!(rows.len() <= 5, "limit honored");
 }
 
-/// WO-009 criterion 1, the kill-proof: X-Frust-Role is DELETED. A request
+/// The kill-proof: X-Frust-Role is DELETED. A request
 /// with no session is 401 regardless of headers; a clerk session dragging
 /// the old manager-role header gets exactly the clerk's rows and fields â€”
 /// the claim has nowhere to land.

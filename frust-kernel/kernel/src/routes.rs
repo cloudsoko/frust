@@ -1,4 +1,4 @@
-//! WO-019 criterion 1: plugin-declared REST routes (REQ-2.2.2).
+//! Plugin-declared REST routes.
 //!
 //! **This module is deliberately absent from `surql_monopoly`'s allowlist.**
 //! That is the point: a plugin route reaches data only by calling broker
@@ -25,7 +25,7 @@ use crate::contract::BrokerError;
 
 wasmtime::component::bindgen!({ path: "../wit", world: "route-plugin" });
 
-/// Same wall-clock and memory posture as a hook (ADR-005): a route handler is
+/// Same wall-clock and memory posture as a hook: a route handler is
 /// untrusted guest code reached from the network, so it gets the stricter of
 /// the two treatments, never a relaxed one.
 const CALL_DEADLINE_TICKS: u64 = 50;
@@ -65,13 +65,13 @@ impl frust::plugin::host_api::Host for RouteState {
 /// - **cannot be someone else** — the `Caller` comes from `self.door`, which
 ///   the host bound from the request it is serving.
 /// - **cannot write a query** — `doctype` is identifier-checked by the broker
-///   and `filter` is parsed into the typed ADR-006 `Filter` tree. SurrealQL in
+///   and `filter` is parsed into the typed `Filter` tree. SurrealQL in
 ///   either is a parse error, never text that reaches the database.
 /// - **cannot get a handle** — `db-read` is the whole surface; `Db` is not
 ///   reachable from the guest's world at all.
 /// - **is not a second permission compiler** — this calls `Broker::db_read`,
 ///   the same one the Desk and REST use, so row rules are enforced by the DB
-///   under the caller's own session (ADR-003).
+///   under the caller's own session.
 impl frust::plugin::db_api::Host for RouteState {
     fn db_read(
         &mut self,
@@ -86,7 +86,7 @@ impl frust::plugin::db_api::Host for RouteState {
             "" | "null" => None,
             raw => Some(serde_json::from_str(raw).map_err(|e| {
                 format!(
-                    "FRUST:E_BAD_FILTER: filter must be a structured ADR-006 filter, not text ({e})"
+                    "FRUST:E_BAD_FILTER: filter must be a structured filter object, not query text ({e})"
                 )
             })?),
         };
@@ -198,9 +198,9 @@ impl RouteHost {
         body: &str,
     ) -> Result<(u16, String), BrokerError> {
         let _serial = self.lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        // WO-010's reconstruction property extends to third-party surface on
-        // day one: `app` is a span field, so a trace through a plugin route
-        // names WHOSE code ran, not just that guest code ran.
+        // `app` is a span field, so a trace through a plugin route names WHOSE
+        // code ran, not just that guest code ran — third-party surface stays
+        // reconstructable from logs like every other request.
         let span = crate::telemetry::Span::begin("route_dispatch")
             .field("app", app)
             .field("path", path);

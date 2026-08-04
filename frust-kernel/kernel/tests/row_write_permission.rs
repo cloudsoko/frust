@@ -1,4 +1,4 @@
-//! WO-020: the row-write permission (Finding B), ADR option 2.
+//! The row-write permission: ownership plus the submittable-draft gate.
 //!
 //! The four-way enforcement proof, each asserted **through the broker under
 //! the caller's own session** — "the DB is the enforcer" is only true if the
