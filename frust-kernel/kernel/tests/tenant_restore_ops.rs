@@ -1,10 +1,10 @@
-//! **WO-040 Chunk C: per-tenant restore, executed — the P-8.1 evidence.**
+//! **Per-tenant restore, executed — the per-tenant-restore evidence.**
 //!
-//! WO-027 measured the cost of a single shared database: `surreal export` is
-//! per-database, so restore-one *was* restore-all, and P-8.1 was scored
-//! **bounded by architecture**. WO-039 proved database-per-tenant lifts it.
-//! This closes it for the namespace topologies too, and it does so by
-//! **running the ops path**, not by asserting a plan.
+//! `surreal export` is per-database, so with a single shared database
+//! restore-one *was* restore-all, and per-tenant restore stayed **bounded by
+//! architecture**. Database-per-tenant lifts it. This closes it for the
+//! namespace topologies too, and it does so by **running the ops path**,
+//! not by asserting a plan.
 //!
 //! The plan comes from the strategy (`backup_plan` → `--ns` / `--db`), the
 //! export and import are the real `surreal` CLI, and the assertions are
@@ -89,9 +89,9 @@ fn surreal_io(verb: &str, ns: &str, db: &str, file: &str) {
     );
 }
 
-/// **P-8.1, executed: restore one tenant, leave every other untouched.**
+/// **Per-tenant restore, executed: restore one tenant, leave every other untouched.**
 ///
-/// Run under `namespace-per-tenant`, the topology Chunk C adds — and the one
+/// Run under `namespace-per-tenant` — and the one
 /// where "the tenant" and "the database" are least alike, since every tenant's
 /// database is called `app`.
 #[test]
@@ -124,9 +124,9 @@ fn one_tenant_restores_and_the_others_do_not_move() {
     assert_eq!(bodies(&a), vec!["a-corrupted"]);
     assert_eq!(bodies(&b), vec!["b-original", "b-written-after-export"]);
 
-    // **FINDING (WO-040 Chunk C): `surreal import` is ADDITIVE, not
+    // **`surreal import` is ADDITIVE, not
     // restore-over.** Importing onto live data fails with "Database record
-    // `ledger:…` already exists" — WO-027 and WO-039 both imported into a
+    // `ledger:…` already exists" — earlier restore tests imported into a
     // *fresh* database and so never met this. So the real per-tenant restore
     // procedure has three steps, not two: **drop the target database, then
     // import into it.** Anyone who scripts export→import without the drop has
@@ -187,9 +187,9 @@ fn the_shared_topology_refuses_to_promise_a_tenant_isolated_restore() {
     );
 }
 
-/// **ADR-013 stays closed under a namespace topology.**
+/// **The keyguard stays closed under a namespace topology.**
 ///
-/// Chunk A found `keyguard.rs` forging its probe token with the tenant id as
+/// `keyguard.rs` was forging its probe token with the tenant id as
 /// the `db` claim — correct by coincidence under database-per-tenant, and
 /// under a namespace topology it would name a database that does not exist,
 /// so the store would refuse the forged token for the WRONG REASON and be

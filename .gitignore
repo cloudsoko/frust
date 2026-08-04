@@ -54,13 +54,10 @@ node_modules/
 __pycache__/
 *.py[cod]
 
-# Obsidian per-machine workspace state — the NOTES are committed, the editor's
-# window layout and caches are not.
-/frust/.obsidian/workspace*
-/frust/.obsidian/cache*
-/frust/.obsidian/plugins/
-/frust/.playwright-mcp/
-/frust/.claudian/
+# ── Internal PM vault (private) ─────────────────────────────────────────────
+# The knowledge base lives in its own private repository. It remains on disk
+# for the operator but is never part of this public tree.
+/frust/
 
 # ── OS / editor ─────────────────────────────────────────────────────────────
 Thumbs.db

@@ -1,12 +1,9 @@
-//! **Per-request tenant routing** — WO-040 Chunk B2, the WO's own title made
-//! real: *one process, N tenants*.
+//! **Per-request tenant routing**: one process, N tenants.
 //!
-//! Chunk A built the seam, Chunk B proved the strategies and un-coupled the
-//! caches — but `frust serve` still resolved **one** tenant at boot and
-//! refused a roster larger than one. This is the piece that makes a request
-//! find its own tenant.
+//! `frust serve` resolves each registered tenant at boot; this module is the
+//! piece that makes an incoming request find its own tenant.
 //!
-//! ## The mechanism (the ratified option-(a) ruling, under ADR-003 invariant 3)
+//! ## The mechanism
 //!
 //! 1. **`/login` is told which tenant** — a `tenant` field in the payload, or
 //!    the request's subdomain. It must be: `/login` has no token yet and has
@@ -21,9 +18,8 @@
 //!
 //! Presenting `tenant_b.<my-own-secret>` routes the lookup **into B's
 //! database**, where that token does not exist → 401. There is no shared
-//! session table to find it in — which is exactly the property WO-039 proved
-//! and [[2026-07-28 WO-040 chunk A tenant routing decision]] refused to trade
-//! away. An unregistered prefix does not resolve at all.
+//! session table to find it in — this isolation is a property the design
+//! refuses to trade away. An unregistered prefix does not resolve at all.
 //!
 //! ## Why resolution is not re-run per request
 //!

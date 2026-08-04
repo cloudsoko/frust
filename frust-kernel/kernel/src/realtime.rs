@@ -1,17 +1,17 @@
-//! WO-012: kernel-owned live subscriptions (ADR-011, executed).
+//! Kernel-owned live subscriptions.
 //!
 //! A subscription is a per-user `LIVE SELECT` held BY THE KERNEL over a WS
 //! RPC connection authenticated with the subscriber's own record JWT — the
-//! DB enforces the row clause on the push path (REQ-6.5.1); the kernel never
+//! DB enforces the row clause on the push path; the kernel never
 //! filters it. Notifications are buffered as INVALIDATION TICKS (action +
 //! record id, no row data): clients refetch through the normal read door, so
 //! the push path carries nothing a leak could ride on.
 //!
-//! The measured limits (WO-011): parked LIVEs are free at idle, but every
+//! The measured limits: parked LIVEs are free at idle, but every
 //! write pays ~70 µs per subscription on its table — so subscriptions are
 //! BUDGETED per table, and idle ones (no poll for IDLE_REAP) are reaped:
 //! parked count tracks focused views, not open tabs. Over budget is a loud
-//! typed refusal; the client stays on polling (REQ-6.5.2, transparent).
+//! typed refusal; the client stays on polling (transparently).
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -21,21 +21,21 @@ use crate::contract::BrokerError;
 use crate::telemetry;
 use crate::wsrpc::WsRpc;
 
-/// The measured budget. WO-011 estimated ~70 µs/sub client-side; the
+/// The measured budget. Early estimates put it at ~70 µs/sub client-side; the
 /// kernel-side curve (`live_tax_curve`, bracketed against drift) confirms
 /// ~50-100 µs/sub: +1 ms at 5-20 parked subs, +2 ms at 30, +4 ms at 40.
 /// 20 is the largest budget whose tax stays inside `LIVE_TAX_BUDGET_MS`.
 /// Raising it requires the gate to stay green — never the gate to widen.
 ///
-/// WO-017 examined this figure and left it ALONE. See the item 3 build log:
-/// the gate that would justify changing it was measuring an order effect, not
-/// subscription cost — lowering the budget to 12 made the measured "tax" go
-/// UP, which is not a thing a real per-subscription cost can do.
+/// This figure has been examined and left alone: the gate that would justify
+/// changing it was measuring an order effect, not subscription cost —
+/// lowering the budget to 12 made the measured "tax" go UP, which is not a
+/// thing a real per-subscription cost can do.
 pub const LIVE_SUB_BUDGET_PER_TABLE: usize = 20;
 
 /// How much of the writer's latency realtime may cost at full budget. CI
 /// asserts it (`gate_submit_with_live_subscriptions`). This is a SEPARATE
-/// allowance from REQ-6.1.1's 25 ms floor, deliberately: the floor is a
+/// allowance from the 25 ms write-path floor, deliberately: the floor is a
 /// contract about the write path, and quietly widening it to absorb an
 /// optional feature would be a spec change by stealth.
 pub const LIVE_TAX_BUDGET_MS: u128 = 2;
@@ -62,10 +62,9 @@ pub struct Realtime {
 }
 
 impl Realtime {
-    /// WO-040: no longer holds a namespace. It used to store one at
-    /// construction and `use` it with whatever tenant string a caller passed —
-    /// a ns/db selection on the shared client, outside the seam. Placement now
-    /// arrives per subscription, on a `ResolvedTenant` nobody can forge.
+    /// Holds no namespace. Placement arrives per subscription, on a
+    /// `ResolvedTenant` nobody can forge — never a ns/db selection on the
+    /// shared client, outside the tenancy seam.
     pub fn new(endpoint: &str) -> Self {
         let addr = endpoint.trim_start_matches("http://").trim_start_matches("https://").to_string();
         Self { addr, subs: Mutex::new(HashMap::new()) }
@@ -170,7 +169,7 @@ impl Realtime {
     }
 
     /// Drains buffered ticks. `alive = false` tells the client its LIVE died
-    /// (surreal restart): reconnect = resubscribe + refetch (ADR-011).
+    /// (surreal restart): reconnect = resubscribe + refetch.
     pub fn drain(&self, sub_id: &str, user: &str) -> Result<(Vec<serde_json::Value>, bool), BrokerError> {
         let sub = self
             .subs

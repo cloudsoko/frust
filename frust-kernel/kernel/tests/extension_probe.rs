@@ -1,8 +1,7 @@
-//! WO-049: the cross-app extension probe (ADR-015's evidence).
+//! The cross-app extension probe.
 //!
-//! **Predictions are stated in the WO and asserted here as whichever reality
-//! holds** (the WO-036 discipline: the probe must not encode its prediction, or
-//! a wrong prediction reads as a defect).
+//! **Predictions are asserted here as whichever reality holds** — the probe
+//! must not encode its prediction, or a wrong prediction reads as a defect.
 //!
 //! **No production bypass exists, not even in a test build.** `owns` is a live
 //! boundary in every artifact; this probe does not touch `app.rs`. Instead it
@@ -101,7 +100,7 @@ fn what_happens_when_a_second_app_hooks_someone_elses_doctype() {
     // let it through. Note there is ONE slot to write into.
     //
     // B's field is DECLARED, not decorative. The first run of this probe left
-    // it undeclared and reported "neither hook ran" — because WO-009's envelope
+    // it undeclared and reported "neither hook ran" — because the read envelope
     // filter silently strips any field the doctype does not declare, so B's
     // output vanished and looked exactly like B never executing. That is a
     // finding in its own right, and it is why this line exists.
@@ -124,11 +123,11 @@ fn what_happens_when_a_second_app_hooks_someone_elses_doctype() {
     let ext_ran = after["ext_ran"] == serde_json::json!("B");
 
     if owner_survived && ext_ran {
-        println!("OBSERVED: both hooks composed — owner-first chain holds (WO-050)");
+        println!("OBSERVED: both hooks composed — owner-first chain holds");
     } else if ext_ran && !owner_survived {
         println!(
             "OBSERVED: B REPLACED A silently. The owner's hook stopped running and \
-             nothing reported it — this is P-2.2 exactly, and `owns` is the only thing \
+             nothing reported it — this is the silent-override pain exactly, and `owns` is the only thing \
              standing between the product and it."
         );
     } else if owner_survived && !ext_ran {
@@ -140,16 +139,16 @@ fn what_happens_when_a_second_app_hooks_someone_elses_doctype() {
     // Asserted as the *fact*, not the prediction: exactly one of the two ran,
     // and the doc records which. If a future build makes both run, this
     // assertion fails and demands a re-read — which is the point.
-    // **WO-050 criterion 2: the permanent failing control.**
+    // The permanent failing control.
     //
-    // This assertion was `owner ^ ext` when WO-049 measured the single-slot
-    // shape and B silently replaced A. It is now `owner && ext`, and it is the
+    // This assertion was `owner ^ ext` back when the single-slot shape let B
+    // silently replace A. It is now `owner && ext`, and it is the
     // guard that makes displacement unbuildable rather than merely refused: if
     // any future change lets an extension skip, reorder or replace the owner's
     // hook, this goes red naming which half vanished.
     assert!(
         owner_survived,
-        "THE OWNER'S HOOK WAS DISPLACED — this is P-2.2 (owner_ran={owner_survived}, ext_ran={ext_ran})"
+        "THE OWNER'S HOOK WAS DISPLACED — this is the silent-override pain (owner_ran={owner_survived}, ext_ran={ext_ran})"
     );
     assert!(ext_ran, "the extension's hook did not run (owner_ran={owner_survived}, ext_ran={ext_ran})");
 
@@ -170,18 +169,17 @@ fn what_happens_when_a_second_app_hooks_someone_elses_doctype() {
     );
 }
 
-/// **WO-050 criterion 3: the keys are widened.**
+/// The pool and cache keys are widened per app.
 ///
-/// WO-049 pinned these as 2-tuples to record the pre-build state; the build
-/// changed them, and this now pins the state that makes composition possible.
-/// The pool key is the load-bearing half: `(tenant, doctype)` held ONE instance
-/// per DocType, so a second contributor could only evict the first.
+/// These keys were once 2-tuples; the current shape pins the state that makes
+/// composition possible. The pool key is the load-bearing half: `(tenant, doctype)`
+/// held ONE instance per DocType, so a second contributor could only evict the first.
 #[test]
 fn the_script_pool_is_keyed_per_app() {
     let src = include_str!("../src/hooks.rs");
     // Matched on the PREFIX, not the whole tuple: the property this guard
-    // exists to protect is "app is part of the key", and WO-053 legitimately
-    // widened it further to `(tenant, doctype, app, class)` so one app can
+    // exists to protect is "app is part of the key", and it was later legitimately
+    // widened further to `(tenant, doctype, app, class)` so one app can
     // subscribe to several events on one DocType. An exact-tuple match cannot
     // tell a widening from a narrowing, and only the narrowing is the bug.
     let pool_keyed_at_least_per_app =
@@ -192,17 +190,17 @@ fn the_script_pool_is_keyed_per_app() {
         "the pool key narrowed back to a pair — an extension can evict the owner's instance"
     );
 
-    // the WO-048 cache stays keyed per doctype but now CARRIES the whole plan,
+    // the script cache stays keyed per doctype but now CARRIES the whole plan,
     // so one generation check covers every app's script at once
     let cache_plan = src.contains("script_cache: Mutex<HashMap<(String, String), (u64, crate::sync::HookPlan)>>");
-    println!("C3 WO-048 cache carries the whole HookPlan: {cache_plan}");
+    println!("C3 script cache carries the whole HookPlan: {cache_plan}");
     assert!(cache_plan, "script cache shape changed — re-read before trusting this suite");
 }
 
-/// **WO-050 criterion 4: attribution.**
+/// Per-app hook attribution.
 ///
 /// "Which app changed this behaviour" must be a log field, not an archaeology
-/// exercise — that is P-2.2's actual complaint, and this is where it is answered
+/// exercise — that is the silent-override pain's actual complaint, and this is where it is answered
 /// checkably.
 #[test]
 fn hook_dispatch_attributes_each_hook_to_its_app() {

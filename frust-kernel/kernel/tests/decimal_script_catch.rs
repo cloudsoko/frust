@@ -1,10 +1,10 @@
-//! WO-017 item 3: the decimal NaN-catch, proven in the KERNEL host.
+//! The decimal NaN-catch, proven in the KERNEL host.
 //!
-//! The WO-001 shell records each field's WIT variant kind on the way in and
+//! The shell records each field's WIT variant kind on the way in and
 //! re-imposes it on the way out. This asserts the other half of that contract:
 //! the shell REFUSING to re-impose what a script corrupted. Money that a
 //! script turned into a float, a NaN, or another type is rejected loudly and
-//! never stored (REQ-6.2.1).
+//! never stored.
 //!
 //! The engine lives in the shared artifact, so every case here holds in the
 //! browser host too — verified separately in the Desk.

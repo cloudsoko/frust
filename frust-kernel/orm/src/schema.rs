@@ -18,8 +18,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// The kinds of schema object the framework emits. `Event` joined in WO-005
-/// module 3 (ADR-009: the docstatus lattice is the DB tier's one resident).
+/// The kinds of schema object the framework emits. The docstatus lattice is
+/// the DB tier's one resident, carried as an `Event`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ObjectKind {
@@ -367,7 +367,7 @@ DEFINE INDEX OVERWRITE note_title_idx ON TABLE note FIELDS title;
         assert_eq!(d.warnings(), vec!["ALTER FIELD title"]);
     }
 
-    // ---- WO-005 module 3: EVENT in the sync vocabulary (ADR-009) ----
+    // ---- EVENT in the sync vocabulary ----
 
     const NOTE_V1_EVENT: &str = "\
 DEFINE TABLE OVERWRITE note SCHEMAFULL;

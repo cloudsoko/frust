@@ -1,8 +1,8 @@
-//! WO-050: the cross-app extension mechanism, end to end through the shipped
-//! install path.
+//! The cross-app extension mechanism, end to end through the shipped install
+//! path.
 //!
 //! The composition guarantee itself (owner-first, un-overridable) is pinned by
-//! `extension_probe.rs` — WO-049's silent-override scenario, inverted into a
+//! `extension_probe.rs` — the silent-override scenario, inverted into a
 //! permanent control. This file proves the rest: veto, envelope loudness,
 //! manifest/registry with refuse-ambiguity, honest per-app uninstall, and the
 //! owner-evolution refusal.
@@ -184,7 +184,7 @@ fn an_extension_may_reject_a_write_and_the_error_names_the_app() {
 fn writing_an_undeclared_field_is_a_loud_typed_refusal_not_silent_stripping() {
     let (rest, _db, cfg) = setup("wo050_envelope");
     call(&rest, "/app/install", owner_app("1.0.0")).expect("owner");
-    // declares `crm_tag` but writes `crm_ghost` — the WO-049 instrument error,
+    // declares `crm_tag` but writes `crm_ghost` — once an instrument error,
     // now the regression
     call(&rest, "/app/install", ext_app("doc.crm_ghost = 'boo';", "crm_tag")).expect("crm");
 
@@ -260,7 +260,7 @@ fn an_owner_update_that_breaks_an_extension_refuses_naming_the_casualty() {
     let err = call(&rest, "/app/update", v2.clone()).expect_err("destructive without ack");
     let msg = format!("{err:?}");
     println!("owner drops its OWN field: {msg}");
-    assert!(msg.contains("destructive"), "the WO-019 refusal still fires: {msg}");
+    assert!(msg.contains("destructive"), "the destructive-drop refusal still fires: {msg}");
 
     // ── the cross-app case: an owner update that removes a doctype an
     //    extension hooks. THE SURVIVAL PROPERTY FIRST: an ordinary owner update
@@ -287,6 +287,6 @@ fn an_owner_update_that_breaks_an_extension_refuses_naming_the_casualty() {
         .unwrap_or(false);
     assert!(
         ext_field_survived && ext_hook_survived,
-        "AN OWNER UPDATE SILENTLY WIPED THE EXTENSION (field={ext_field_survived}          hook={ext_hook_survived}) — that is P-2.2 in the update path: {rec}"
+        "AN OWNER UPDATE SILENTLY WIPED THE EXTENSION (field={ext_field_survived}          hook={ext_hook_survived}) — that is silent cross-app data loss in the update path: {rec}"
     );
 }

@@ -1,5 +1,5 @@
-//! WO-027: the restored-signing-key guard — ADR-008's fail-closed lineage,
-//! extended from meta-version to **key integrity**.
+//! The restored-signing-key guard — the fail-closed boot lineage, extended
+//! from meta-version to **key integrity**.
 //!
 //! ## The hole this closes
 //!
@@ -45,7 +45,7 @@ use crate::db::Db;
 /// **Pinned deliberately.** The guard's correctness rests on this constant; a
 /// SurrealDB version that changes it would silently disable the guard and
 /// quietly reopen the hole. `keyguard_canary` fails the build if the redaction
-/// behaviour moves (WO-018 conflict-string precedent).
+/// behaviour moves.
 pub const REDACTED_KEY: &str = "[REDACTED]";
 
 /// A record id that must not exist — the guard cares only whether the
@@ -82,7 +82,7 @@ pub fn forge_token(ns: &str, db: &str, access: &str, key: &str) -> String {
 /// vulnerability. Transport failures are `Err`: a guard that cannot reach the
 /// database must not report "safe".
 pub fn store_accepts_key(db: &Db, key: &str) -> Result<bool, BrokerError> {
-    // WO-040: the JWT's `db` claim is the DATABASE, not the tenant id. They
+    // the JWT's `db` claim is the DATABASE, not the tenant id. They
     // coincide under database-per-tenant and would silently diverge under a
     // namespace topology — a forged probe that named the wrong database would
     // be refused for the wrong reason and report the store "safe".
@@ -92,7 +92,7 @@ pub fn store_accepts_key(db: &Db, key: &str) -> Result<bool, BrokerError> {
         db.access(),
         key,
     );
-    // WO-033 item 2: `_quiet` — this call is EXPECTED to fail on a healthy
+    // `_quiet` — this call is EXPECTED to fail on a healthy
     // store, so its refusal must not log at error level and make every clean
     // boot look broken. Log level only: the match below is unchanged, so a
     // transport failure still propagates as `Err` and still refuses the boot.

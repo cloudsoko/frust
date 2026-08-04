@@ -1,5 +1,5 @@
-//! WO-012: the writer-tax curve through the KERNEL's own subscriptions.
-//! Sets the live-subscription budget from measurement instead of the spike's
+//! The writer-tax curve through the KERNEL's own subscriptions. Sets the
+//! live-subscription budget from measurement instead of the spike's
 //! client-side estimate. Run explicitly:
 //!
 //!   cargo test --release --test live_tax_curve -- --ignored --nocapture

@@ -1,8 +1,8 @@
-﻿//! WO-010: observability (REQ-6.4). Structured JSON-lines logs with
+﻿//! Observability. Structured JSON-lines logs with
 //! end-to-end trace IDs, an in-process metrics registry rendered as
 //! Prometheus text, and per-tenant attribution â€” all in the kernel's own
 //! output. No collector, no sidecar, no new crates: the two-process
-//! deployment stays two processes (P-2.3).
+//! deployment stays two processes.
 //!
 //! Trace context is THREAD-LOCAL: the kernel is sync and each request/job
 //! runs to completion on one thread (tiny_http accept loop, worker tick),
@@ -186,7 +186,7 @@ pub fn emit(level: Level, event: &str, fields: &[(&str, serde_json::Value)]) {
 }
 
 /// Extracts the machine code from an error's display form, so `FRUST:E_*`
-/// and friends stay grep-able fields (REQ-6.4 criterion 4: codes survive).
+/// and friends stay grep-able fields (machine codes survive as fields).
 pub fn error_code(err: &crate::contract::BrokerError) -> String {
     use crate::contract::BrokerError as E;
     let detail = format!("{err:?}");
@@ -259,14 +259,14 @@ impl Span {
         self.finish(Level::Error, Some(code));
     }
 
-    /// WO-033: completes as a FAILURE at a chosen level — the record still says
+    /// Completes as a FAILURE at a chosen level — the record still says
     /// `ok:false` and still carries `error_code`, only the log level moves.
     ///
     /// For the rare call whose failure is the *expected, healthy* answer: the
-    /// keyguard's self-forge probe (ADR-013) asks the database to reject a
-    /// forged token, so its refusal is the good outcome and must not make a
-    /// healthy boot cry `error`. Everything else keeps `err` — "failures always
-    /// emit" (WO-010) is unchanged for every other caller.
+    /// keyguard's self-forge probe asks the database to reject a forged token,
+    /// so its refusal is the good outcome and must not make a healthy boot cry
+    /// `error`. Everything else keeps `err` — "failures always emit" is
+    /// unchanged for every other caller.
     pub fn err_at(self, e: &crate::contract::BrokerError, level: Level) {
         let code = error_code(e);
         self.finish(level, Some(code));

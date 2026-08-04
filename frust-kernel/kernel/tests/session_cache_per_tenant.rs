@@ -1,11 +1,11 @@
-//! **WO-040 Chunk B: one tenant's logout must not cold-start another's cache.**
+//! **One tenant's logout must not cold-start another's cache.**
 //!
-//! WO-026 removed the last per-request DB round trip by caching the
+//! The kernel avoids a per-request DB round trip by caching the
 //! token→principal lookup, invalidated by generation. The generation was
 //! process-global, so with N tenants in one process "invalidate on logout"
 //! meant *everyone's* cache — never wrong, but a noisy-neighbour vector aimed
-//! at the cache that took throughput from 15 to 124 req/s. WO-039 found it;
-//! Chunk B keys the generation per tenant, and this is the proof.
+//! at the cache that took throughput from 15 to 124 req/s. Keying the
+//! generation per tenant closes it, and this is the proof.
 //!
 //! **How the survival is observed, and why it cannot pass by accident.**
 //! Counting cache hits would prove nothing an off-by-one couldn't fake. So
@@ -176,7 +176,7 @@ fn one_tenants_logout_leaves_the_other_tenants_session_cache_intact() {
 /// **The control.** The test above concludes "B survived" from B still
 /// working. That only means something if B's cache entry *can* be dropped —
 /// otherwise "B still works" would be true even with invalidation entirely
-/// broken, which is the WO-039 assert-the-operation failure wearing a
+/// broken, which is the assert-the-operation failure wearing a
 /// different hat.
 #[test]
 fn the_same_instrument_shows_b_failing_when_b_is_the_one_invalidated() {

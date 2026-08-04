@@ -1,10 +1,10 @@
-//! WO-043: email batteries — notifications as metadata, delivery as a
-//! contained background side-effect.
+//! Email batteries: notifications as metadata, delivery as a contained
+//! background side-effect.
 //!
 //! **Transport: lettre directly, blocking (PM ruling, 2026-07-30).** Not
 //! `topcoat-mail`: its `Transport::send(&self, cx: &Cx, mail)` needs a Topcoat
 //! *web request context* to render `Mail::html` as a `View`, so wiring it would
-//! pull `topcoat-core` + `topcoat-view` into a kernel that ADR-004 keeps
+//! pull `topcoat-core` + `topcoat-view` into a kernel the headless contract keeps
 //! Topcoat-free, and would make the kernel synthesise a fake request to satisfy
 //! a signature. lettre's `SmtpTransport` is blocking and ungated, so this module
 //! adds no async runtime and no tokio to the mail path (tokio is in the graph
@@ -116,7 +116,7 @@ impl Mailer {
     /// `FRUST_MAIL_DIR`; `FRUST_MAIL=smtp` relays through `FRUST_MAIL_SMTP`
     /// (`host` or `host:port`). Anything else **refuses** rather than falling
     /// back — a typo'd transport name that quietly wrote mail to a directory
-    /// nobody reads is the silent-misbehaviour class, and ADR-008's fail-closed
+    /// nobody reads is the silent-misbehaviour class, and the fail-closed
     /// posture applies to delivery as much as to schema.
     ///
     /// The file directory is created here, not on first send: a missing
@@ -252,10 +252,10 @@ pub struct NotificationDef {
     /// `on_transition` only: fire for this workflow action. Absent = any action.
     #[serde(default)]
     pub action: Option<String>,
-    /// Optional gate, in the SAME vocabulary WO-014 already defined for client
+    /// Optional gate, in the SAME vocabulary already defined for client
     /// rules (`sync::Rule`). Reusing it is deliberate: a second condition
     /// dialect would be a second thing to learn and a second thing to get
-    /// wrong, and the WO explicitly forbids a new template/rule language.
+    /// wrong, and a new template/rule language is deliberately not added.
     #[serde(default)]
     pub condition: Option<Rule>,
     /// `role:<role>` · `field:<fieldname>` · a literal address.
@@ -272,7 +272,7 @@ pub enum Trigger<'a> {
     AfterInsert,
     Update,
     Transition { action: &'a str, to_state: &'a str },
-    /// docstatus crossed into 1 (ADR-009's submit edge).
+    /// docstatus crossed into 1 (the submit edge).
     Submit,
     /// docstatus crossed into 2.
     Cancel,
@@ -353,7 +353,7 @@ pub const RULE_OPS: [&str; 8] = ["eq", "ne", "gt", "lt", "ge", "le", "empty", "n
 ///
 /// Numeric comparison goes through `Decimal`, so `total ge 1000` on a money
 /// field compares exact stored decimals — never a float, and never arithmetic
-/// (ADR-007, and the WO's own boundary). Values that are not both numeric fall
+/// (the compare-never-compute boundary). Values that are not both numeric fall
 /// back to string comparison, which is what `eq` on a status field wants.
 pub fn rule_holds(rule: &Rule, doc: &serde_json::Value) -> bool {
     use crate::decimal::Decimal;
@@ -389,7 +389,7 @@ pub fn rule_holds(rule: &Rule, doc: &serde_json::Value) -> bool {
 /// One field's value as template text.
 ///
 /// A stored decimal arrives from SurrealDB as a JSON **string** and is rendered
-/// verbatim — the ADR-007 compare-never-compute rule means a template shows
+/// verbatim — the compare-never-compute rule means a template shows
 /// what is stored, with no reformatting and no arithmetic. A number renders
 /// through its own JSON form for the same reason.
 pub fn render_field(v: &serde_json::Value) -> String {
@@ -582,7 +582,7 @@ mod tests {
 
     #[test]
     fn money_interpolates_verbatim_never_reformatted() {
-        // The whole point of ADR-007 in a template: 20.00 stays 20.00. A
+        // The whole point of compare-never-compute in a template: 20.00 stays 20.00. A
         // formatter that "helpfully" printed 20 or 20.0 would be arithmetic
         // nobody asked for, on the field where it matters most.
         let out = interpolate("Total {{total}}.", &doc()).unwrap();

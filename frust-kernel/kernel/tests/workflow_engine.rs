@@ -1,4 +1,4 @@
-//! WO-018: the workflow engine (REQ-4.1.2).
+//! The workflow engine.
 //!
 //! The load-bearing assertion is criterion 2's **two layers, proven
 //! separately**:
@@ -10,7 +10,7 @@
 //!    still refused by `FRUST:E_DOCSTATUS` from the DB EVENT.
 //!
 //! Proving them separately is the point: layer 2 catching layer 1's bugs is
-//! what makes ADR-009 A2's split worth having.
+//! what makes splitting the judge from the lattice worth having.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 
@@ -47,8 +47,8 @@ fn expense_app(broken: bool) -> serde_json::Value {
         ])
     };
     let transitions = if broken {
-        // WO-020: the Leap is taken by a MANAGER, not a clerk. Under the
-        // row-write policy (ADR-012) a clerk-owner cannot write docstatus at
+        // The Leap is taken by a MANAGER, not a clerk. Under the
+        // row-write policy a clerk-owner cannot write docstatus at
         // all, so a clerk Leap is refused by the ROW PERMISSION before it ever
         // reaches the lattice — which would prove nothing about the lattice. A
         // manager clears the row permission, so the lattice EVENT is the ONLY
@@ -112,7 +112,7 @@ fn setup(name: &str, broken: bool) -> (Rest, Arc<Broker>, Db) {
         Box::new(WasmHooks::load(artifacts()).expect("hooks")),
     ));
     let rest = Rest::single(Arc::clone(&broker), "127.0.0.1:0".into(), Some(Arc::new(MetadataSync { base: cfg.clone() })), None);
-    // a workflow arrives as MANIFEST CONTENT — the reason WO-019 came first
+    // a workflow arrives as MANIFEST CONTENT, installed through the app door
     let mgr = Caller { user: "mgr".into(), pass: "pw-mgr".into(), role: "manager".into() };
     let out = rest.route_for_test("/app/install", &expense_app(broken), &mgr).expect("install");
     println!("installed: {out}");

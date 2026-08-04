@@ -1,12 +1,11 @@
-//! Shared self-seeding fixture (WO-020 criterion 5).
+//! Shared self-seeding fixture.
 //!
 //! `permission_proof` and `rest_surface` were the only two binaries that
 //! depended on a hand-seeded ambient `skeleton` database. That dependency was
-//! a landmine — tripped by the WO-010 store rebuild, the WO-016 decimal
-//! migration, and the WO-018 perf-store juggling, three separate sessions.
+//! a landmine — repeatedly tripped by store rebuilds, decimal migrations, and
+//! perf-store juggling across separate sessions.
 //!
-//! This builds the **exact** WO-002 dataset (recovered from the WO-010
-//! `data-degraded` backup, so these are the real pinned rows, not a
+//! This builds the **exact** base dataset (the real pinned rows, not a
 //! reconstruction) into a dedicated database per caller. No test touches
 //! ambient dev state again.
 

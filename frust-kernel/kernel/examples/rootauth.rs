@@ -1,12 +1,16 @@
-//! WO-044 criterion 3: what the root JWT actually buys, measured.
+//! Root-auth A/B: what the root JWT actually buys, measured.
 //!
 //! Runs against a **dedicated scratch store** (endpoint passed on the command
 //! line) — never the live dev store's data directory, per standing policy.
+//! Because it REMOVEs and recreates its benchmark database, it refuses to run
+//! without `FRUST_SCRATCH=1` — an explicit confirmation that the target is a
+//! throwaway store — and refuses the :8899 dev port outright. The port check
+//! alone is not a safeguard: a live store on any other port would be wiped too.
 //!
-//!   cargo run --release --example rootauth -- http://127.0.0.1:8901
+//!   FRUST_SCRATCH=1 cargo run --release --example rootauth -- http://127.0.0.1:8901
 //!
 //! Both arms run in ONE process against the SAME database, interleaved, with
-//! ≥3 samples per arm. Interleaving is not decoration: WO-043's first
+//! ≥3 samples per arm. Interleaving is not decoration: an earlier
 //! save-floor attempt compared arms measured at different times and produced
 //! two contradictory numbers for one operation.
 
@@ -40,6 +44,18 @@ fn main() {
         eprintln!("refusing to benchmark against the live dev store on :8899 — pass a scratch endpoint");
         std::process::exit(1);
     }
+    // The setup below REMOVEs and recreates its benchmark database, so it must
+    // never touch a store holding real data. The port check above is not enough
+    // — a live store on any other port would be wiped just the same — so the
+    // destructive run requires an explicit opt-in the operator cannot trip by
+    // accident.
+    if std::env::var("FRUST_SCRATCH").ok().as_deref() != Some("1") {
+        eprintln!(
+            "refusing to REMOVE/recreate the benchmark database at {endpoint} without explicit \
+             confirmation — set FRUST_SCRATCH=1 to confirm this endpoint is a throwaway scratch store"
+        );
+        std::process::exit(1);
+    }
     let name = "wo044_bench";
     let conn = ConnConfig { endpoint: endpoint.clone(), ..ConnConfig::default() };
     let cfg = TenancyConfig {
@@ -64,7 +80,7 @@ fn main() {
         )
         .expect("seed");
 
-    println!("WO-044 root-auth A/B — endpoint {endpoint}, {SAMPLES} samples × {PER_SAMPLE} queries\n");
+    println!("root-auth A/B saturation probe — endpoint {endpoint}, {SAMPLES} samples × {PER_SAMPLE} queries\n");
 
     let query = "SELECT * FROM bench;";
     let mut jwt_samples = Vec::new();

@@ -1,4 +1,4 @@
-//! WO-006: the 1 M-row scale proof, THROUGH the kernel (broker + permission
+//! The 1 M-row scale proof, THROUGH the kernel (broker + permission
 //! compiler + index policy + REST), under a record-user principal — not raw
 //! /sql as root. Run explicitly, release mode, against the seeded scratch
 //! instance:
@@ -20,7 +20,6 @@ use frust_kernel::tenancy::{ResolvedTenant, Tenancy};
 use frust_kernel::hooks::WasmHooks;
 use frust_kernel::rest::Rest;
 
-// relocated during WO-006 (C: exhaustion — see the build log's disk clause)
 const DATA_DIR: &str = "D:/Dev/rust/frust-scale-data";
 
 fn artifacts() -> &'static str {
@@ -28,7 +27,7 @@ fn artifacts() -> &'static str {
 }
 
 fn cfg() -> ResolvedTenant {
-    // the WO-006 fixture instance: its own endpoint AND its own namespace, so
+    // the fixture instance: its own endpoint AND its own namespace, so
     // this goes through `from_config` rather than the environment default.
     Tenancy::from_config(
         ConnConfig { endpoint: "http://127.0.0.1:8898".into(), ..ConnConfig::default() },
@@ -63,7 +62,7 @@ fn store_bytes() -> u64 {
     n
 }
 
-/// Session token for the analyst (WO-009: the header trio is dead).
+/// Session token for the analyst (sessions replaced the header trio).
 fn analyst_token(url: &str) -> String {
     static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     TOKEN
@@ -116,7 +115,7 @@ fn median(mut v: Vec<u128>) -> u128 {
     v[v.len() / 2]
 }
 
-/// Warm submit medians through the broker (the REQ-6.1.1 path: hooks both
+/// Warm submit medians through the broker (the warm-path: hooks both
 /// classes + authenticated write under the caller's session).
 fn submit_median(b: &Broker, caller: &Caller, n: usize) -> u128 {
     let doc = vec![
@@ -137,12 +136,12 @@ fn submit_median(b: &Broker, caller: &Caller, n: usize) -> u128 {
 }
 
 #[test]
-#[ignore = "WO-006 scale run: needs the seeded scratch instance on :8898"]
+#[ignore = "scale run: needs the seeded scratch instance on :8898"]
 fn scale_proof_1m() {
     let admin = scoped_db(&cfg());
     let count = admin.sql_root("SELECT count() FROM sales_invoice GROUP ALL;").unwrap();
     let n = count.as_array().and_then(|a| a.first()).and_then(|r| r["count"].as_i64()).unwrap_or(0);
-    println!("=== WO-006 scale proof: {n} invoices, store {} MB, {} build ===",
+    println!("=== scale proof: {n} invoices, store {} MB, {} build ===",
         store_bytes() / 1_048_576,
         if cfg!(debug_assertions) { "DEBUG (invalid for criterion 3)" } else { "RELEASE" });
 
@@ -193,7 +192,7 @@ fn scale_proof_1m() {
     }));
 
     // Q4 (item-wise flatten) is NOT expressible through the closed contract —
-    // that is a WO finding, not a harness gap. Engine-only number for the
+    // that is a contract finding, not a harness gap. Engine-only number for the
     // decision table, root /sql, labeled as such:
     println!("\n-- Q4 flatten: contract-inexpressible; engine-only number --");
     for i in 0..3 {
@@ -208,7 +207,7 @@ fn scale_proof_1m() {
     println!("\n-- submit floor (broker path, warm median of 40) --");
     let pre_cf_bytes = store_bytes();
     let m_plain = submit_median(&broker, &caller, 40);
-    println!("submit warm median, changefeed OFF: {m_plain} ms  (REQ-6.1.1 floor: 25 ms)");
+    println!("submit warm median, changefeed OFF: {m_plain} ms  (warm-path floor: 25 ms)");
 
     // ── Criterion 5: changefeed cost — latency delta + storage growth ──
     println!("\n-- changefeed on: latency delta + storage --");

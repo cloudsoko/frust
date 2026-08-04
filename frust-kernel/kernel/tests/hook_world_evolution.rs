@@ -1,5 +1,4 @@
-//! WO-053 criterion 2: **ADR-006's edge-1 evolution policy, spent for the
-//! first time.**
+//! The capability surface's additive evolution policy, spent for the first time.
 //!
 //! The policy was written on day two — *the capability surface grows
 //! additively; old components keep working* — and has never once been tested
@@ -10,13 +9,13 @@
 //! component built against the OLD world still loads and runs, receiving only
 //! the events it exports. The fixtures in `wasm-spike/artifacts-old-world/`
 //! are exactly that: the shipped `plugin_demo.wasm` and `script_engine.wasm`
-//! as they stood before this WO touched the WIT, snapshotted by hash.
+//! as they stood before the hook vocabulary grew, snapshotted by hash.
 
 use frust_kernel::contract::Value;
 use frust_kernel::hooks::WasmHooks;
 
-/// The components as they existed before the vocabulary grew. Not rebuilt by
-/// this WO — that is the entire point.
+/// The components as they existed before the vocabulary grew. Not rebuilt
+/// here — that is the entire point.
 fn old_world() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../wasm-spike/artifacts-old-world")
 }
@@ -29,8 +28,8 @@ fn current() -> &'static str {
 /// **THE COMPATIBILITY PROOF.** An old component still loads under the grown
 /// world.
 ///
-/// If this fails, the evolution policy has met reality and lost, and that is an
-/// ADR-006 conversation — not something to work around here.
+/// If this fails, the evolution policy has met reality and lost, and that is a
+/// design-decision conversation — not something to work around here.
 #[test]
 fn a_component_built_against_the_old_world_still_loads() {
     let loaded = WasmHooks::load(old_world());
@@ -40,8 +39,8 @@ fn a_component_built_against_the_old_world_still_loads() {
     }
     assert!(
         loaded.is_ok(),
-        "ADR-006 edge-1 says the surface grows ADDITIVELY — an existing \
-         component must keep loading. It did not: {:?}",
+        "the surface must grow ADDITIVELY — an existing component must keep \
+         loading. It did not: {:?}",
         loaded.err()
     );
 }

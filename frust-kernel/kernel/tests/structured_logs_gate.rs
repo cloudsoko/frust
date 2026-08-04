@@ -1,4 +1,4 @@
-//! WO-010: "no bare `println!` survives" — enforced in CI like the surql
+//! "No bare `println!` survives" — enforced in CI like the surql
 //! monopoly. Kernel output is structured JSON-lines through `telemetry` or
 //! it does not ship. (Tests and the orm crate are out of scope; the gate
 //! guards the kernel's own log stream.)
