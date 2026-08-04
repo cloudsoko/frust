@@ -1,4 +1,4 @@
-//! WO-027 — the restored-signing-key guard, and the canary that keeps it honest.
+//! The restored-signing-key guard, and the canary that keeps it honest.
 //!
 //! `surreal export` redacts the record access's JWT signing key to the literal
 //! `[REDACTED]`; `surreal import` restores that string AS the key. The result
@@ -9,8 +9,7 @@
 //! on a SurrealDB constant. A version that changes the redaction string would
 //! silently disable the guard and quietly reopen an auth bypass — the worst
 //! kind of regression, because everything would still look green. So the
-//! constant is pinned and asserted against the live server (WO-018
-//! conflict-string precedent).
+//! constant is pinned and asserted against the live server.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 
@@ -87,7 +86,7 @@ fn the_guard_allows_a_healthy_store() {
 /// using the EXACT remedy the guard's message prints.
 ///
 /// Note what this test caught: `access_ddl()` is `DEFINE ACCESS IF NOT EXISTS`
-/// (WO-008, so an ordinary boot never rotates the key and never signs everyone
+/// (an ordinary boot never rotates the key and never signs everyone
 /// out). On a restored store that is a **no-op** — the placeholder key
 /// survives it. The operator must use `OVERWRITE` explicitly, which is why the
 /// guard's message spells that out rather than saying "re-run the DDL".

@@ -1,12 +1,12 @@
-//! **WO-040 Chunk A, ADR-003 invariant 2: no shared-context mutation.**
+//! **No shared-context mutation across tenants.**
 //!
 //! Two tenants, one process, **one shared wasmtime engine**, concurrent
 //! requests — and the assertion is *whose* row came back, never that a call
-//! succeeded. That rule is the WO-039 near-miss made permanent: the first
-//! tenancy probe reported a cross-tenant leak that did not exist because it
-//! asserted an operation ("non-200 or zero rows") instead of the outcome it
-//! needed. A routing bug that serves tenant B's data to tenant A is the one
-//! defect this work order cannot ship, and a status code cannot see it.
+//! succeeded. An isolation test must assert the identity of what returned: a
+//! probe that asserts an operation ("non-200 or zero rows") instead of the
+//! outcome it needs can report a cross-tenant leak that does not exist — or,
+//! worse, miss a real one. A routing bug that serves tenant B's data to tenant
+//! A is the one defect this must not ship, and a status code cannot see it.
 //!
 //! What is genuinely on trial: `Broker::with_shared_hooks` means both tenants
 //! run their validation through the SAME `Arc<WasmHooks>` — the one piece of
@@ -84,8 +84,8 @@ fn two_tenants_under_concurrency_only_ever_see_their_own_rows() {
     let a = seed("wo040_iso_a");
     let b = seed("wo040_iso_b");
 
-    // ONE engine for both tenants — the WO-040 criterion-2 change, and the
-    // only shared per-request machinery in the process.
+    // ONE engine for both tenants — the only shared per-request machinery in
+    // the process.
     let hooks: Arc<dyn HookDispatch> =
         Arc::from(Box::new(WasmHooks::load(artifacts()).expect("hooks")) as Box<dyn HookDispatch>);
     let brokers: Vec<(String, Arc<Broker>)> = vec![
@@ -160,7 +160,7 @@ fn two_tenants_under_concurrency_only_ever_see_their_own_rows() {
     );
 }
 
-// ── WO-040 Chunk B2: the same proof, through the SHIPPED REQUEST PATH ──────
+// ── The same proof, through the SHIPPED REQUEST PATH ───────────────────────
 //
 // Everything above builds its brokers in-process and calls them directly. This
 // is the version that counts: **one `Rest`, one port, one process**, two
@@ -172,7 +172,7 @@ const RT_B: &str = "wo040c_rt_b";
 
 fn agent() -> ureq::Agent {
     // keep-alive on purpose: without it a few hundred requests churn Windows
-    // ephemeral ports and we would measure the client (WO-041)
+    // ephemeral ports and we would measure the client, not the server
     ureq::Agent::config_builder().http_status_as_error(false).build().into()
 }
 
@@ -345,7 +345,7 @@ fn one_process_routes_two_tenants_and_no_request_ever_crosses() {
 /// **The control.** The provenance check above only means something if the
 /// query shape it uses *can* find another tenant's rows when pointed at them.
 /// Without this, "A never saw B's data" is indistinguishable from "the read
-/// never worked" — the WO-039 failure mode in its other direction.
+/// never worked" — the same failure mode in its other direction.
 #[test]
 fn the_provenance_check_can_see_a_foreign_row_when_one_is_really_there() {
     let a = seed("wo040_ctl_a");

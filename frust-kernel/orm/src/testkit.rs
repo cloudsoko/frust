@@ -32,8 +32,8 @@ pub struct TestDb {
 /// Provisioning used to `REMOVE ... IF EXISTS` on the way *in*, which cleans
 /// up the previous run but leaves the current one resident forever — and since
 /// the name carries the PID, every invocation left a fresh set behind. They
-/// accumulated (76 by WO-016, 94 by WO-017) and measurably degraded the
-/// instance, which then had to be cleaned by hand before every perf run.
+/// accumulated across runs and measurably degraded the instance, which then
+/// had to be cleaned by hand before every perf run.
 ///
 /// Best-effort by construction: a failed cleanup must never turn a passing
 /// test red, and must never panic while unwinding from one that already failed.

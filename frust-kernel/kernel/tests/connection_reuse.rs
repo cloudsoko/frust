@@ -1,10 +1,10 @@
-//! **WO-041: the transport reuses its connection.**
+//! **The transport reuses its connection.**
 //!
 //! `db.rs` used `ureq::post(..)`, the bare free function, which opens a fresh
-//! TCP connection per query and drops it. WO-026 measured that model for
-//! *throughput* and exonerated it (`bare ≈ fresh ≈ pooled within 10%`) — still
-//! true. What it never measured was **resource exhaustion**, and WO-040 Chunk
-//! B's load leg found it: TIME_WAIT climbing at request rate until the
+//! TCP connection per query and drops it. That model was measured for
+//! *throughput* and exonerated (`bare ≈ fresh ≈ pooled within 10%`) — still
+//! true. What it never measured was **resource exhaustion**, found under
+//! load: TIME_WAIT climbing at request rate until the
 //! ephemeral-port range runs out.
 //!
 //! Two checks, because either alone is weak:
@@ -93,7 +93,7 @@ fn no_module_uses_the_bare_connection_per_call_client() {
     visit(&src, &mut violations);
     assert!(
         violations.is_empty(),
-        "bare ureq free functions open a fresh connection per call (WO-041) — go through the \
+        "bare ureq free functions open a fresh connection per call — go through the \
          shared agent instead:\n{}",
         violations.join("\n")
     );

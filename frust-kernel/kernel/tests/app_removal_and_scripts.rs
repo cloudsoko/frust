@@ -1,14 +1,14 @@
-//! WO-019 criteria 5 + 6.
+//! Uninstall honesty, and per-DocType server-script delivery.
 //!
-//! **5 â€” uninstall is honest.** Metadata detaches, data remains, and the
+//! **Uninstall is honest.** Metadata detaches, data remains, and the
 //! manifest that described the metadata is itself removed. That last clause
 //! is what makes uninstall the one operation that genuinely forgets
 //! something, and why it is not reversible the way disable is.
 //!
-//! **6 â€” server scripts are delivered per DocType**, from metadata, via a
+//! **Server scripts are delivered per DocType**, from metadata, via a
 //! seam rather than env inheritance. Before this, every server-side write ran
-//! the engine's built-in default (the WO-017 item-3 finding). ADR-007's
-//! "scripts are data, live-mutable" becomes true server-side here.
+//! the engine's built-in default. The principle that scripts are data and
+//! live-mutable becomes true server-side here.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 
@@ -186,13 +186,13 @@ fn a_server_script_can_reject_a_write() {
 /// NEXT WRITE, with no restart — the pool compares text, it does not merely
 /// cache by key.
 ///
-/// **WO-048 changed how this test edits, and the change is the point.** It used
-/// to rewrite `doctype.server_script` with a direct `sql_root`, which worked
-/// only because nothing cached the script. With the script now
-/// generation-cached, a direct DB write is an OUT-OF-BAND edit — the standing
-/// caveat the DocType meta cache has carried since WO-026 — and the cache
-/// correctly does not see it. So the test now revises the script the way the
-/// product actually does, through an app update, which bumps the generation.
+/// **This test revises the script through the real delivery path, and that is
+/// the point.** It used to rewrite `doctype.server_script` with a direct
+/// `sql_root`, which worked only because nothing cached the script. With the
+/// script now generation-cached, a direct DB write is an OUT-OF-BAND edit — the
+/// standing DocType-meta-cache caveat — and the cache correctly does not see
+/// it. So the test now revises the script the way the product actually does,
+/// through an app update, which bumps the generation.
 ///
 /// That is a narrowing of what this test proves, stated rather than hidden:
 /// it proves the DELIVERED path is live-mutable. The out-of-band case is pinned
@@ -220,7 +220,7 @@ fn editing_a_server_script_takes_effect_without_a_restart() {
 
     assert_eq!(
         write(&b)["flag"], serde_json::json!("v2"),
-        "a revised script takes effect on the next write — ADR-007's live-mutable, server-side"
+        "a revised script takes effect on the next write — scripts are live-mutable, server-side"
     );
 }
 
@@ -228,7 +228,7 @@ fn editing_a_server_script_takes_effect_without_a_restart() {
 ///
 /// Editing the `doctype` table directly — outside the kernel — does not bump the
 /// metadata generation, so the cached script keeps serving until something does.
-/// This is the same caveat the DocType meta cache has carried since WO-026, and
+/// This is the same caveat the DocType meta cache has carried, and
 /// it is asserted here rather than left as a comment: the boundary of a cache's
 /// correctness claim should fail loudly if someone widens it by accident.
 ///
@@ -265,7 +265,7 @@ fn an_out_of_band_script_edit_is_not_seen_until_the_generation_bumps() {
 }
 
 /// A DocType with no script runs NO script â€” it must not silently inherit the
-/// engine's built-in default, which is the WO-017 finding in a new costume.
+/// engine's built-in default.
 #[test]
 fn a_doctype_without_a_script_runs_nothing() {
     let (rest, _db, cfg) = setup("app_srvnone");

@@ -1,10 +1,10 @@
-//! WO-030: the `Decimal` binding in the script host — `decimal.rs` compiled
+//! The `Decimal` binding in the script host — `decimal.rs` compiled
 //! into the Boa sandbox verbatim, so an app author computes exact money instead
 //! of hand-rolling it.
 //!
 //! The load-bearing property is **three hosts, one answer** (criterion 3): a
 //! script, the kernel's `decimal.rs`, and SurrealDB's own decimal all produce
-//! the *same* string for `qty × rate`. This extends WO-021's byte-equal
+//! the *same* string for `qty × rate`. This extends the byte-equal
 //! reconciliation from two hosts to three — and because the binding IS
 //! `decimal.rs` (compiled into the guest, not reimplemented in JS), agreement is
 //! by construction, not by luck.
@@ -98,7 +98,7 @@ const LINE_SCRIPT: &str = r#"
 /// String-agreement is asserted off `note` (a Data field): SurrealDB strips a
 /// decimal's trailing zeros (`1.00` → `1`), so the literal string only survives
 /// on the text field, while the money field is checked by DB decimal EQUALITY —
-/// value, not representation (the WO-016 discipline, made twice-over here).
+/// value, not representation (no epsilon, no string compare — made twice-over here).
 #[test]
 fn three_hosts_one_answer() {
     let (b, db) = broker_running(LINE_SCRIPT, "dsb_three");
@@ -203,7 +203,7 @@ fn mul_does_not_round_implicitly() {
     assert_eq!(out["out"].as_str().unwrap(), "1.005", "mul is exact and unrounded");
 }
 
-/// Criterion 2 (guard intact) — the WO-017 decimal-catch still fires WITH the
+/// Criterion 2 (guard intact) — the decimal-catch still fires WITH the
 /// binding present. A script that does bare JS float math on money is still
 /// refused; adding `Decimal` did not open a float back door.
 #[test]

@@ -1,4 +1,4 @@
-//! WO-055 G1: a failed login is the caller's problem, a broken store is ours.
+//! A failed login is the caller's problem, a broken store is ours.
 //!
 //! **The both-sides requirement is the whole test.** Mapping "signin failed"
 //! to 401 is easy and half-right; the half that bites is the one where the

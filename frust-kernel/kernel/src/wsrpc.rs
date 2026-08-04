@@ -1,4 +1,4 @@
-//! Minimal WebSocket RPC client for SurrealDB's `/rpc` endpoint (WO-012).
+//! Minimal WebSocket RPC client for SurrealDB's `/rpc` endpoint.
 //!
 //! Hand-rolled RFC 6455 client over `TcpStream` — the kernel's zero-new-crates
 //! posture. Scope: text frames, ping/pong, close; no fragmentation (SurrealDB

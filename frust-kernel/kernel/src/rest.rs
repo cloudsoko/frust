@@ -1,9 +1,9 @@
 //! Module 6: the REST surface. Metadata-generated endpoints that speak the
-//! ADR-006 filter contract and nothing else â€” Desk and external clients are
+//! filter contract and nothing else — Desk and external clients are
 //! the same door the broker already serves. This is the third consumer of
 //! the ONE permission compiler (criterion 2).
 //!
-//! Auth (WO-009 criterion 1): session tokens. `POST /login {user, pass}`
+//! Auth: session tokens. `POST /login {user, pass}`
 //! proves credentials against the record access, derives the ROLE FROM THE
 //! DATABASE (never the client), and mints an opaque token; every other data
 //! route requires `Authorization: Bearer <token>`. Both permission halves â€”
@@ -34,7 +34,7 @@ use crate::surql;
 use crate::sync::MetadataSync;
 
 /// Kernel session store. PERMISSIONS NONE â€” only the kernel reads it.
-/// **WO-047: defined at BOOT, in `meta_ddl` — not lazily on the auth path.**
+/// **Defined at BOOT, in `meta_ddl` — not lazily on the auth path.**
 ///
 /// It used to be created by the login batch itself, on the reasoning that a
 /// session table is ephemeral state rather than meta-schema. That reasoning was
@@ -46,12 +46,12 @@ use crate::sync::MetadataSync;
 /// session row. Measured: `frust_conflict_retries_total 1` on every run of
 /// `kernel_hygiene`, which is exactly where its flake came from.
 ///
-/// Now it is an ordinary meta table like every other one (ADR-008:
-/// binary-authoritative, applied under the boot lock), and login is a single
+/// Now it is an ordinary meta table like every other one
+/// (binary-authoritative, applied under the boot lock), and login is a single
 /// statement with no DDL in it.
 pub(crate) const SESSION_TABLE: &str = "_frust_session";
 
-/// WO-026: the session-lookup cache — the third and last DB round trip on the
+/// The session-lookup cache — the third and last DB round trip on the
 /// per-request path.
 ///
 /// **This one sits in a permission path, so its invalidation is stricter than
@@ -60,8 +60,8 @@ pub(crate) const SESSION_TABLE: &str = "_frust_session";
 /// 1. **Logout is immediate.** `POST /logout` bumps this tenant's session
 ///    generation, which invalidates every cached entry **of that tenant** at
 ///    once. Coarse, and that is the right trade: correctness beats a hit rate,
-///    and the re-read costs one query. (WO-040 Chunk B narrowed "every entry"
-///    to "every entry of this tenant" — coarse within a tenant, never across
+///    and the re-read costs one query. Invalidation is scoped to this
+///    tenant — coarse within a tenant, never across
 ///    them.)
 /// 2. **A short TTL backstops everything else** — session expiry, and
 ///    out-of-band revocation (an operator deleting the row directly). Without
@@ -76,7 +76,7 @@ pub(crate) const SESSION_TABLE: &str = "_frust_session";
 /// still removing the round trip from the hot path.
 const SESSION_TTL: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// **WO-040 Chunk B: keyed by `(tenant, token)`, not by token.**
+/// **Keyed by `(tenant, token)`, not by token.**
 ///
 /// Two reasons, and the second is the one that matters. A token is only
 /// meaningful inside its own tenant, so tenant-keying is what lets one
@@ -94,11 +94,11 @@ fn session_cache() -> &'static SessionCache {
 }
 
 pub struct Rest {
-    /// **WO-040 Chunk B2:** N tenants, one process. Each request finds its own
+    /// **N tenants, one process.** Each request finds its own
     /// tenant's `Broker` here; there is no ambient "the broker" any more.
     pub router: Arc<TenantRouter>,
     pub addr: String,
-    /// Enables the live-subscription routes (WO-012). None = 404.
+    /// Enables the live-subscription routes. None = 404.
     pub realtime: Option<Arc<crate::realtime::Realtime>>,
 }
 
@@ -125,10 +125,10 @@ impl Rest {
     /// Blocking serve loop: a bounded pool of request workers plus ONE
     /// maintenance ticker.
     ///
-    /// **WO-025.** The previous loop took one request, ran it to completion
+    /// The previous serve loop took one request, ran it to completion
     /// (auth → hooks → write), and only then accepted the next — so throughput
     /// was flat at ~15 req/s from 1 to 500 concurrent clients and the kernel
-    /// pegged 0.85 of a single core (WO-024). `tiny_http::Server` supports
+    /// pegged 0.85 of a single core. `tiny_http::Server` supports
     /// `recv()` from many threads, so the fix is a pool of consumers on the
     /// same listener — not an async rewrite.
     ///
@@ -137,10 +137,10 @@ impl Rest {
     /// drains would read the same changefeed range and apply the same deltas
     /// twice. It runs on exactly one dedicated thread, which is also the only
     /// piece of shared state this change could have broken. (Everything else
-    /// the pool now touches in parallel — the session cache, the WO-013 token
+    /// the pool now touches in parallel — the session cache, the throttle token
     /// buckets, the route-host cache, the telemetry ring and registry — is
-    /// already `Mutex`/atomic-protected, the job claim is atomic DB-side per
-    /// ADR-009, and the telemetry trace context is a thread-local, which is
+    /// already `Mutex`/atomic-protected, the job claim is atomic DB-side, and
+    /// the telemetry trace context is a thread-local, which is
     /// exactly right per worker.)
     ///
     /// Fixed-size pool, sized to cores and capped: memory must stay in the
@@ -201,7 +201,7 @@ impl Rest {
         let token = auth.strip_prefix("Bearer ").map(str::to_string);
         let host = header(&req, "Host");
 
-        // WO-040 B2: the trace's tenant label comes from the TOKEN's tenant,
+        // The trace's tenant label comes from the TOKEN's tenant,
         // not from an ambient broker — with N tenants in one process, "which
         // tenant was this request" is only answerable per request.
         let tenant = token
@@ -274,7 +274,7 @@ impl Rest {
         // invalid UTF-8 and leaves the buffer EMPTY, and the discarded error
         // used to turn that into "missing field `manifest_version`" — an
         // operator reading that goes looking at their manifest's shape, which
-        // is not the problem. WO-054: name the actual fault.
+        // is not the problem. Name the actual fault instead.
         let mut body = String::new();
         if std::io::Read::read_to_string(req.as_reader(), &mut body).is_err() {
             let e = BrokerError::InvalidValue {
@@ -352,7 +352,7 @@ impl Rest {
         // process, not for anyone's data.
         match segs.as_slice() {
             ["health"] => return Ok(serde_json::json!({ "ok": true })),
-            // WO-055 G5: liveness above answers for the PROCESS; readiness
+            // liveness above answers for the PROCESS; readiness
             // answers for what actually booted. No auth and no tenant, same as
             // health — a readiness probe that needs a credential is a readiness
             // probe nobody wires up.
@@ -434,20 +434,20 @@ impl Rest {
             ["logout"] => {
                 let t = surql::escape_str(token.unwrap_or_default());
                 ctx.broker.db.sql_root(&format!("DELETE {SESSION_TABLE} WHERE token = '{t}';"))?;
-                // WO-026: a revoked token must not survive in cache for even
+                // a revoked token must not survive in cache for even
                 // one request. Coarse on purpose — correctness over hit rate.
                 crate::tenant_gen::invalidate_sessions(ctx.broker.db.tenant_id());
                 Ok(serde_json::json!({ "ok": true }))
             }
 
-            // WO-033 item 1: admin force-revoke. Manager-tier, and it revokes
+            // Admin force-revoke. Manager-tier, and it revokes
             // EVERY session the user holds — revoking one while an attacker
             // holds three accomplishes nothing, so "all of them" is the only
             // safe default for a compromised account.
             //
             // Same two-step as logout, which is why there is no new machinery
             // to prove: delete the rows, then bump the generation so the
-            // WO-026 session cache drops immediately instead of serving the
+            // session cache drops immediately instead of serving the
             // revoked token for up to SESSION_TTL. The TTL stays as the
             // backstop for a direct-DB deletion that bypasses even this.
             ["revoke", user] => {
@@ -496,21 +496,21 @@ impl Rest {
                 ident(&dt.name)?;
                 let content = surql::render_value(&infer_value(meta))?;
                 ctx.broker.db.sql_root(&format!("CREATE doctype:{} CONTENT {content};", dt.name))?;
-                crate::broker::invalidate_meta(ctx.broker.db.tenant_id()); // WO-026: new doctype visible immediately
+                crate::broker::invalidate_meta(ctx.broker.db.tenant_id()); // new doctype visible immediately
                 let applied = sync.sync(&ctx.broker.db)?;
                 Ok(serde_json::json!({
                     "created": dt.name,
                     "applied": applied.applied,
-                    // WO-052: if this sync left orphans, say so here too — the
+                    // if this sync left orphans, say so here too — the
                     // operator making the change is the right person to know.
                     "orphan_columns": applied.orphans,
                 }))
             }
 
-            // WO-017 item 4: attach/replace/clear a DocType's Tier-2 client
+            // attach/replace/clear a DocType's Tier-2 client
             // script. Manager surface, like all metadata writes. No schema
             // sync: a script is DATA on the metadata record, not shape â€”
-            // ADR-007's "scripts are live-mutable" is this endpoint. The next
+            // "scripts are live-mutable" is exactly this endpoint. The next
             // form load serves the new script; nothing restarts.
             ["doctype", doctype, "script"] => {
                 require_manager(caller)?;
@@ -534,23 +534,18 @@ impl Rest {
                 ctx.broker.db.sql_root(&format!(
                     "UPDATE doctype SET client_script = {content} WHERE name = '{doctype}';"
                 ))?;
-                // **WO-048 criterion 3.** This route mutates script state on the
+                // This route mutates script state on the
                 // `doctype` record and did NOT bump — harmless today, because
                 // nothing caches `client_script`, and a landmine tomorrow: the
-                // script cache this WO added rides the SAME generation, so the
+                // script cache rides the SAME generation, so the
                 // day `client_script` joins the cached metadata this omission
                 // becomes a stale-script bug with no obvious cause. One line now
                 // beats an archaeology session later.
-                //
-                // (It also corrects the record: WO-047 said "the invalidation
-                // site already bumps" of this route. It did not, and this route
-                // is the CLIENT script route — server scripts arrive only via
-                // `POST /doctype` and app install/update, both of which bump.)
                 crate::broker::invalidate_meta(ctx.broker.db.tenant_id());
                 Ok(serde_json::json!({ "doctype": doctype, "script": "set", "bytes": script.len() }))
             }
 
-            // ── WO-043: notification rules, manager surface ──
+            // ── notification rules, manager surface ──
             //
             // The endpoint that makes "email is metadata, not code" true: a
             // notification is a record, so this route plus a generation bump is
@@ -583,7 +578,7 @@ impl Rest {
                 Ok(serde_json::json!({ "created": rule.name, "doctype": rule.doctype, "event": rule.event }))
             }
 
-            // **WO-052 criterion 4: reclaiming an orphan is an EXPLICIT act.**
+            // **Reclaiming an orphan is an EXPLICIT act.**
             //
             // An orphan column belongs to no manifest, so no app update can
             // reclaim it — there is nothing to re-publish. It gets its own
@@ -594,7 +589,7 @@ impl Rest {
             //
             // Deliberately NOT a boot flag. Drift is now an orphan, so boot
             // never faces an unacknowledged destructive plan — and an
-            // `allow_destructive` startup switch would be the ADR-013 footgun
+            // `allow_destructive` startup switch would be the footgun
             // shape: a flag whose casual use is silent data loss.
             ["doctype", doctype, "reclaim"] => {
                 require_manager(caller)?;
@@ -697,7 +692,7 @@ impl Rest {
                 Ok(serde_json::json!({ "outbox": rows }))
             }
 
-            // ── WO-018: workflow (REQ-4.1.2) ──
+            // ── workflow (REQ-4.1.2) ──
             //
             // Any authenticated caller: the workflow itself decides what this
             // role may do, which is the whole point of role-gated transitions.
@@ -722,7 +717,7 @@ impl Rest {
                 ctx.broker.db_transition(caller, &HookChain::default(), doctype, key, action)
             }
 
-            // ── WO-019 criterion 3: the app lifecycle, manager surface ──
+            // ── the app lifecycle, manager surface ──
             //
             // Registry writes live HERE rather than in `app.rs` by ruling:
             // `app.rs` stays query-free so `surql_monopoly` covers it, and
@@ -780,7 +775,7 @@ impl Rest {
                 self.uninstall_app(ctx, name)
             }
 
-            // WO-019 criterion 4: a plugin-declared route, served.
+            // A plugin-declared route, served.
             //
             // Reached by ANY authenticated caller â€” the route is the app's
             // surface, not the manager's â€” and everything below it runs under
@@ -803,7 +798,7 @@ impl Rest {
                 Ok(serde_json::json!({ "record": record, "total": all.len(), "entries": mine }))
             }
 
-            // Tier-2 staleness as data (ADR-010): cursor + pending count
+            // Tier-2 staleness as data: cursor + pending count
             ["lag", rollup] => {
                 ident(rollup)?;
                 let doctypes = crate::sync::load_doctypes(&ctx.broker.db)?;
@@ -828,7 +823,7 @@ impl Rest {
                 }))
             }
 
-            // â”€â”€ WO-012: kernel-owned live subscriptions (ADR-011) â”€â”€
+            // ── kernel-owned live subscriptions ──
             ["subscribe", doctype] => {
                 ident(doctype)?;
                 let Some(rt) = &self.realtime else {
@@ -865,7 +860,7 @@ impl Rest {
             }
 
             ["write", doctype] => {
-                // **WO-055 G4: an unknown key is refused, not discarded.**
+                // **An unknown key is refused, not discarded.**
                 // `op` was accepted and silently dropped, so a client that sent
                 // `{"op":"create", "record": …}` believing it forced a create
                 // got an update and no complaint. On the WRITE path that is the
@@ -941,7 +936,7 @@ impl Rest {
         // own database, so the prefix inside it would be redundant — and a
         // lookup that had to match the prefix too would be checking the
         // client's claim against itself.
-        // ONE statement, no DDL (WO-047). The table comes from `meta_ddl` at
+        // ONE statement, no DDL. The table comes from `meta_ddl` at
         // boot; mixing a `DEFINE` into this batch is what made a conflict retry
         // duplicate the row.
         db.sql_root(&format!(
@@ -951,7 +946,7 @@ impl Rest {
             surql::escape_str(&jwt)
         ))?;
 
-        // **WO-040 B2: the wire token carries its tenant.** The prefix is the
+        // **The wire token carries its tenant.** The prefix is the
         // canonical `TenantId` this kernel resolved and authenticated against
         // — asserted by the kernel after validation, never the client's
         // string handed back. A client presenting some other tenant's prefix
@@ -991,14 +986,14 @@ impl Rest {
         let db = &ctx.broker.db;
         let tenant = db.tenant_id().to_string();
 
-        // WO-026: the cached path. Valid only while the generation matches
+        // The cached path. Valid only while the generation matches
         // (logout bumps it) AND the entry is inside its TTL. The JWT is
         // re-seeded on every hit because `Db`'s token cache is what actually
         // authorises the row half — a hit must leave the caller exactly as a
         // miss would, or the cache would change behaviour rather than just
         // timing.
         //
-        // WO-040 Chunk B: the generation is THIS TENANT'S, read from the
+        // the generation is THIS TENANT'S, read from the
         // handle the broker resolved at construction — one atomic load, and
         // another tenant's logout cannot move it.
         let gen = ctx.broker.gens.session.load(std::sync::atomic::Ordering::Acquire);
@@ -1120,7 +1115,7 @@ impl Rest {
         ident(app)?;
         ident(path)?;
         let _tenant = crate::telemetry::enter_tenant(ctx.broker.db.tenant_id());
-        // a plugin route is not a budget bypass (WO-013)
+        // a plugin route is not a budget bypass
         crate::fairness::admit_verb(ctx.broker.db.tenant_id())?;
 
         let Some(row) = self.installed(ctx, app)? else {
@@ -1158,7 +1153,7 @@ impl Rest {
         Ok(serde_json::json!({ "app": app, "path": path, "status": status, "body": out }))
     }
 
-    /// **Uninstall, stated honestly.** (WO-019 criterion 5, REQ-6.6.3.)
+    /// **Uninstall, stated honestly.** (REQ-6.6.3.)
     ///
     /// Metadata detaches. Data remains. The manifest that described the
     /// metadata is itself removed â€” which makes uninstall **the one operation
@@ -1202,17 +1197,17 @@ impl Rest {
             retained.push(serde_json::json!({ "table": dt.name, "rows_retained": rows }));
             // metadata goes; the table does not
             ctx.broker.db.sql_root(&format!("DELETE doctype WHERE name = '{n}';"))?;
-            crate::broker::invalidate_meta(ctx.broker.db.tenant_id()); // WO-026: uninstall detaches metadata
+            crate::broker::invalidate_meta(ctx.broker.db.tenant_id()); // uninstall detaches metadata
         }
 
-        // the app's workflows are its metadata too (WO-018)
+        // the app's workflows are its metadata too
         for w in &manifest.workflows {
             ident(&w.name)?;
             let wn = surql::escape_str(&w.name);
             ctx.broker.db.sql_root(&format!("DELETE workflow WHERE name = '{wn}';"))?;
         }
 
-        // **WO-050:** and its contributions to OTHER apps' DocTypes. Those rows
+        // And its contributions to OTHER apps' DocTypes. Those rows
         // are not this app's to delete, so the fields and chain link it added
         // are removed surgically and the owner's DocType is left standing.
         self.detach_extensions(ctx, name)?;
@@ -1233,7 +1228,7 @@ impl Rest {
         }))
     }
 
-    /// Writes the bundle's workflow records (WO-018). A workflow is metadata,
+    /// Writes the bundle's workflow records. A workflow is metadata,
     /// like a DocType, so it installs the same way and takes effect on the
     /// next transition — no restart.
     fn attach_workflows(&self, ctx: &TenantContext, manifest: &crate::app::Manifest) -> Result<(), BrokerError> {
@@ -1330,16 +1325,16 @@ impl Rest {
         }
 
         // APPLY â€” same call shape, different options.
-        // ---- WO-050 criterion 8: OWNER EVOLUTION ----
+        // ---- OWNER EVOLUTION ----
         //
-        // ADR-015's question (c), and the one that decides whether this beats
+        // This is the hard question, and the one that decides whether this beats
         // Frappe or merely adds a customs post: install-time gating catches the
         // install and says nothing about the owner's NEXT release. An extension
         // reads `Y.z`; owner v2 removes it; both apps' CI is green; the
         // extension dies quietly. A silently-disabled extension is P-2.2 reborn,
         // so the refusal names the casualty and its app.
         //
-        // WO-049 found this seam already exists with no new storage: every
+        // This seam already exists with no new storage: every
         // app's manifest is on record verbatim. So it is one call, not a
         // subsystem.
         let casualties = self.extension_casualties(ctx, manifest, &destructive)?;
@@ -1408,9 +1403,9 @@ impl Rest {
             }
             // criterion 6: the server script lives on the DocType record, which
             // is where hook dispatch reads it from per call
-            // WO-050: the LIST shape. The owner's entry carries its own app name
+            // the LIST shape: the owner's entry carries its own app name
             // so the dispatcher can put it first and keep it there.
-            // WO-053: every declared script, each carrying its hook class.
+            // every declared script, each carrying its hook class.
             // `find` used to take the FIRST match and drop the rest, which was
             // invisible while only one class existed and would have silently
             // eaten a second subscription the moment one could be written.
@@ -1427,7 +1422,7 @@ impl Rest {
             }
             let n = surql::escape_str(&dt.name);
 
-            // **WO-050: preserve other apps' contributions across an owner
+            // **Preserve other apps' contributions across an owner
             // update.** This is a whole-record `CONTENT` upsert built from the
             // OWNER'S manifest, which knows nothing about extensions — so
             // without this, publishing owner v2 would silently delete every
@@ -1470,13 +1465,13 @@ impl Rest {
                     .db
                     .sql_root(&format!("UPDATE doctype:{n} SET server_script += {sv};"))?;
             }
-            crate::broker::invalidate_meta(ctx.broker.db.tenant_id()); // WO-026: app install/update changed metadata
+            crate::broker::invalidate_meta(ctx.broker.db.tenant_id()); // app install/update changed metadata
         }
         self.attach_extensions(ctx, manifest)?;
         Ok(())
     }
 
-    /// **WO-050: apply this app's extensions to DocTypes it does not own.**
+    /// **Apply this app's extensions to DocTypes it does not own.**
     ///
     /// Additive by construction — fields are appended and the script joins the
     /// chain *behind* the owner's. Nothing here can remove or reorder what the
@@ -1506,7 +1501,7 @@ impl Rest {
                 });
             };
 
-            // ── refuse-ambiguity (ADR-015): a collision names BOTH apps ──
+            // ── refuse-ambiguity: a collision names BOTH apps ──
             let existing: Vec<(String, Option<String>)> = row["fields"]
                 .as_array()
                 .map(|a| {
@@ -1582,15 +1577,15 @@ impl Rest {
         Ok(())
     }
 
-    /// **WO-050: which other apps' extensions would this update break?**
+    /// **Which other apps' extensions would this update break?**
     ///
-    /// The whole mechanism WO-049 named, wired: every installed app's manifest
+    /// The whole mechanism, wired: every installed app's manifest
     /// is already stored verbatim in the registry and already re-parsed live for
     /// route dispatch, so the declared dependency surface of every *other* app
     /// is readable at plan time with no new storage and no new bookkeeping.
     ///
     /// Cross-references those surfaces against this bundle's own destructive
-    /// list (the migration engine's `REMOVE FIELD memo` strings that WO-019's
+    /// list (the migration engine's `REMOVE FIELD memo` strings that the install
     /// refusal already names) and returns a casualty per broken declaration.
     /// Naming both the field and the app is the point: "your update breaks
     /// something" is not actionable, "it breaks `crm_note` on `sales_invoice`,
@@ -1655,12 +1650,12 @@ impl Rest {
         Ok(out)
     }
 
-    /// **WO-050: honest uninstall, extended cross-app.**
+    /// **Honest uninstall, extended cross-app.**
     ///
     /// Removes exactly this app's contributions from DocTypes it extended — its
     /// namespaced fields and its link in the validate chain — and nothing else.
     /// The owner's DocType, the owner's script and every row of data survive,
-    /// which is WO-019's honest-uninstall promise applied to a second
+    /// which is the honest-uninstall promise applied to a second
     /// contributor. `WHERE app != me` keeps it off the app's own doctypes,
     /// which the ordinary uninstall path already handles.
     fn detach_extensions(&self, ctx: &TenantContext, app: &str) -> Result<(), BrokerError> {
@@ -1777,7 +1772,7 @@ fn no_store_header() -> tiny_http::Header {
 fn status_for(e: &BrokerError) -> u16 {
     match e {
         BrokerError::PermissionDenied { detail } if detail == "E_UNAUTHENTICATED" => 401,
-        // WO-055 G1: a rejected login is the caller's credentials, not a
+        // a rejected login is the caller's credentials, not a
         // server fault - 401, and never carrying the transport's own words
         BrokerError::PermissionDenied { detail } if detail == crate::db::AUTH_REJECTED => 401,
         // live budget: not an error, a capacity answer â€” poll instead
@@ -1831,7 +1826,7 @@ fn infer_value(v: &serde_json::Value) -> Value {
             n.as_i64().map(Value::Int).unwrap_or_else(|| Value::Float(n.as_f64().unwrap_or(0.0)))
         }
         serde_json::Value::String(s) => Value::Text(s.clone()),
-        // WO-015: recurse through `parse_value`, not `infer_value`, so a
+        // recurse through `parse_value`, not `infer_value`, so a
         // typed envelope decodes at ANY depth. Embedded child rows are
         // arrays of objects whose money fields are `{kind:"decimal"}` â€” with
         // a plain inference here they would land in the DB as literal

@@ -1,7 +1,7 @@
-//! WO-021 escalation, closed as a CI property: **Rust-side and DB-side money
-//! arithmetic reconcile exactly** for the operations the accounting seed uses.
+//! A CI property: **Rust-side and DB-side money arithmetic reconcile exactly**
+//! for the operations the accounting seed uses.
 //!
-//! The Tier-1 rollup counters do arithmetic DB-side (WO-016 probed `add`;
+//! The Tier-1 rollup counters do arithmetic DB-side (`add` was already probed;
 //! mul/div is new territory). If `decimal.rs` and SurrealDB disagreed, the
 //! seed's numbers would depend on WHERE they were computed — a silent split.
 //! They do not disagree, and this asserts it so a future SurrealDB upgrade

@@ -1,4 +1,4 @@
-//! WO-005 module 5: the worker loop. Exit criteria 5, 6, 7 EXECUTED.
+//! The worker loop. Exit criteria 5, 6, 7 EXECUTED.
 //! Requires surreal.exe on :8899 + hook artifacts (via WasmHooks).
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -143,7 +143,7 @@ fn criterion6_exactly_one_winner_per_job_under_burst() {
 
 /// EXIT CRITERION 7: retention cold-start. A worker that comes up with an
 /// empty cursor recovers pending work by rescanning status='queued' —
-/// jobs are records, recovery is a query (ADR-009 ruling #2). Missing
+/// jobs are records, recovery is a query. Missing
 /// nothing is proven by draining to empty.
 #[test]
 fn criterion7_coldstart_rescan_drains_queue() {
@@ -197,7 +197,7 @@ fn criterion7_coldstart_rescan_drains_queue() {
 }
 
 /// EXIT CRITERION 5 (hardest clause): identity captured, authority re-derived
-/// — deny-after-revocation is a typed NON-RETRYABLE failure (ADR-006 edge 4).
+/// — deny-after-revocation is a typed NON-RETRYABLE failure.
 #[test]
 fn criterion5_revoked_authority_is_nonretryable_deny() {
     let cfg = setup("wq_revoke");

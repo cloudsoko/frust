@@ -1,8 +1,8 @@
-//! WO-008 criterion 4: the EVENT-bypass canary, pinned.
+//! The EVENT-bypass canary, pinned.
 //!
-//! v3.2.0 behavior (probed in WO-007, now load-bearing): writes made inside a
+//! v3.2.0 behavior (probed, now load-bearing): writes made inside a
 //! DEFINE EVENT body BYPASS table permissions, while the same session's
-//! direct writes are permission-filtered. ADR-010 Tier-1 counters depend on
+//! direct writes are permission-filtered. Tier-1 counters depend on
 //! exactly this — write-closed rollup tables that the submit transaction can
 //! still maintain. If a SurrealDB version bump changes it, THIS test fails
 //! CI loudly (same posture as the conflict-string canary); re-evaluate
@@ -41,7 +41,7 @@ fn event_writes_bypass_permissions_direct_writes_do_not() {
         n,
         Some(1),
         "PINNED v3.2.0 BEHAVIOR CHANGED: EVENT-body writes no longer bypass table \
-         permissions — ADR-010 Tier-1 write-closed rollups depend on this; do not \
+         permissions — Tier-1 write-closed rollups depend on this; do not \
          bump the SurrealDB pin without re-ruling Tier-1's write path"
     );
 

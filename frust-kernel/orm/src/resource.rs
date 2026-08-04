@@ -1,4 +1,4 @@
-//! The six-import interface (WO-005 module 3). What `framework-core` used to
+//! The six-import interface. What `framework-core` used to
 //! provide is defined here and fed by the kernel from RUNTIME DocType
 //! metadata. Everything below this interface — diff, classify, gate, apply,
 //! revert, drift, fleet — is source-agnostic and unchanged from the reviewed
@@ -61,7 +61,7 @@ pub trait ConnFactory: Sync {
     fn acquire(&self, loc: &StorageLocation) -> anyhow::Result<Box<dyn Conn>>;
 }
 
-/// Tenancy strategy (ADR-003): pluggable; the kernel's v0 is single-database.
+/// Tenancy strategy: pluggable; the kernel's v0 is single-database.
 pub trait Tenancy: Sync {
     fn platform_scope(&self) -> StorageLocation;
     fn locate(&self, tenant_id: &str) -> StorageLocation;

@@ -1,12 +1,12 @@
-﻿//! Module 4: the in-process hook dispatcher. Folds the WO-002 hook-runner
-//! process into the kernel â€” same wasmtime host design (pooled instance per
-//! component, engine-global epoch ticker, per-call deadline, self-healing on
-//! trap), now behind the broker's `HookDispatch` trait so `db_write` is
-//! unchanged. Three processes become two.
+﻿//! The in-process hook dispatcher: runs the wasmtime hook host inside the
+//! kernel rather than as a separate process — same host design (pooled
+//! instance per component, engine-global epoch ticker, per-call deadline,
+//! self-healing on trap), behind the broker's `HookDispatch` trait so
+//! `db_write` is unchanged.
 //!
-//! Doc travels as ADR-006's dynamic envelope; the toy `{id,status,total}`
-//! shape is gone. Both hook classes (compiled plugin, Tier-2 script) run on
-//! one validate, chained.
+//! The doc travels as a dynamic envelope; there is no fixed `{id,status,total}`
+//! shape. Both hook classes (compiled plugin, Tier-2 script) run on one
+//! validate, chained.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -30,11 +30,10 @@ const CALL_DEADLINE_TICKS: u64 = 50;
 /// Guest memory cap per hook instance.
 const MEM_CAP: usize = 128 << 20;
 
-/// WO-013 phase 2: fuel is the ACCOUNTING truth for hook compute â€” wall-time
-/// conflates a slow guest with a compute-heavy one, fuel does not. The epoch
-/// deadline above stays as the wall-clock backstop (ADR-005/ADR-007: the
-/// allocation bomb ground for 10.4 s before the memory cap caught it, so
-/// wall-clock bounding is not optional).
+/// Fuel is the ACCOUNTING truth for hook compute — wall-time conflates a slow
+/// guest with a compute-heavy one, fuel does not. The epoch deadline above
+/// stays as the wall-clock backstop: an allocation bomb once ran for 10.4 s
+/// before the memory cap caught it, so wall-clock bounding is not optional.
 ///
 /// Per-call allowance, refilled before every call. Generous: this bounds a
 /// runaway, it does not shape normal work (the spike's warm call is ~56 Âµs;
@@ -219,8 +218,8 @@ impl HookInstance {
 /// Builds the guest's world. The environment is **constructed, never
 /// inherited**: `WasiCtxBuilder::new()` starts empty, and at most the single
 /// `FRUST_SCRIPT` variable is added. Inheriting the kernel's environment would
-/// hand a sandboxed guest every secret the process holds â€” the emptiness here
-/// is the ADR-005 capability posture, not an oversight.
+/// hand a sandboxed guest every secret the process holds — the emptiness here
+/// is a deliberate capability posture, not an oversight.
 fn new_store(engine: &Engine, script: Option<&str>) -> Store<State> {
     let mut wasi = WasiCtxBuilder::new();
     if let Some(src) = script {
@@ -243,7 +242,7 @@ fn new_store(engine: &Engine, script: Option<&str>) -> Store<State> {
 pub struct WasmHooks {
     plugin: Mutex<HookInstance>,
     script: Mutex<HookInstance>,
-    /// Set by `with_script_source`; `None` keeps the pre-WO-019 behaviour of
+    /// Set by `with_script_source`; `None` keeps the default behaviour of
     /// running the engine's built-in default.
     scripts: Option<ScriptSource>,
     /// Kept so pooled per-DocType instances can be built lazily.
@@ -253,7 +252,7 @@ pub struct WasmHooks {
 
 impl WasmHooks {
     /// Load both components from the artifacts dir. One engine, one epoch
-    /// ticker for the process (ADR-005 finding: deadlines are engine-global).
+    /// ticker for the process — epoch deadlines are engine-global.
     pub fn load(artifacts_dir: &str) -> Result<Self, BrokerError> {
         Self::load_inner(artifacts_dir, None)
     }
@@ -261,7 +260,7 @@ impl WasmHooks {
     fn load_inner(artifacts_dir: &str, script: Option<String>) -> Result<Self, BrokerError> {
         let mut config = Config::new();
         config.epoch_interruption(true);
-        // fuel metering: the per-tenant compute accounting (WO-013 phase 2)
+        // fuel metering: the per-tenant compute accounting
         config.consume_fuel(true);
         let engine = Engine::new(&config)
             .map_err(|e| BrokerError::Db { detail: format!("wasm engine: {e}") })?;
@@ -310,12 +309,12 @@ impl WasmHooks {
         Self::load_inner(artifacts_dir, Some(script.to_string()))
     }
 
-    /// WO-019 criterion 6: **per-DocType server scripts, delivered.**
+    /// **Per-DocType server scripts.**
     ///
-    /// Attach the source of truth for server scripts. Until this exists, every
-    /// server-side write runs the engine's built-in default â€” the WO-017
-    /// item-3 finding, and the hole this closes: ADR-007's "scripts are data,
-    /// live-mutable" becomes true server-side, not merely proven in principle.
+    /// Attach the source of truth for server scripts. Without it, every
+    /// server-side write runs the engine's built-in default; attaching it
+    /// makes "scripts are data, live-mutable" true server-side rather than
+    /// only proven in principle.
     ///
     /// **Delivery is by seam, never by env inheritance.** The guest's world
     /// stays empty apart from the single `FRUST_SCRIPT` variable the host
@@ -324,9 +323,9 @@ impl WasmHooks {
     /// point, and this does not weaken it.
     pub fn with_script_source(mut self, db: Db) -> Self {
         // The generation handle is resolved ONCE here, never on the write path
-        // — the same rule `Db` follows for its agent and its root credential
-        // (WO-041/WO-044): a registry lock per query is not a cache, it is a
-        // different bottleneck.
+        // — the same rule `Db` follows for its agent and its root credential:
+        // a registry lock per query is not a cache, it is a different
+        // bottleneck.
         let gens = crate::tenant_gen::for_tenant(db.tenant_id());
         self.scripts = Some(ScriptSource {
             db,
@@ -338,7 +337,7 @@ impl WasmHooks {
     }
 }
 
-/// Per-DocType script instances, pooled per ADR-007's `(tenant, script-set)`.
+/// Per-DocType script instances, pooled per `(tenant, script-set)`.
 ///
 /// Pooling matters because building a Boa context is not free and a hot write
 /// path would otherwise rebuild one per document. Keyed by
@@ -348,27 +347,25 @@ impl WasmHooks {
 /// and configuration in practice.
 struct ScriptSource {
     db: Db,
-    /// **WO-050: keyed `(tenant, doctype, app)`.** It was `(tenant, doctype)`,
-    /// which held exactly one instance per DocType — the shape WO-049 proved
-    /// turns a second contributor into a silent replacement of the first. The
-    /// app in the key is what lets the owner's instance and an extension's
-    /// coexist instead of evicting each other.
+    /// Keyed `(tenant, doctype, app)`. A single `(tenant, doctype)` key would
+    /// hold exactly one instance per DocType, so a second contributor would
+    /// silently replace the first; the app in the key is what lets the owner's
+    /// instance and an extension's coexist instead of evicting each other.
     pool: Mutex<HashMap<(String, String, String, crate::contract::HookClass), (String, HookInstance)>>,
-    /// **WO-048: the script text, generation-cached.**
+    /// **The script text, generation-cached.**
     ///
-    /// WO-047's trace census found this module's `load_server_script` to be the
-    /// ONE root round trip left on the steady-state write path — issued on
-    /// every validate, including for doctypes that declare no script at all,
-    /// because the query is how you find that out. `None` is cached as
-    /// deliberately as `Some`: the scriptless case is the common one and it was
-    /// paying full price.
+    /// `load_server_script` is otherwise the ONE root round trip left on the
+    /// steady-state write path — issued on every validate, including for
+    /// doctypes that declare no script at all, because the query is how you
+    /// find that out. `None` is cached as deliberately as `Some`: the
+    /// scriptless case is the common one and it was paying full price.
     ///
     /// **The generation is the meta generation** — a server script is a field
     /// on the `doctype` record, so every site that already invalidates DocType
     /// metadata invalidates this too, and no new bump site is introduced. That
-    /// is what keeps ADR-007's live-mutability true: the invalidation this
-    /// cache relies on is the invalidation the doctype cache already relies on,
-    /// so the two cannot drift apart.
+    /// is what keeps live-mutability true: the invalidation this cache relies on
+    /// is the invalidation the doctype cache already relies on, so the two
+    /// cannot drift apart.
     script_cache: Mutex<HashMap<(String, String), (u64, crate::sync::HookPlan)>>,
     /// This tenant's generation counters, resolved once at construction.
     gens: crate::tenant_gen::TenantGenerations,
@@ -376,7 +373,7 @@ struct ScriptSource {
 
 impl ScriptSource {
     /// Every app's script for `doctype`, owner first, from cache when the
-    /// generation still matches (WO-048's machinery, now carrying a list).
+    /// generation still matches.
     fn scripts_for(&self, doctype: &str) -> Result<crate::sync::HookPlan, BrokerError> {
         let gen = self.gens.meta.load(std::sync::atomic::Ordering::Acquire);
         let key = (self.db.tenant_id().to_string(), doctype.to_string());
@@ -414,8 +411,8 @@ impl WasmHooks {
             &[("runtime", runtime), ("tenant", &tenant)],
             span.elapsed_ms(),
         );
-        // fuel is the per-tenant compute truth (WO-013 phase 2): wall-time
-        // says "slow", fuel says "expensive" â€” quotas need the second one
+        // fuel is the per-tenant compute truth: wall-time says "slow", fuel
+        // says "expensive" — quotas need the second one
         if let Ok((_, fuel)) = &result {
             crate::telemetry::inc(
                 "frust_hook_fuel_total",
@@ -434,21 +431,21 @@ impl WasmHooks {
 impl WasmHooks {
     /// The script for this DocType, from metadata, pooled.
     ///
-    /// Returns `Ok(None)` when the DocType declares no server script â€” which
+    /// Returns `Ok(None)` when the DocType declares no server script — which
     /// must mean *no script runs*, not *the default runs*. A DocType silently
-    /// inheriting someone else's validation is the WO-017 finding in a new
-    /// costume.
-    /// **WO-050: the owner-first chain.**
+    /// inheriting someone else's validation would be a silent-wrong defect.
+    ///
+    /// **The owner-first chain.**
     ///
     /// Every app that contributes a `validate` to this DocType runs, in order,
     /// each seeing the previous one's output. The owner is first and cannot be
-    /// displaced — WO-049 measured the alternative: with one slot, a second app
-    /// silently *replaced* the owner's hook and its invariant stopped running
-    /// with no error and no trace. That is P-2.2, and the ordering here plus the
-    /// per-app pool key is what makes it unreachable rather than merely refused.
+    /// displaced — with one slot, a second app would silently *replace* the
+    /// owner's hook and its invariant would stop running with no error and no
+    /// trace. The ordering here plus the per-app pool key is what makes that
+    /// unreachable rather than merely refused.
     ///
-    /// An extension may REJECT (ADR-015's ruled veto): its `Err` fails the write
-    /// and names the rejecting app. It may not skip, reorder or replace anyone.
+    /// An extension may REJECT: its `Err` fails the write and names the
+    /// rejecting app. It may not skip, reorder or replace anyone.
     fn dispatch_doctype_script(
         &self,
         class: crate::contract::HookClass,
@@ -457,9 +454,9 @@ impl WasmHooks {
     ) -> Result<Option<Vec<(String, Value)>>, BrokerError> {
         let Some(src) = &self.scripts else { return Ok(None) };
         let plan = src.scripts_for(doctype)?;
-        // **WO-053: the class selects who runs.** A script subscribes to one
-        // event; the others are not its business. Filtering here rather than
-        // inside the loop keeps the empty case cheap — the overwhelmingly
+        // **The class selects who runs.** A script subscribes to one event;
+        // the others are not its business. Filtering here rather than inside
+        // the loop keeps the empty case cheap — the overwhelmingly
         // common shape is a doctype with one `validate` and nothing else, and
         // it must not pay for a vocabulary it does not use.
         let entries: Vec<&crate::sync::ScriptEntry> = plan.entries.iter().filter(|e| e.hook == class).collect();
@@ -491,9 +488,9 @@ impl WasmHooks {
                     *slot = (entry.script.clone(), inst);
                 }
 
-                // **WO-050 criterion 4: attribution.** "Which app changed this
-                // behaviour" is a log field, not an archaeology exercise —
-                // P-2.2's complaint answered where it is checkable.
+                // **Attribution.** "Which app changed this behaviour" is a log
+                // field, not an archaeology exercise — answered where it is
+                // checkable.
                 let span = crate::telemetry::Span::begin("hook_dispatch")
                     .field("runtime", "server_script")
                     .field("doctype", doctype)
@@ -515,12 +512,12 @@ impl WasmHooks {
 
             match out {
                 Ok((next, _fuel)) => {
-                    // **Criterion 6: undeclared writes are LOUD.** WO-049 lost
-                    // an hour to this: an app wrote a field its manifest never
-                    // declared, WO-009's envelope filter dropped it in silence,
-                    // and the run looked exactly like the hook never executing.
-                    // Declare-or-lose-your-data with no error is the silent-wrong
-                    // class; refusing by name is the house answer.
+                    // **Undeclared writes are LOUD.** If an app writes a field
+                    // its manifest never declared, the envelope filter would
+                    // drop it in silence, and the run would look exactly like
+                    // the hook never executing. Declare-or-lose-your-data with
+                    // no error is the silent-wrong class; refusing by name is
+                    // the house answer.
                     //
                     // Checked per app, right after its own hook returns, because
                     // that is the only moment the culprit is still known.
@@ -542,9 +539,9 @@ impl WasmHooks {
                     }
                     current = next;
                 }
-                // **Criterion 5: the veto, typed and NAMED.** A rejection that
-                // did not say which app rejected would be the archaeology this
-                // whole mechanism exists to end.
+                // **The veto, typed and NAMED.** A rejection that did not say
+                // which app rejected would be the archaeology this whole
+                // mechanism exists to end.
                 Err(BrokerError::HookRejected { stage, message }) => {
                     let who = entry
                         .app
@@ -578,13 +575,13 @@ impl HookDispatch for WasmHooks {
         self.dispatch_one("script", &self.script, &after_plugin)
     }
 
-    /// **WO-053: the rest of REQ-2.2.1.**
+    /// **Lifecycle-event hooks.**
     ///
     /// The resident plugin is deliberately NOT consulted here. It is built
-    /// against `world plugin`, which exports `hooks` and nothing else — and
-    /// ADR-006 edge-1, measured in this WO, says a component receives exactly
-    /// the events it exports. Handing it a lifecycle event it never declared
-    /// would be the host inventing a subscription on the guest's behalf.
+    /// against `world plugin`, which exports `hooks` and nothing else — and a
+    /// component receives exactly the events it exports. Handing it a lifecycle
+    /// event it never declared would be the host inventing a subscription on
+    /// the guest's behalf.
     ///
     /// Server scripts need no such thing: the engine is a *text runner*, so
     /// which script runs for which event is a host-side routing decision, and
@@ -600,7 +597,7 @@ impl HookDispatch for WasmHooks {
             // a mutating class takes the document back
             (Some(next), true) => Ok(next),
             // **a non-mutating class does not.** on_submit/on_cancel fire on a
-            // docstatus edge where ADR-009's lattice owns the value; they may
+            // docstatus edge where the lattice owns the value; they may
             // refuse (their Err propagates and blocks the write) but what they
             // hand back is discarded HOST-side, so the contract holds even for
             // a script that ignores it.

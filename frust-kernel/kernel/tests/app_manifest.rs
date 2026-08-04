@@ -1,4 +1,4 @@
-//! WO-019 criterion 2: the App manifest — one file format, validated before
+//! The App manifest — one file format, validated before
 //! anything applies, with REQ-6.6's gate discipline extending to bundles.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
@@ -40,9 +40,8 @@ fn good_bundle() -> String {
         "server_scripts": [{ "doctype": "acct_invoice", "hook": "validate", "script": "doc;" }],
         "routes": [{ "path": "ledger", "component": "plugin_demo.wasm" }],
         "components": ["plugin_demo.wasm"],
-        // RESERVED — WO-018 designs this; here it must merely survive
-        // WO-018 filled this slot: it is now a typed WorkflowDef, validated
-        // like everything else, so the fixture is a real (minimal) workflow.
+        // The workflow slot is a typed WorkflowDef, validated like
+        // everything else, so the fixture is a real (minimal) workflow.
         "workflows": [{
             "name": "approval",
             "doctype": "acct_invoice",
@@ -58,8 +57,7 @@ fn good_bundle() -> String {
     .to_string()
 }
 
-/// One file format that round-trips — including the slot this WO deliberately
-/// does not design.
+/// One file format that round-trips — including the reserved workflow slot.
 #[test]
 fn a_bundle_round_trips_and_preserves_the_reserved_workflow_slot() {
     let m = Manifest::parse(&good_bundle()).expect("parses");
@@ -111,7 +109,7 @@ fn validation_collects_every_problem_at_once() {
     assert!(joined.contains("MAJOR.MINOR.PATCH"), "{joined}");
     assert!(joined.contains("declared twice"), "{joined}");
     assert!(joined.contains("not_in_bundle"), "{joined}");
-    // WO-053: `before_save` is still not a hook point — but the refusal now
+    // `before_save` is still not a hook point — but the refusal now
     // names the vocabulary that DOES exist instead of claiming validate is the
     // only one, which stopped being true.
     assert!(joined.contains("before_save"), "names the unknown hook: {joined}");
@@ -198,7 +196,7 @@ fn the_same_call_shape_applies_when_told_to() {
     assert!(info.to_string().contains("acct_invoice"), "the table exists now");
 }
 
-/// Update detection for criterion 3 — versions order, and malformed ones say
+/// Update detection — versions order, and malformed ones say
 /// so instead of comparing as strings ("10.0.0" < "9.0.0" lexically).
 #[test]
 fn versions_order_numerically_not_lexically() {

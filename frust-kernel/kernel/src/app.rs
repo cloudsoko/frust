@@ -1,4 +1,4 @@
-//! WO-019 criterion 2: the App manifest.
+//! The App manifest.
 //!
 //! An App is a **versioned bundle**: DocTypes, client scripts, server scripts,
 //! route declarations, `.wasm` components, aggregate declarations (which ride
@@ -58,15 +58,10 @@ pub struct Manifest {
     /// `.wasm` filenames the bundle ships, relative to its artifacts dir.
     #[serde(default)]
     pub components: Vec<String>,
-    /// The workflows this app installs (WO-018 filled this slot).
-    ///
-    /// It was carried verbatim and unvalidated through all of WO-019 — parse,
-    /// install, preview, update — precisely so this WO could design its
-    /// contents against a format already proven to carry them. It is now
-    /// typed, and validated like everything else.
+    /// The workflows this app installs.
     #[serde(default)]
     pub workflows: Vec<crate::workflow::WorkflowDef>,
-    /// **WO-050: what this app adds to DocTypes it does NOT own.**
+    /// **What this app adds to DocTypes it does NOT own.**
     ///
     /// Kept separate from `doctypes` on purpose: `doctypes` means "I ship and
     /// own this", `extends` means "I add to someone else's". Conflating them is
@@ -75,7 +70,7 @@ pub struct Manifest {
     pub extends: Vec<ExtensionDecl>,
 }
 
-/// One app's extension of a DocType another app owns (ADR-015).
+/// One app's extension of a DocType another app owns.
 ///
 /// Additive by construction: fields and a hook, nothing that can remove or
 /// replace what the owner declared. The owner's hook always runs first and
@@ -90,9 +85,8 @@ pub struct ExtensionDecl {
     /// an error rather than a fact of life.
     #[serde(default)]
     pub fields: Vec<crate::sync::FieldDef>,
-    /// The lifecycle point. `validate` only, as for owned scripts — ADR-015
-    /// ruled the wider vocabulary ordinary build work, deliberately deferred so
-    /// composition lands on one hook first.
+    /// The lifecycle point. `validate` only, as for owned scripts — the wider
+    /// hook vocabulary is deferred so composition lands on one hook first.
     #[serde(default = "default_hook")]
     pub hook: String,
     /// The script text. Optional: an extension may add fields only.
@@ -148,7 +142,7 @@ pub struct InstallPlan {
     pub client_scripts: Vec<String>,
     pub server_scripts: Vec<String>,
     pub routes: Vec<String>,
-    /// Reserved-slot passthrough count (WO-018).
+    /// Reserved-slot passthrough count.
     pub workflows: usize,
 }
 
@@ -232,7 +226,7 @@ impl Manifest {
                 if !owns(&s.doctype) {
                     errs.push(format!("{kind} targets '{}', which this bundle does not declare", s.doctype));
                 }
-                // WO-053: the vocabulary is the door. A hook point that does not
+                // The vocabulary is the door. A hook point that does not
                 // exist is refused HERE, at install, with the list of the ones
                 // that do — never accepted and then silently never fired, which
                 // is the failure a typo would otherwise buy you.
@@ -250,9 +244,9 @@ impl Manifest {
             }
         }
 
-        // ── WO-050: extension declarations ──
+        // ── extension declarations ──
         //
-        // Validated with the same discipline as everything else (WO-019): a
+        // Validated with the same discipline as everything else: a
         // bundle that cannot be installed says so completely, in one pass, at
         // the door. The `owns` predicate above deliberately does NOT apply to
         // these — extending someone else's DocType is the whole point — so
@@ -325,7 +319,7 @@ impl Manifest {
             }
         }
 
-        // WO-018: a workflow whose transitions name states it never declared
+        // A workflow whose transitions name states it never declared
         // is the half-installed app again, one layer up. Caught here, not on
         // the first click.
         for w in &self.workflows {

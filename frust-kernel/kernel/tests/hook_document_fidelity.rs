@@ -1,11 +1,11 @@
-//! WO-028 — hooks see the FULL document (ADR-006 edge 3), without opening a
-//! lost-update race under the concurrent loop WO-025 shipped.
+//! Hooks see the FULL document, without opening a lost-update race under the
+//! concurrent worker loop.
 //!
-//! The bug: `db_write_inner` handed hooks the caller's PARTIAL payload while
-//! its own comment promised the full document. The accounting seed's
-//! reconciliation script did `doc.lines || []` on an absent field and wrote
-//! `[]` back; `MERGE` faithfully destroyed the stored child rows. Any hook
-//! that derives or echoes a field had the same power, on every partial update.
+//! The hazard: if `db_write_inner` hands hooks the caller's PARTIAL payload
+//! while the contract promises the full document, a hook that echoes a field
+//! (e.g. `doc.lines || []` on an absent field) writes `[]` back and `MERGE`
+//! destroys the stored child rows. Any hook that derives or echoes a field
+//! has the same power, on every partial update.
 //!
 //! The fix has two halves and BOTH are load-bearing:
 //!   1. read the record (under the caller's session) and merge the delta, so
@@ -94,7 +94,7 @@ fn field(db: &Db, key: &str, f: &str) -> serde_json::Value {
 }
 
 /// THE REGRESSION. A partial update must not destroy fields it never mentioned
-/// — the failure that shipped through the whole platform milestone.
+/// — a silent loss that is easy to ship unnoticed.
 #[test]
 fn a_partial_update_does_not_destroy_unmentioned_child_rows() {
     let (b, db) = setup("hf_regress");
@@ -135,7 +135,7 @@ fn a_hook_sees_the_full_document_on_a_partial_update() {
 
 /// THE CONCURRENCY PROOF. Two writers, disjoint fields, same record — both
 /// deltas must survive. A read-modify-write that persisted the whole document
-/// would lose one of them under WO-025's parallel loop.
+/// would lose one of them under the concurrent worker loop.
 #[test]
 fn concurrent_disjoint_updates_both_survive() {
     let (b, db) = setup("hf_race");
@@ -169,9 +169,9 @@ fn concurrent_disjoint_updates_both_survive() {
     );
 }
 
-/// The representation trap (WO-016's lesson, new location): a hook echoing a
-/// decimal back unchanged must NOT count as a change. If it did, every hooked
-/// update would rewrite the whole document and reopen the race above.
+/// The representation trap: a hook echoing a decimal back unchanged must NOT
+/// count as a change. If it did, every hooked update would rewrite the whole
+/// document and reopen the race above.
 #[test]
 fn echoing_an_unchanged_decimal_is_not_a_change() {
     let (b, db) = setup("hf_decimal");

@@ -1,5 +1,5 @@
-//! WO-012: kernel-owned live subscriptions, proven against SHIPPED code â€”
-//! spike results don't transfer by assumption.
+//! Kernel-owned live subscriptions, proven against SHIPPED code — spike
+//! results don't transfer by assumption.
 //!
 //! - the leak partition re-proven on the shipped push path (criterion: a
 //!   clerk's subscription never ticks for another clerk's row)
@@ -199,7 +199,7 @@ fn idle_subscriptions_are_reaped() {
 }
 
 /// Restart: the fleet-lite drill. Subscriptions report dead after a surreal
-/// bounce; the client's move is resubscribe + refetch (ADR-011), proven.
+/// bounce; the client's move is resubscribe + refetch, proven.
 #[test]
 #[ignore = "restarts the shared dev surreal instance; run alone"]
 fn restart_reports_dead_then_refetch_recovers() {
