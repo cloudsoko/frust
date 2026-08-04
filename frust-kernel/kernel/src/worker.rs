@@ -3,8 +3,12 @@
 //! The loop: replay-from-cursor (versionstamp changefeed) -> LIVE tail ->
 //! advance cursor. LIVE is a latency optimization over a changefeed-backed
 //! log (proven viable with a bridge). The atomic conditional claim is
-//! the ONLY serialization point — duplicate delivery is harmless by
-//! construction. Cold start beyond retention = rescan
+//! the ONLY serialization point: it prevents two concurrent workers from
+//! claiming the same queued row. It does NOT make execution atomic with the
+//! post-run status write, so delivery is at-least-once across crashes and
+//! retries — harmless for idempotent job execution, but for the mail path a
+//! resend is a real (bounded) outcome, not an impossibility (see
+//! `try_claim_mail` / `send_one`). Cold start beyond retention = rescan
 //! `status='queued'`; jobs are records.
 //!
 //! This module speaks HTTP `/sql` for claim/run (the wire-protocol transport
@@ -679,9 +683,17 @@ impl MailWorker<'_> {
     }
 
     /// The same atomic conditional claim the job queue uses, for the same
-    /// reason: it is the only serialization point, and duplicate delivery must
-    /// be impossible rather than unlikely — a customer receiving the same
-    /// invoice email twice is a support ticket.
+    /// reason: it is the only serialization point, and it keeps two concurrent
+    /// workers from claiming the same queued row.
+    ///
+    /// It does NOT guarantee at-most-once *delivery*. `send_one` calls the mail
+    /// transport first and updates the row (`mark_sent`) afterward, and that
+    /// `mark_sent` result is ignored. A crash or DB failure between a successful
+    /// send and the status write leaves the row un-marked; any recovery requeue
+    /// then sends it again. Delivery is therefore at-least-once, and a customer
+    /// receiving the same invoice email twice is possible. Making it exactly-once
+    /// would need a stable provider idempotency key (follow-up); until then the
+    /// bound is at-least-once with dead-lettering after `MAX_ATTEMPTS`.
     fn try_claim_mail(&self, id: &str) -> Result<Option<MailRow>, BrokerError> {
         let rid = crate::surql::render_value(&Value::RecordId(id.to_string()))?;
         let out = self.db.sql_root(&format!(

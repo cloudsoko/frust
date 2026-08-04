@@ -115,9 +115,19 @@ fn main() {
         .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../wasm-spike/artifacts").to_string());
     // The resident kernel must attach the per-DocType script
     // source, or `frust serve` runs only the engine's built-in default and an
-    // app's server scripts never fire live. The script source is a `Db`, and
-    // the pool keys by tenant, so it is scoped to the first target and the
-    // pool key keeps tenants apart.
+    // app's server scripts never fire live.
+    //
+    // LIMITATION — the script source is a SINGLE tenant's `Db` (`targets[0]`),
+    // and this one `WasmHooks` is then shared by every tenant broker below.
+    // `ScriptSource` loads scripts from that stored `Db` and keys its pool by
+    // `db.tenant_id()`, so both the script text AND the pool/cache resolve to
+    // `targets[0]` regardless of which tenant a write belongs to. This is
+    // correct for a single-tenant process (the only shape with server scripts
+    // exercised today). In a multi-tenant process (`database-per-tenant` /
+    // `namespace-per-tenant` with >1 target) that also uses per-DocType server
+    // scripts, tenant B's writes would execute tenant A's scripts against
+    // tenant A's cache state — server-script isolation across tenants is NOT
+    // yet implemented. See broker.rs / hooks.rs for the matching notes.
     let hooks: Arc<dyn HookDispatch> = match WasmHooks::load(&artifacts) {
         Ok(h) => Arc::new(h.with_script_source(scoped_db(&targets[0]))),
         Err(e) => refuse("hooks_unavailable", e.to_string()),

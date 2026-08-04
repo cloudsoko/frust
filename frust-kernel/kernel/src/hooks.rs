@@ -316,6 +316,14 @@ impl WasmHooks {
     /// makes "scripts are data, live-mutable" true server-side rather than
     /// only proven in principle.
     ///
+    /// SINGLE-TENANT SCOPE: the `db` passed here is ONE tenant's handle. Both
+    /// `ScriptSource::scripts_for` (script loading) and `dispatch_doctype_script`
+    /// (pool keying) resolve the tenant from THIS `db`, not from the tenant of
+    /// the write being processed. When one `WasmHooks` is shared across tenant
+    /// brokers (as `frust serve` does), every tenant's writes are validated with
+    /// the attached tenant's scripts and cache. This is correct while a single
+    /// tenant is served; cross-tenant server-script isolation is not yet built.
+    ///
     /// **Delivery is by seam, never by env inheritance.** The guest's world
     /// stays empty apart from the single `FRUST_SCRIPT` variable the host
     /// chooses to put there. Inheriting the kernel's environment would hand a
@@ -325,7 +333,10 @@ impl WasmHooks {
         // The generation handle is resolved ONCE here, never on the write path
         // — the same rule `Db` follows for its agent and its root credential:
         // a registry lock per query is not a cache, it is a different
-        // bottleneck.
+        // bottleneck. Note this ties the handle (like the `Db` above) to the
+        // attached tenant: under a shared multi-tenant `WasmHooks` it tracks the
+        // attached tenant's invalidations, not the request tenant's — the same
+        // single-tenant scope documented on this method.
         let gens = crate::tenant_gen::for_tenant(db.tenant_id());
         self.scripts = Some(ScriptSource {
             db,
@@ -512,12 +523,24 @@ impl WasmHooks {
 
             match out {
                 Ok((next, _fuel)) => {
-                    // **Undeclared writes are LOUD.** If an app writes a field
-                    // its manifest never declared, the envelope filter would
-                    // drop it in silence, and the run would look exactly like
-                    // the hook never executing. Declare-or-lose-your-data with
-                    // no error is the silent-wrong class; refusing by name is
-                    // the house answer.
+                    // **Undeclared writes are LOUD — when the DocType declares a
+                    // field set at all.** If a hook writes a field outside the
+                    // declared set, the envelope filter would drop it in silence
+                    // and the run would look exactly like the hook never
+                    // executing; refusing by name turns that silent-wrong into
+                    // an error.
+                    //
+                    // SCOPE, stated honestly:
+                    // - This is DocType-LEVEL enforcement. `plan.declared` is the
+                    //   DocType-wide declared-field list, NOT the current app's
+                    //   manifest, so it cannot express per-app ownership of a
+                    //   field — it only asks "is this field declared on the
+                    //   DocType by anyone".
+                    // - The guard runs only when `plan.declared` is non-empty. A
+                    //   DocType that declares no fields skips it entirely, so a
+                    //   hook-written field on such a DocType is still dropped
+                    //   silently by the envelope filter. The empty case is not
+                    //   yet covered.
                     //
                     // Checked per app, right after its own hook returns, because
                     // that is the only moment the culprit is still known.

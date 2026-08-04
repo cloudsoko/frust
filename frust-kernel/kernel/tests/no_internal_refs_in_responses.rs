@@ -12,6 +12,21 @@
 //! decays, one that fails the build does not. It is database-free — it reads
 //! the shipped source and inspects the string literals directly.
 //!
+//! **Coverage, stated honestly.** This scans the kernel's OWN route source
+//! (`routes.rs`) for internal markers written as plain string literals. Two
+//! things it does NOT cover, by construction:
+//! - **Guest route components.** `RouteHost::handle` returns an external route
+//!   component's `out.body`, which `rest.rs` forwards to the caller unchanged.
+//!   A source scanner over kernel code cannot see what a guest returns at
+//!   runtime; rejecting these markers in `out.body` at the response boundary is
+//!   a separate, unbuilt guard (follow-up).
+//! - **Non-plain literal forms.** The scanner matches marker substrings in the
+//!   raw literal text; it does not decode `\u{..}` / `\x..` escapes, raw
+//!   strings (`r#"..."#`), or literals that follow a char literal on the same
+//!   line. A marker hidden in one of those forms would be missed. This is safe
+//!   only because the kernel's response/error strings are plain literals — an
+//!   assumption, not an enforcement.
+//!
 //! **The scanner is proved to bite.** `the_guard_catches_a_planted_ref` runs
 //! it over a synthetic line and asserts it fires; a guard that has never been
 //! seen to reject anything is a green light with no bulb.
@@ -20,8 +35,11 @@ const REF_MARKERS: [&str; 2] = ["WO-", "ADR-"];
 
 /// Extracts the double-quoted string-literal contents from one line of Rust
 /// source, ignoring `//` line comments (a comment is prose, not something a
-/// caller ever receives). Handles escaped quotes; the guarded error/response
-/// strings use no raw strings, so a plain scan is sufficient.
+/// caller ever receives). Handles escaped quotes but does NOT decode escape
+/// sequences (`\u{..}`, `\x..`), raw strings, or a literal that opens after a
+/// char literal on the same line — a marker written in one of those forms is
+/// not detected. This suffices only because the guarded error/response strings
+/// are plain literals; it is a scoping assumption, not a guarantee.
 fn string_literals(line: &str) -> Vec<String> {
     let mut lits = Vec::new();
     let mut cur = String::new();
