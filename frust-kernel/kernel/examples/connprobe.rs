@@ -1,8 +1,8 @@
-//! WO-041 probe — **does the transport reuse its connection?**
+//! Connection-reuse probe — **does the transport reuse its connection?**
 //!
-//! The kernel's `db.rs` calls `ureq::post(..)`, the bare free function. WO-040
-//! Chunk B measured TIME_WAIT climbing at request rate against SurrealDB
-//! (118 → 1252 → 4274 → 6150 across three benches), which points at a
+//! The kernel's `db.rs` calls `ureq::post(..)`, the bare free function. Earlier
+//! benches saw TIME_WAIT climbing at request rate against SurrealDB
+//! (118 → 1252 → 4274 → 6150 across three runs), which points at a
 //! connection per query — but "points at" is not "measured", and the fix
 //! depends on WHY. So this is an A/B of the two client models, run before
 //! anything in `db.rs` changes:
@@ -13,8 +13,8 @@
 //! Count TIME_WAIT sockets to the endpoint before and after each. A model that
 //! reuses its connection leaves a handful; one that does not leaves ~N.
 //!
-//! Prints the wall time too, so the throughput dimension WO-026 measured is
-//! visible alongside the resource dimension it never measured.
+//! Prints the wall time too, so the throughput dimension is visible alongside
+//! the resource dimension this probe adds.
 
 use std::time::Instant;
 

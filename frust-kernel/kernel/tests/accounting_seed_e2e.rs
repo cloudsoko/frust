@@ -1,11 +1,10 @@
-//! WO-022: the accounting seed — the platform dogfooded.
+//! The accounting seed — the platform dogfooded.
 //!
 //! A real (minimal) accounting app, shipped as a BUNDLE, running on machinery
 //! none of which was written for accounting: DocTypes, an approval workflow,
-//! WO-021 money arithmetic, a WO-017 server script, a WO-007/016 AR rollup,
-//! the WO-019 lifecycle. No core changes — if a criterion needs one, that is a
-//! FINDING, recorded in the build log, not patched into the kernel to make the
-//! demo green.
+//! money arithmetic, a server script, an AR rollup, the app lifecycle. No core
+//! changes — if a criterion needs one, that is a FINDING, recorded in the build
+//! log, not patched into the kernel to make the demo green.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 
@@ -26,10 +25,11 @@ fn artifacts() -> &'static str {
 
 /// The reconciliation + line-computation server script.
 ///
-/// **WO-030: the footgun is CLOSED.** This once hand-rolled decimal multiply and
-/// half-even rounding in integer minor units — exact, but the very float-money
-/// footgun the platform exists to remove, re-handed to every app author (and my
-/// own first fixed-scale version truncated rate `0.335` to `0.33`). It now calls
+/// **The float-money footgun is CLOSED.** This once hand-rolled decimal multiply
+/// and half-even rounding in integer minor units — exact, but the very
+/// float-money footgun the platform exists to remove, re-handed to every app
+/// author (and my own first fixed-scale version truncated rate `0.335` to
+/// `0.33`). It now calls
 /// the `Decimal` binding, which is `decimal.rs` compiled into the script engine
 /// verbatim — the SAME arithmetic the kernel and DB reconcile against. Money
 /// crosses as strings; `mul` is exact and rounding is explicit at each defined
@@ -84,7 +84,7 @@ fn seed_bundle() -> serde_json::Value {
               // outstanding = charged - paid, computed at read; both positive)
               "aggregates": [ { "kind": "counter", "rollup": "ar_outstanding",
                 "key": "customer", "metrics": [ { "name": "paid", "field": "amount" } ] } ] },
-            // the AR rollup record itself is a readable DocType (WO-007)
+            // the AR rollup record itself is a readable DocType
             { "name": "ar_outstanding", "fields": [
                 { "fieldname": "k", "fieldtype": "Data" },
                 { "fieldname": "charged", "fieldtype": "Currency" },
@@ -190,28 +190,45 @@ fn the_accounting_seed_runs_as_an_app() {
 
     // ── 3. workflow: clerk submits (0→0), manager approves (0→1) ──
     //
-    // WO-028: assert the WHOLE DOCUMENT survives each state change, not just
-    // the field under test. This test previously checked AR (derived from
-    // `total`, which happened to be unaffected) and never re-read `lines` —
-    // so a transition silently destroying the embedded child rows shipped
-    // through the entire platform milestone. A test that only checks what it
-    // changed cannot catch what it silently destroyed.
-    let lines_len = |b: &Broker| -> usize {
-        b.db.sql_root(&format!("SELECT VALUE array::len(lines) FROM sales_invoice:{key};"))
+    // Assert the WHOLE DOCUMENT survives each state change, not just the field
+    // under test. This test previously checked AR (derived from `total`, which
+    // happened to be unaffected) and never re-read `lines` — so a transition
+    // silently destroying the embedded child rows shipped through the entire
+    // platform milestone. A test that only checks what it changed cannot catch
+    // what it silently destroyed.
+    // Snapshot the FULL line rows before any transition, then assert byte-for-
+    // byte equality after each state change. array::len alone passes even when
+    // a transition replaces or corrupts both child rows while keeping the count
+    // at 2 — the exact silent-destruction this test exists to catch. Compare
+    // values, not cardinality.
+    let lines_value = |b: &Broker| -> serde_json::Value {
+        b.db.sql_root(&format!("SELECT VALUE lines FROM sales_invoice:{key};"))
             .unwrap()
             .as_array()
-            .and_then(|a| a.first())
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0) as usize
+            .and_then(|a| a.first().cloned())
+            .unwrap_or(serde_json::Value::Null)
     };
-    assert_eq!(lines_len(&broker), 2, "two lines before any transition");
+    let lines_before = lines_value(&broker);
+    assert_eq!(
+        lines_before.as_array().map(|a| a.len()),
+        Some(2),
+        "two lines before any transition"
+    );
 
     b.db_transition(&clerk(), &HookChain::default(), "sales_invoice", &key, "Submit").expect("submit");
-    assert_eq!(lines_len(&broker), 2, "lines survive the clerk's Submit (0->0)");
+    assert_eq!(
+        lines_value(&broker),
+        lines_before,
+        "the whole line rows survive the clerk's Submit (0->0) — values, not just count"
+    );
 
     let approved = b.db_transition(&mgr(), &HookChain::default(), "sales_invoice", &key, "Approve").expect("approve");
     assert_eq!(approved["docstatus"], serde_json::json!(1), "approved invoice is docstatus 1");
-    assert_eq!(lines_len(&broker), 2, "lines survive the manager's Approve (0->1)");
+    assert_eq!(
+        lines_value(&broker),
+        lines_before,
+        "the whole line rows survive the manager's Approve (0->1) — values, not just count"
+    );
 
     // ── 4. AR: the counter charged the customer by the exact total ──
     // counters fire on docstatus = 1, so AR moved on approval
@@ -246,8 +263,8 @@ fn the_accounting_seed_runs_as_an_app() {
     assert_eq!(exact, serde_json::json!(true), "outstanding = 50.98 - 20.98 = EXACTLY 30.00");
 
     // ── cancel-reversal: cancelling the payment reverses its AR contribution ──
-    // docstatus 1 → 2 is the cancel; the counter's signed algebra (WO-007)
-    // subtracts $before back out.
+    // docstatus 1 → 2 is the cancel; the counter's signed algebra subtracts
+    // $before back out.
     broker.db.sql_root(&format!("UPDATE payment:{pkey} SET docstatus = 2;")).unwrap();
     let ar3 = broker.db.sql_root("SELECT <string>paid AS paid FROM ar_outstanding:acme;").unwrap();
     println!("AR after payment cancel: paid={}", ar3.as_array().unwrap()[0]["paid"]);

@@ -1,4 +1,4 @@
-//! WO-008: the $auth sharp edge, hardened. Criteria 1-3 executed:
+//! The $auth sharp edge, hardened:
 //! kernel-owned identity posture with boot repair, typed refusal of
 //! NULL-identity stamps, and null-safe permission clauses.
 //!
@@ -42,7 +42,7 @@ fn caller(name: &str, role: &str) -> Caller {
     Caller { user: name.into(), pass: format!("pw-{name}"), role: role.into() }
 }
 
-/// Criteria 1 + 2, the exact drift scenario from the WO-007 finding:
+/// The exact drift scenario:
 /// healthy posture stamps owner; drifted posture (`PERMISSIONS NONE`) makes
 /// the write FAIL TYPED instead of stamping NULL; boot repairs the drift.
 #[test]
@@ -88,7 +88,7 @@ fn row_count(db: &Db) -> i64 {
         .unwrap_or(0)
 }
 
-/// Criterion 3: NONE = NONE can never grant. A NULL-owner row (root-written,
+/// NONE = NONE can never grant. A NULL-owner row (root-written,
 /// the legitimate system-write case) is invisible to record principals; each
 /// user still sees exactly their own rows; the manager path is the ROLE
 /// clause, not the NULL hole.
@@ -107,7 +107,7 @@ fn null_owner_rows_invisible_to_record_principals() {
     let read = |c: &Caller| b.db_read(c, "idoc", None, &[], &ReadOpts::default()).unwrap();
     let c1_rows = read(&caller("c1", "user"));
     let c2_rows = read(&caller("c2", "user"));
-    // before WO-008 the null-owner row was visible to BOTH via NONE = NONE
+    // a null-owner row must never be visible to record principals via NONE = NONE
     assert_eq!(c1_rows.len(), 1, "c1 sees exactly their own row: {c1_rows:?}");
     assert_eq!(c1_rows[0]["owner"].as_str(), Some("app_user:c1"));
     assert_eq!(c2_rows.len(), 1, "c2 sees exactly their own row");

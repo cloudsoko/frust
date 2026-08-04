@@ -1,4 +1,4 @@
-//! WO-036: the last two v2.0-gate assumptions.
+//! The last two v2.0-gate assumptions.
 //!
 //! **A1 — multi-app hook composition.** The scorecard called it "lightly
 //! exercised"; the gate found it untested. This drives the actual question:
@@ -7,8 +7,8 @@
 //!
 //! **A2 — major-upgrade survival.** `accept_meta_migrations_two_step` proves the
 //! meta gate with `NoUserSync` and NO app installed. This installs a real app
-//! (DocType + hook + rollup), drives the ADR-008 two-step upgrade, and asserts
-//! the app is still *functional* afterwards — the founding P-7.3 pain.
+//! (DocType + hook + rollup), drives the two-step meta upgrade, and asserts
+//! the app is still *functional* afterwards — the founding upgrade-survival pain.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 
@@ -118,7 +118,7 @@ fn two_apps_declaring_hooks_on_one_doctype() {
     }
 }
 
-/// A1's other half — the composition that IS possible, and the one P-2.2
+/// A1's other half — the composition that IS possible, and the one the hook-composition concern
 /// actually describes: **two apps installed together, each hooking its own
 /// DocType**, with no cross-talk.
 ///
@@ -158,14 +158,14 @@ fn two_installed_apps_each_hook_their_own_doctype_without_crosstalk() {
 
 // ── A2: major-upgrade survival ──────────────────────────────────────────────
 
-/// **The founding pain (P-7.3), driven.** Install a real app, upgrade the
-/// meta-schema the ADR-008 two-step way, and prove the app is still FUNCTIONAL
+/// **The founding pain (app-survives-upgrade), driven.** Install a real app, upgrade the
+/// meta-schema the two-step way, and prove the app is still FUNCTIONAL
 /// — not merely that its rows survived.
 ///
 /// "Functional" is the load-bearing word: a test that only counted rows would
-/// pass over an app whose hooks had stopped firing (the WO-027 lesson — a
+/// pass over an app whose hooks had stopped firing — a
 /// verification that only checks what it expects cannot catch what was silently
-/// destroyed).
+/// destroyed.
 #[test]
 fn an_installed_app_survives_a_major_meta_upgrade() {
     let name = "ac_upgrade";
@@ -197,7 +197,7 @@ fn an_installed_app_survives_a_major_meta_upgrade() {
         .expect("pre-upgrade write");
     assert_eq!(pre.get("stamp").and_then(|v| v.as_str()), Some("hook-ran"), "hook fires BEFORE upgrade");
 
-    // ── the major upgrade, ADR-008 two-step ──
+    // ── the major upgrade, two-step ──
     // simulate a database written by an older binary
     db.sql_root(&format!("UPSERT {META_TABLE}:schema SET version = 0;")).unwrap();
 
@@ -240,6 +240,6 @@ fn an_installed_app_survives_a_major_meta_upgrade() {
     assert_eq!(
         post.get("stamp").and_then(|v| v.as_str()),
         Some("hook-ran"),
-        "THE APP'S HOOK STILL FIRES after a major meta upgrade (P-7.3, the founding pain): {post}"
+        "THE APP'S HOOK STILL FIRES after a major meta upgrade (the founding pain): {post}"
     );
 }

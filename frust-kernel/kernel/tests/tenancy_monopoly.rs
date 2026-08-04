@@ -1,11 +1,11 @@
-//! **The tenancy bypass guard** (WO-040 Chunk A, ADR-003 invariant 4).
+//! **The tenancy bypass guard.**
 //!
 //! `surql_monopoly` proved the posture works: an invariant that lives only in
 //! a reviewer's head decays, and one that fails the build does not. This is
 //! the same guard for the other monopoly — *nothing outside `tenancy.rs`
 //! decides which namespace or database a query lands in.*
 //!
-//! Chunk A migrates today's database-per-tenant behaviour onto the seam. What
+//! This guard keeps today's database-per-tenant behaviour on the seam. What
 //! stops it drifting back off is this file: the day someone adds a
 //! `Db::for_database(name)` "just for a script", or reaches for a
 //! `surreal-db` header in a new module, or hardcodes the namespace again, the
@@ -84,7 +84,7 @@ const RULES: &[Rule] = &[
         allowed: &["sync.rs"],
         why: "the migrator's location is projected from the strategy (sync.rs::scope_of)",
     },
-    // ── 3b. WO-040 Chunk B: nothing downstream knows the topology ──
+    // ── 3b. nothing downstream knows the topology ──
     //
     // The tell that a strategy abstraction is genuine rather than the old
     // single implementation wearing a trait: no code outside the seam can

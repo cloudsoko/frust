@@ -1,7 +1,7 @@
-//! WO-018: the workflow engine (REQ-4.1.2).
+//! The workflow engine.
 //!
 //! Multi-step, role-gated approval flows as **runtime metadata**. This module
-//! is the *judge* half of ADR-009 A2:
+//! is the *judge* half of the two-layer approval design:
 //!
 //! > EVENTs enforce the docstatus lattice; workflow transition rules are
 //! > kernel logic evaluated **before** the kernel attempts the transition.
@@ -19,7 +19,7 @@
 //! the split, and why a buggy workflow is a rejected write rather than a
 //! corrupted document.
 //!
-//! **Workflow rules never enter EVENT bodies.** A2's incident definition —
+//! **Workflow rules never enter EVENT bodies.** The rule against
 //! "Server Scripts with extra steps" — stands guard: the EVENT knows only the
 //! docstatus lattice, which is fixed and kernel-owned. Everything role-shaped
 //! or state-shaped is evaluated here, in Rust, where it can be read.
@@ -41,8 +41,8 @@ pub struct WorkflowDef {
     pub doctype: String,
     pub states: Vec<StateDef>,
     pub transitions: Vec<TransitionDef>,
-    /// State-scoped field behaviour (criterion 3). Compiled into WO-014's
-    /// declarative rule shape for the Desk — a workflow state imposing
+    /// State-scoped field behaviour. Compiled into the Desk's
+    /// declarative rule shape — a workflow state imposing
     /// read-only is Tier-1 dynamics, not a new mechanism.
     #[serde(default)]
     pub state_rules: Vec<StateRule>,
@@ -100,8 +100,7 @@ impl WorkflowDef {
     /// The state to judge from, given a document's stored `workflow_state`.
     ///
     /// An absent **or empty** value means the document has not yet entered the
-    /// workflow, so it is judged from the initial state (WO-031). WO-018
-    /// resolved the absent case but not the empty one — and every doc created
+    /// workflow, so it is judged from the initial state. Every doc created
     /// through the Desk carries an empty `workflow_state`, so without this a
     /// fresh document showed no transition buttons at all.
     pub fn state_or_initial<'a>(&'a self, stored: Option<&'a str>) -> &'a str {
@@ -111,7 +110,7 @@ impl WorkflowDef {
         }
     }
 
-    /// The transitions THIS role may take from THIS state (criterion 1).
+    /// The transitions THIS role may take from THIS state.
     ///
     /// Used for the Desk's buttons, and deliberately the same data the judge
     /// uses — a button that renders is a transition that will be allowed, and
@@ -184,7 +183,7 @@ impl WorkflowDef {
         })
     }
 
-    /// Compiles `state_rules` into WO-014's declarative rule shape, keyed by
+    /// Compiles `state_rules` into the Desk's declarative rule shape, keyed by
     /// fieldname.
     ///
     /// The source field is always `workflow_state`, so the Desk renders these
@@ -290,7 +289,7 @@ mod tests {
         }
     }
 
-    /// WO-031: a document with an absent OR empty `workflow_state` is judged
+    /// A document with an absent OR empty `workflow_state` is judged
     /// from the initial state — a fresh Desk-created doc enters the workflow
     /// and shows its initial transitions, rather than resolving to an empty
     /// state that matches no transition.
@@ -304,7 +303,7 @@ mod tests {
         assert_eq!(w.available(w.state_or_initial(Some("")), "clerk")[0].action, "Submit");
     }
 
-    /// State rules compile to WO-014's shape — no new rendering mechanism.
+    /// State rules compile to the Desk's rule shape — no new rendering mechanism.
     #[test]
     fn state_rules_compile_into_wo014_rule_shape() {
         let rules = wf().field_rules(None);

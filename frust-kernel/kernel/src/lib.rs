@@ -1,4 +1,4 @@
-//! Frust metadata kernel (WO-005). Module 1: the broker.
+//! Frust metadata kernel.
 
 pub mod aggregates;
 pub mod app;

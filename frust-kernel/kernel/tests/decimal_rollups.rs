@@ -1,9 +1,9 @@
-//! WO-016: money is decimal end-to-end through the aggregates layer.
+//! Money is decimal end-to-end through the aggregates layer.
 //!
 //! The test values are chosen to EXPOSE float error, not to avoid it: sums
 //! of the 0.1 family that `f64` provably cannot represent. A rollup that
 //! equals the exact decimal sum is the requirement; "close enough" is the
-//! defect (REQ-6.2.1).
+//! defect.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 
@@ -179,7 +179,7 @@ fn recompute_from_source_replaces_legacy_float_state() {
         b.db_write(&caller(), &HookChain::default(), WriteOp::Create, "dsrc", None, &doc).unwrap();
     }
 
-    // simulate the pre-WO-016 world: a rollup doc holding the float sum that
+    // simulate the legacy pre-decimal world: a rollup doc holding the float sum that
     // f64 would have produced, and a cursor already past the feed
     db.sql_root(
         "UPSERT droll:legacy SET k = 'legacy', qty = 0, amount = 0.30000000000000004f; \

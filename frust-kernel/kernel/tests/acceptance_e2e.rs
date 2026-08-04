@@ -1,4 +1,4 @@
-//! WO-005 exit criterion 1: THE SENTENCE, through the two-process kernel.
+//! THE SENTENCE, through the two-process kernel.
 //! "Create a DocType at runtime, submit a document through both hook classes,
 //! show the audit trail — no restarts, composition deleted."
 //!
@@ -83,7 +83,7 @@ fn the_sentence_through_two_processes() {
         .http_status_as_error(false)
         .build()
         .into();
-    // WO-009: session login replaces the header trio
+    // Session login replaces the header trio
     let mut lr = agent
         .post(format!("{url}/login"))
         .send(serde_json::json!({ "user": "clerk", "pass": "pw-clerk" }).to_string())

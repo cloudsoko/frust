@@ -1,6 +1,6 @@
-//! **WO-040 Chunk B: the implementation matrix** (ADR-003 invariant 4).
+//! **The tenancy implementation matrix.**
 //!
-//! Chunk A built the seam; this proves the seam has *two real sides*. The
+//! The seam already exists; this proves it has *two real sides*. The
 //! same assertions run against `single` and `database-per-tenant`, and the
 //! table below is the contract each one signs:
 //!
@@ -39,7 +39,7 @@ impl HookDispatch for PassHooks {
     }
 }
 
-/// What a strategy promises. Adding `namespace-per-tenant` in Chunk C is
+/// What a strategy promises. Adding `namespace-per-tenant` later is
 /// adding a row here, not writing a new test.
 struct Expect {
     strategy: &'static str,
@@ -76,7 +76,7 @@ const MATRIX: &[Expect] = &[
         tenants_share_a_namespace: true,
         restore_is_tenant_isolated: true,
     },
-    // ── WO-040 Chunk C: the namespace topologies ──
+    // ── the namespace topologies ──
     Expect {
         strategy: "namespace-per-tenant",
         namespace: None,

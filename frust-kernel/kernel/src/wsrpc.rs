@@ -1,4 +1,4 @@
-//! Minimal WebSocket RPC client for SurrealDB's `/rpc` endpoint (WO-012).
+//! Minimal WebSocket RPC client for SurrealDB's `/rpc` endpoint.
 //!
 //! Hand-rolled RFC 6455 client over `TcpStream` — the kernel's zero-new-crates
 //! posture. Scope: text frames, ping/pong, close; no fragmentation (SurrealDB
@@ -8,7 +8,7 @@
 //!
 //! One connection per live subscription: `authenticate` with the SUBSCRIBER'S
 //! OWN record JWT, `use`, then `LIVE SELECT` — the DB enforces the row clause
-//! per subscriber (REQ-6.5.1); the kernel never filters the push path.
+//! per subscriber; the kernel never filters the push path.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;

@@ -1,4 +1,4 @@
-//! WO-010 exit criteria 1, 2, 3, 4 — EXECUTED.
+//! Observability evidence, all four criteria EXECUTED.
 //!
 //! Criterion 1: one trace's spans across REST, broker, both hook runtimes,
 //! the EVENT rejection path, and a follow-on job — reconstructed from the
@@ -259,7 +259,7 @@ fn two_tenant_burst_attributes_separably() {
     };
     assert_eq!(count_of("obs_ten_a"), 6, "tenant A's writes attributed to A\n{text}");
     assert_eq!(count_of("obs_ten_b"), 2, "tenant B's writes attributed to B");
-    // hook time attributed per tenant too (fuel/time substrate for P-8.2)
+    // hook time attributed per tenant too (the fuel/time throttling substrate)
     assert!(
         text.contains(r#"frust_hook_duration_ms_count{runtime="plugin",tenant="obs_ten_a"}"#),
         "hook timing carries tenant"

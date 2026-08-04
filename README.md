@@ -1,8 +1,26 @@
 # Frust
 
-A Rust rewrite of a Frappe-style metadata-driven ERP framework — *not a port, an
-upgrade*. Three processes: the metadata kernel, SurrealDB, and a server-rendered
-Desk.
+A Rust rewrite of a Frappe-style, metadata-driven ERP framework — *not a port,
+an upgrade*. Everything is metadata: DocTypes, permissions, workflows, and
+reports are data the kernel reads, so most changes need no recompile.
+
+Three moving parts:
+
+- **the metadata kernel** (`frust serve`) — a headless HTTP/JSON service:
+  broker, permission compiler, hooks, background workers, and REST surface.
+- **SurrealDB** — the store. Row permissions are compiled once and enforced by
+  the database under each caller's own session.
+- **the Desk** — a server-rendered, REST-only client. It is one consumer of the
+  kernel's surface, not a privileged one; anything the Desk does, your own
+  client can do.
+
+Plugins are WebAssembly components with a capability surface, so untrusted app
+code runs contained rather than trusted.
+
+**Maturity: pilot-grade, not production-ready.** The honest, machine-checked
+scorecard is [`maturity/CAPABILITIES.md`](maturity/CAPABILITIES.md) — at the
+time of writing, no capability is marked `production-ready`. Read it before you
+deploy anything.
 
 ```
 git clone --recurse-submodules https://github.com/cloudsoko/frust.git
@@ -13,16 +31,15 @@ git clone --recurse-submodules https://github.com/cloudsoko/frust.git
 | path | what it is | tracked |
 |---|---|---|
 | `frust-kernel/` | the metadata kernel (`frust serve`) — broker, hooks, workers, REST | source |
-| `frust-desk/` | the Desk: a server-rendered, REST-only client (ADR-004 headless contract) | submodule |
+| `frust-desk/` | the Desk: a server-rendered, REST-only client (headless contract) | submodule |
 | `frust-e2e/` | the browser evidence harness (`pnpm workflow` / `sse` / `mail` / `print`) | source |
-| `frust/` | the vault: vision, ADRs, Work Orders, dated build logs — **the decision record** | source |
 | `topcoat/` | **submodule** -> the maintained Topcoat fork used by the Desk | submodule |
-| `frust-ui/` | **submodule** -> retired WO-037 UI foundation, kept for its history | submodule |
+| `frust-ui/` | **submodule** -> an earlier UI foundation, retained for its history | submodule |
 
-Every claim in the code traces to a linked ADR / Work Order / build log in
-`frust/`. That is deliberate: `04 Build Log/` holds dated evidence with real
-numbers, and `05 Work Orders/` holds the order each piece of work was built
-against, including what it refused to do.
+The kernel's HTTP surface is documented, executable, and the recommended place
+to start after the build: [`frust-kernel/docs/`](frust-kernel/docs/) — every
+example is run against a live kernel by the evidence harness, so a stale example
+turns the suite red.
 
 ## Bootstrap
 
@@ -80,18 +97,44 @@ Notable environment switches, all fail-closed on an unrecognised value:
 
 | var | default | effect |
 |---|---|---|
-| `FRUST_TENANCY` | `single` | topology: `single` · `database-per-tenant` · `namespace-per-tenant` · `namespace-per-tenant-env` (ADR-003) |
+| `FRUST_TENANCY` | `single` | topology: `single` · `database-per-tenant` · `namespace-per-tenant` · `namespace-per-tenant-env` |
 | `FRUST_MAIL` | `file` | `file` captures `.eml` to `FRUST_MAIL_DIR`; `smtp` relays via `FRUST_MAIL_SMTP` |
-| `FRUST_ROOT_AUTH` | `jwt` | `basic` is the documented escape hatch back to pre-WO-044 root auth |
+| `FRUST_ROOT_AUTH` | `jwt` | `basic` is the documented escape hatch back to password-based root auth |
 | `FRUST_LOG` | `info` | `debug` emits per-call `db_call` spans — the trace instrument the perf work uses |
 
 `cargo` is capped at `--jobs 2` on the dev machine: rustc OOMs on
 `surrealdb-core` above that.
 
+## Install and drive an app
+
+An app is metadata. You install one through the running kernel with a single
+call — a JSON manifest of DocTypes and workflows — and it is live with no
+recompile:
+
+```bash
+KERNEL=http://127.0.0.1:8790
+
+curl -s -X POST $KERNEL/app/install \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"manifest_version":1,"name":"expenses","version":"1.0.0",
+       "doctypes":[{"name":"expense_claim","submittable":true,
+         "fields":[{"fieldname":"purpose","label":"Purpose","fieldtype":"Data","required":true},
+                   {"fieldname":"amount","label":"Claim Amount","fieldtype":"Currency","required":true}]}]}'
+```
+
+The full, executable walk-through — log in, discover the schema, read, write,
+move a document through its workflow, and subscribe to changes, all in plain
+`curl` — is [`frust-kernel/docs/byo-quickstart.md`](frust-kernel/docs/byo-quickstart.md).
+The `frust-e2e` suites drive the same lifecycle through a real browser as
+runnable proof.
+
+User accounts are provisioned by the operator: identities are write-closed, so
+no REST call creates them.
+
 ## Submodules
 
 `frust-desk/` is the independently versioned Desk. `topcoat/` is a maintained
-fork, not a floating consumer dependency. `frust-ui/` is the retired WO-037 UI
+fork, not a floating consumer dependency. `frust-ui/` is an earlier UI
 foundation retained for history. All three public repositories are pinned to
 exact commits by the root repository; branch names in `.gitmodules` are update
 channels, not build inputs.

@@ -1,14 +1,14 @@
-//! WO-019 criterion 1: THE DOOR PROBE.
+//! THE DOOR PROBE.
 //!
 //! PM prediction, stated to be falsifiable: *a plugin route handler is a
-//! profile of ADR-006 — a WIT export receiving the verb surface under the
-//! caller's session, in a world with no db handle to obtain.*
+//! profile of the verb contract — a WIT export receiving the verb surface under
+//! the caller's session, in a world with no db handle to obtain.*
 //!
 //! This test tries to falsify it. Every hostile attempt is made BY THE GUEST,
 //! through the real boundary — not simulated host-side, which would only prove
 //! that the host refuses things the host already refuses.
 //!
-//! If any `ESCAPED:` shows up, the registry design is wrong and the WO stops.
+//! If any `ESCAPED:` shows up, the registry design is wrong.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 

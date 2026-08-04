@@ -1,6 +1,7 @@
-//! WO-055: the WO-054 gaps, fixed — G3, G4, G5.
-//! (G1 has its own file, `login_errors.rs`, because its both-sides
-//! requirement is the whole point of that test.)
+//! The remaining REST-surface gaps, fixed: created-vs-updated in the
+//! response, an unknown write key refused, and an explicit readiness endpoint.
+//! (Failed-login classification has its own file, `login_errors.rs`, because
+//! its both-sides requirement is the whole point of that test.)
 
 mod common;
 

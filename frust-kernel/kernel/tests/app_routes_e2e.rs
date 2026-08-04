@@ -1,9 +1,9 @@
-//! WO-019 criterion 4: plugin routes served over REST.
+//! Plugin routes served over REST.
 //!
 //! This runs against a REAL kernel over REAL HTTP with REAL bearer tokens.
 //! The criterion-1 door probe proved `route == broker` when the host called
 //! the broker directly, in-process. Bearer auth, session lookup, trace spans,
-//! tenant attribution and the WO-013 throttle now sit between the two â€” each
+//! tenant attribution and the fairness throttle now sit between the two — each
 //! one an opportunity for "the same rows for the same caller" to decay into
 //! "nearly the same rows". So the equality is asserted **through the shipped
 //! dispatch path**, not around it.
@@ -33,7 +33,7 @@ fn artifacts() -> &'static str {
 /// disable's "app is disabled".
 ///
 /// Same mutex the permission proofs and perf gates use. Noting it because I
-/// made this exact mistake in WO-013 with the fairness unit tests: shared
+/// hit this exact trap with the fairness unit tests before: shared
 /// global state plus parallel tests is a collision every time, and passing
 /// under `--test-threads=1` in isolation proves nothing about the suite.
 fn serial() -> std::sync::MutexGuard<'static, ()> {
@@ -202,7 +202,7 @@ fn the_hostile_probes_still_fail_over_http() {
     }
 }
 
-/// **A plugin route is not a budget bypass.** WO-013's throttle fires through
+/// **A plugin route is not a budget bypass.** The fairness throttle fires through
 /// `/app/{app}/{path}` exactly as it does at the broker door â€” and it is the
 /// KERNEL's 429, not a status code the plugin chose.
 #[test]
@@ -233,7 +233,7 @@ fn the_tenant_throttle_trips_through_a_plugin_route() {
     assert!(
         out["error"].to_string().contains("TenantThrottled")
             || out["error"].to_string().contains("retry_after_ms"),
-        "the refusal is WO-013's, with its retry hint: {out}"
+        "the refusal is the fairness throttle's, with its retry hint: {out}"
     );
 }
 

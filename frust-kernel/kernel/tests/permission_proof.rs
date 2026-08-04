@@ -1,9 +1,9 @@
-﻿//! WO-005 first report: the broker serving db-read with the permission
+﻿//! The broker serving db-read with the permission
 //! compiler producing the role-split row proof through the kernel path â€”
 //! byte-compared against direct DB sessions, proving the kernel adds
 //! exactly the field envelope and nothing else.
 //!
-//! Requires the WO-002 environment: surreal.exe on :8899 with ns frust /
+//! Requires the shared test environment: surreal.exe on :8899 with ns frust /
 //! db skeleton (app_user roles + purchase_order data), and â€” for the
 //! acceptance-flow leg â€” the composition hook-runner on :8787.
 
@@ -22,7 +22,7 @@ fn lock() -> std::sync::MutexGuard<'static, ()> {
 
 mod common;
 
-/// WO-020 criterion 5: SELF-SEEDING. Was `DbConfig::default()` over the
+/// SELF-SEEDING. Was `DbConfig::default()` over the
 /// ambient `skeleton` dataset â€” the landmine three sessions tripped. Now each
 /// call rebuilds the exact fixture in a dedicated database (the tests are
 /// serialized by `lock()`, so one name is safe and each gets fresh data). The
@@ -39,7 +39,7 @@ fn caller(user: &str, role: &str) -> Caller {
 
 /// Reads a numeric field that may arrive in either shape.
 ///
-/// Since WO-016 `Currency` is `decimal`, and SurrealDB serialises decimals as
+/// `Currency` is `decimal`, and SurrealDB serialises decimals as
 /// JSON *strings* â€” so `as_f64()` returns `None` on precisely the fields that
 /// matter most, and `.unwrap()` on it turns a representation change into a
 /// panic. Rows written before the migration are still floats, so both shapes
@@ -47,7 +47,7 @@ fn caller(user: &str, role: &str) -> Caller {
 ///
 /// f64 is the right tool *here*: these assertions are about row visibility and
 /// sort order, not monetary exactness. Money exactness is asserted decimally,
-/// against the DB, in `decimal_rollups.rs` (REQ-6.2.1).
+/// against the DB, in `decimal_rollups.rs`.
 fn num(v: &serde_json::Value) -> f64 {
     v.as_f64()
         .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
@@ -87,7 +87,7 @@ fn role_split_row_proof_through_kernel() {
 fn kernel_read_matches_direct_session_bytes() {
     let _g = lock();
     let b = broker();
-    // pin to the two stable WO-002 seed rows so the concurrently-running
+    // pin to the two stable seed rows so the concurrently-running
     // write test can't race the two snapshots
     let filter = Filter::Cmp {
         path: vec![PathSegment::Field("title".into())],
@@ -184,8 +184,8 @@ fn aggregate_respects_row_permissions() {
     assert!(count(&clerk) < count(&mgr));
 }
 
-/// WO-002 acceptance flow through the kernel: db-write fires both external
-/// hook classes (module-4 fold-in pending), the write lands under the
+/// The acceptance flow through the kernel: db-write fires both external
+/// hook classes, the write lands under the
 /// caller's session, and the mutation is hook-shaped.
 #[test]
 fn acceptance_write_through_hooks() {
@@ -213,7 +213,7 @@ fn acceptance_write_through_hooks() {
         .unwrap_err();
     assert!(matches!(err, BrokerError::HookRejected { .. }));
 
-    // cleanup: keep the shared WO-002 dataset stable across runs
+    // cleanup: keep the shared seed dataset stable across runs
     b.db
         .sql_root("DELETE purchase_order WHERE title = 'Kernel write';")
         .unwrap();
