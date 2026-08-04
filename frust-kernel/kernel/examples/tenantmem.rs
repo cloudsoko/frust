@@ -22,6 +22,12 @@ use frust_kernel::db::scoped_db;
 use frust_kernel::tenancy::single_tenant;
 use frust_kernel::hooks::WasmHooks;
 
+/// Resident set size, in bytes. **Windows/PowerShell only.** It shells out to
+/// PowerShell for `WorkingSet64`; on a system without PowerShell (Linux, macOS,
+/// or a stripped Windows) the command fails and this returns `0`, meaning
+/// "unavailable" rather than "zero memory". The JSON output carries an
+/// `rss_available` flag so a consumer is not misled by the zero. A
+/// cross-platform reading (e.g. `/proc/self/statm` on Linux) is not implemented.
 fn rss_bytes() -> u64 {
     // Windows: ask the OS for this process's working set via wmic-free PS.
     let pid = std::process::id();
@@ -64,8 +70,12 @@ fn main() {
     let alive = tenants.len();
     let per_tenant = if alive > 0 { (loaded.saturating_sub(after_engine)) as f64 / alive as f64 } else { 0.0 };
 
+    // If every reading is 0 the RSS probe is unavailable on this platform (see
+    // `rss_bytes`); flag it so the memory figures are not read as real zeros.
+    let rss_available = baseline > 0 || after_engine > 0 || loaded > 0;
+
     println!(
-        "{{\"tenants\":{alive},\"baseline_mb\":{:.1},\"after_engine_mb\":{:.1},\"loaded_mb\":{:.1},\"per_tenant_kb\":{:.1}}}",
+        "{{\"tenants\":{alive},\"rss_available\":{rss_available},\"baseline_mb\":{:.1},\"after_engine_mb\":{:.1},\"loaded_mb\":{:.1},\"per_tenant_kb\":{:.1}}}",
         baseline as f64 / 1e6,
         after_engine as f64 / 1e6,
         loaded as f64 / 1e6,

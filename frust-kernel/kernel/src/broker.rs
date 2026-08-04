@@ -232,8 +232,15 @@ pub struct Broker {
     /// Shared, not owned. One wasmtime engine (and its one epoch ticker)
     /// serves EVERY tenant — an owned `Box` would have made N tenants cost
     /// N engines + N threads, multiplying the 60 MB idle footprint by tenant
-    /// count. Safe because the script pool inside `WasmHooks` is already keyed
-    /// `(tenant, doctype)`.
+    /// count. The engine itself carries no tenant state, so sharing it is safe.
+    ///
+    /// CAVEAT: if the shared `WasmHooks` also carries a `ScriptSource` (attached
+    /// via `with_script_source`), that source holds ONE tenant's `Db` and keys
+    /// its pool by that `Db`'s `tenant_id()` — NOT by the tenant of the current
+    /// request. Per-DocType server scripts and their cache are therefore shared
+    /// from the attached tenant across every broker that shares this handle.
+    /// That is correct for a single-tenant process; multi-tenant server-script
+    /// isolation is not yet implemented (see `hooks.rs` and `main.rs`).
     pub hooks: std::sync::Arc<dyn HookDispatch>,
     /// This tenant's cache generations, resolved ONCE here so the per-request
     /// path stays a single atomic load rather than a registry lookup — trading
@@ -264,6 +271,13 @@ impl Broker {
     /// `Arc<WasmHooks>`: one engine, one ticker, one component load, for the
     /// whole process. This is what keeps per-tenant cost at a `Db` plus a
     /// metadata cache — kilobytes — instead of a wasm engine apiece.
+    ///
+    /// The per-broker `db` here IS request-tenant-scoped, so metadata, rules and
+    /// authority are correctly per tenant. The one piece of shared state that is
+    /// NOT re-scoped per request is a `ScriptSource` inside the shared `hooks`:
+    /// it resolves scripts and pool keys from its own stored `Db`, so server
+    /// scripts are only tenant-safe when a single tenant is served (see the
+    /// `hooks` field caveat and `with_script_source`).
     pub fn with_shared_hooks(db: Db, hooks: std::sync::Arc<dyn HookDispatch>) -> Self {
         let gens = crate::tenant_gen::for_tenant(db.tenant_id());
         Self {
