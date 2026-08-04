@@ -1,4 +1,4 @@
-//! WO-044 criterion 3: what the root JWT actually buys, measured.
+//! Root-auth A/B: what the root JWT actually buys, measured.
 //!
 //! Runs against a **dedicated scratch store** (endpoint passed on the command
 //! line) — never the live dev store's data directory, per standing policy.
@@ -6,7 +6,7 @@
 //!   cargo run --release --example rootauth -- http://127.0.0.1:8901
 //!
 //! Both arms run in ONE process against the SAME database, interleaved, with
-//! ≥3 samples per arm. Interleaving is not decoration: WO-043's first
+//! ≥3 samples per arm. Interleaving is not decoration: an earlier
 //! save-floor attempt compared arms measured at different times and produced
 //! two contradictory numbers for one operation.
 
@@ -64,7 +64,7 @@ fn main() {
         )
         .expect("seed");
 
-    println!("WO-044 root-auth A/B — endpoint {endpoint}, {SAMPLES} samples × {PER_SAMPLE} queries\n");
+    println!("root-auth A/B saturation probe — endpoint {endpoint}, {SAMPLES} samples × {PER_SAMPLE} queries\n");
 
     let query = "SELECT * FROM bench;";
     let mut jwt_samples = Vec::new();

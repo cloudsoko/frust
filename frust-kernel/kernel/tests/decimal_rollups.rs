@@ -3,7 +3,7 @@
 //! The test values are chosen to EXPOSE float error, not to avoid it: sums
 //! of the 0.1 family that `f64` provably cannot represent. A rollup that
 //! equals the exact decimal sum is the requirement; "close enough" is the
-//! defect (REQ-6.2.1).
+//! defect.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 

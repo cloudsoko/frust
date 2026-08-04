@@ -47,7 +47,7 @@ fn caller(user: &str, role: &str) -> Caller {
 ///
 /// f64 is the right tool *here*: these assertions are about row visibility and
 /// sort order, not monetary exactness. Money exactness is asserted decimally,
-/// against the DB, in `decimal_rollups.rs` (REQ-6.2.1).
+/// against the DB, in `decimal_rollups.rs`.
 fn num(v: &serde_json::Value) -> f64 {
     v.as_f64()
         .or_else(|| v.as_str().and_then(|s| s.parse().ok()))

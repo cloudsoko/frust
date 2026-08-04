@@ -298,7 +298,7 @@ fn two_apps_on_the_same_class_both_run_owner_first() {
         row["ran"],
         serde_json::json!("AB"),
         "OWNER FIRST, THEN THE EXTENSION, BOTH — 'A' alone means the extension never ran; \
-         'B' alone is P-2.2: the extension silently replaced the owner: {row}"
+         'B' alone is the silent-override pain: the extension silently replaced the owner: {row}"
     );
     assert_eq!(row["crm_note"], serde_json::json!("ext"), "the extension's own field landed");
 }

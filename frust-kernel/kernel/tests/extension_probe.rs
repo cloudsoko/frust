@@ -127,7 +127,7 @@ fn what_happens_when_a_second_app_hooks_someone_elses_doctype() {
     } else if ext_ran && !owner_survived {
         println!(
             "OBSERVED: B REPLACED A silently. The owner's hook stopped running and \
-             nothing reported it — this is P-2.2 exactly, and `owns` is the only thing \
+             nothing reported it — this is the silent-override pain exactly, and `owns` is the only thing \
              standing between the product and it."
         );
     } else if owner_survived && !ext_ran {
@@ -148,7 +148,7 @@ fn what_happens_when_a_second_app_hooks_someone_elses_doctype() {
     // hook, this goes red naming which half vanished.
     assert!(
         owner_survived,
-        "THE OWNER'S HOOK WAS DISPLACED — this is P-2.2 (owner_ran={owner_survived}, ext_ran={ext_ran})"
+        "THE OWNER'S HOOK WAS DISPLACED — this is the silent-override pain (owner_ran={owner_survived}, ext_ran={ext_ran})"
     );
     assert!(ext_ran, "the extension's hook did not run (owner_ran={owner_survived}, ext_ran={ext_ran})");
 
@@ -200,7 +200,7 @@ fn the_script_pool_is_keyed_per_app() {
 /// Per-app hook attribution.
 ///
 /// "Which app changed this behaviour" must be a log field, not an archaeology
-/// exercise — that is P-2.2's actual complaint, and this is where it is answered
+/// exercise — that is the silent-override pain's actual complaint, and this is where it is answered
 /// checkably.
 #[test]
 fn hook_dispatch_attributes_each_hook_to_its_app() {

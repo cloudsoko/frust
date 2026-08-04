@@ -73,7 +73,7 @@ impl frust::plugin::db_api::Host for State {
 impl frust::plugin::host_api::Host for State {
     fn log(&mut self, msg: String) {
         // the guest's log verb: a structured line under the CURRENT TRACE â€”
-        // plugin/script output is part of the request's story (REQ-6.4.1)
+        // plugin/script output is part of the request's story
         crate::telemetry::emit(
             crate::telemetry::Level::Info,
             "hook_log",

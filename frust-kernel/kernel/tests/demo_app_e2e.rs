@@ -8,7 +8,7 @@
 //!
 //! **No restarts anywhere.** That is the criterion: one kernel process from
 //! the first install to the last assertion. If any step needed a restart, the
-//! zero-compilation-extension claim (REQ-2.1.1) would be false in the only
+//! zero-compilation-extension claim would be false in the only
 //! way that matters.
 //!
 //! This is where every piece runs as one app: the manifest, the install gate,
@@ -43,7 +43,7 @@ fn ledger_app(version: &str) -> serde_json::Value {
         serde_json::json!({ "fieldname": "band", "fieldtype": "Data" }),
     ];
     let script = if version == "1.0.0" {
-        // money stays a STRING across the boundary (REQ-6.2.1): the script
+        // money stays a STRING across the boundary: the script
         // classifies, it does not compute
         r#"doc.band = Number(doc.amount) >= 1000 ? "large" : "small";"#
     } else {
@@ -183,7 +183,7 @@ fn the_demo_app_lives_its_whole_life_without_a_restart() {
     println!("STEP 3 small={} large={}", small["band"], large["band"]);
     assert_eq!(small["band"], serde_json::json!("small"), "the app's own script ran");
     assert_eq!(large["band"], serde_json::json!("large"));
-    // Money crossed as decimal and came back exact (REQ-6.2.1). Assert the
+    // Money crossed as decimal and came back exact. Assert the
     // VALUE, not its representation: SurrealDB normalises trailing zeros, so
     // `4200.00` comes back as `"4200"` — string-comparing here is the classic
     // representation-vs-value mistake, made again.

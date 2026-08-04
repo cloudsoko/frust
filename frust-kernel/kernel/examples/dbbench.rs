@@ -1,9 +1,9 @@
-//! WO-026 criterion 1 — the connection-model probe.
+//! Connection-model probe — the raw SurrealDB write ceiling.
 //!
 //! Drives writes STRAIGHT AT SurrealDB, bypassing the kernel, so the DB's own
-//! write ceiling can be compared against the through-kernel number (WO-025:
-//! 48 req/s, `db_write` 222 ms avg). Three modes, because "the DB is slow" and
-//! "we talk to the DB badly" look identical from the kernel:
+//! write ceiling can be compared against the through-kernel number (a prior
+//! measurement: 48 req/s, `db_write` 222 ms avg). Three modes, because "the DB
+//! is slow" and "we talk to the DB badly" look identical from the kernel:
 //!
 //!   pooled  — one shared `ureq::Agent`, connections reused. SurrealDB's true
 //!             concurrent-write ceiling.

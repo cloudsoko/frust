@@ -8,7 +8,7 @@
 //!
 //! One connection per live subscription: `authenticate` with the SUBSCRIBER'S
 //! OWN record JWT, `use`, then `LIVE SELECT` — the DB enforces the row clause
-//! per subscriber (REQ-6.5.1); the kernel never filters the push path.
+//! per subscriber; the kernel never filters the push path.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;

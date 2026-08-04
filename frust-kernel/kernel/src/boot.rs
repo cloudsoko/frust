@@ -208,7 +208,7 @@ fn boot_locked(db: &Db, opts: &BootOptions, sync: &dyn SchemaSync) -> Result<Boo
     db.sql_root(&format!("{};", crate::meta::tenant_policy_ddl()))?;
     let policies = load_tenant_policies(db)?;
 
-    // observability (REQ-6.4.2): boot/meta info visible on /metrics
+    // observability: boot/meta info visible on /metrics
     crate::telemetry::gauge("frust_meta_version", &[("tenant", db.tenant_id())], now as f64);
     crate::telemetry::gauge("frust_tenant_policies", &[("tenant", db.tenant_id())], policies as f64);
     crate::telemetry::emit(

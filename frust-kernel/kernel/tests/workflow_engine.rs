@@ -1,4 +1,4 @@
-//! The workflow engine (REQ-4.1.2).
+//! The workflow engine.
 //!
 //! The load-bearing assertion is criterion 2's **two layers, proven
 //! separately**:
