@@ -1,7 +1,7 @@
-//! **Per-tenant restore, executed — the P-8.1 evidence.**
+//! **Per-tenant restore, executed — the per-tenant-restore evidence.**
 //!
 //! `surreal export` is per-database, so with a single shared database
-//! restore-one *was* restore-all, and P-8.1 stayed **bounded by
+//! restore-one *was* restore-all, and per-tenant restore stayed **bounded by
 //! architecture**. Database-per-tenant lifts it. This closes it for the
 //! namespace topologies too, and it does so by **running the ops path**,
 //! not by asserting a plan.
@@ -89,7 +89,7 @@ fn surreal_io(verb: &str, ns: &str, db: &str, file: &str) {
     );
 }
 
-/// **P-8.1, executed: restore one tenant, leave every other untouched.**
+/// **Per-tenant restore, executed: restore one tenant, leave every other untouched.**
 ///
 /// Run under `namespace-per-tenant` — and the one
 /// where "the tenant" and "the database" are least alike, since every tenant's

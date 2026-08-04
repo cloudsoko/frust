@@ -345,7 +345,7 @@ impl Contrib for ItemSales {
 /// `as_f64()` returned `None` and the rollup silently accumulated ZERO.
 /// The value stays an exact [`Decimal`] from here
 /// through the accumulator and into the written statement, so no money path
-/// in this module touches `f64` (REQ-6.2.1).
+/// in this module touches `f64` (money stays exact decimal).
 fn numeric(v: Option<&serde_json::Value>) -> Decimal {
     Decimal::from_json(v)
 }
@@ -424,7 +424,7 @@ impl<'a> RollupWorker<'a> {
         let (changes, last_vs) = decode_entries(&entries)?;
         let mut acc: BTreeMap<String, BTreeMap<String, Decimal>> = BTreeMap::new();
         // the signed fold is EXACT: subtract the before-contribution, add the
-        // after-contribution, all in decimal (REQ-6.2.1 â€” an f64 here would
+        // after-contribution, all in decimal (exact fold â€” an f64 here would
         // reintroduce the error the requirement exists to prevent)
         for ch in &changes {
             for (doc, subtract) in [(&ch.before, true), (&ch.after, false)] {

@@ -287,6 +287,6 @@ fn an_owner_update_that_breaks_an_extension_refuses_naming_the_casualty() {
         .unwrap_or(false);
     assert!(
         ext_field_survived && ext_hook_survived,
-        "AN OWNER UPDATE SILENTLY WIPED THE EXTENSION (field={ext_field_survived}          hook={ext_hook_survived}) — that is P-2.2 in the update path: {rec}"
+        "AN OWNER UPDATE SILENTLY WIPED THE EXTENSION (field={ext_field_survived}          hook={ext_hook_survived}) — that is silent cross-app data loss in the update path: {rec}"
     );
 }

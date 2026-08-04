@@ -65,7 +65,7 @@ fn broker(cfg: &ResolvedTenant) -> Broker {
 /// Money now travels as decimal (JSON strings), counts as decimal too, so
 /// the old `as_f64()` + `1e-6` comparison would both misread the values and
 /// accept drift. `Decimal::from_json` reads either representation and the
-/// comparison is exact equality â€” which is the whole point of REQ-6.2.1: an
+/// comparison is exact equality â€” which is the whole point of exact decimal: an
 /// epsilon here would hide precisely the defect the requirement forbids.
 fn reconcile(db: &Db, live_q: &str, rollup: &str, metric: &str, tag: &str) {
     use frust_kernel::decimal::Decimal;

@@ -8,7 +8,7 @@
 //! **A2 — major-upgrade survival.** `accept_meta_migrations_two_step` proves the
 //! meta gate with `NoUserSync` and NO app installed. This installs a real app
 //! (DocType + hook + rollup), drives the two-step meta upgrade, and asserts
-//! the app is still *functional* afterwards — the founding P-7.3 pain.
+//! the app is still *functional* afterwards — the founding upgrade-survival pain.
 //!
 //! Requires surreal.exe on :8899 (root/root), ns frust.
 
@@ -118,7 +118,7 @@ fn two_apps_declaring_hooks_on_one_doctype() {
     }
 }
 
-/// A1's other half — the composition that IS possible, and the one P-2.2
+/// A1's other half — the composition that IS possible, and the one the hook-composition concern
 /// actually describes: **two apps installed together, each hooking its own
 /// DocType**, with no cross-talk.
 ///
@@ -158,7 +158,7 @@ fn two_installed_apps_each_hook_their_own_doctype_without_crosstalk() {
 
 // ── A2: major-upgrade survival ──────────────────────────────────────────────
 
-/// **The founding pain (P-7.3), driven.** Install a real app, upgrade the
+/// **The founding pain (app-survives-upgrade), driven.** Install a real app, upgrade the
 /// meta-schema the two-step way, and prove the app is still FUNCTIONAL
 /// — not merely that its rows survived.
 ///
@@ -240,6 +240,6 @@ fn an_installed_app_survives_a_major_meta_upgrade() {
     assert_eq!(
         post.get("stamp").and_then(|v| v.as_str()),
         Some("hook-ran"),
-        "THE APP'S HOOK STILL FIRES after a major meta upgrade (P-7.3, the founding pain): {post}"
+        "THE APP'S HOOK STILL FIRES after a major meta upgrade (the founding pain): {post}"
     );
 }

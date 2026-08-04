@@ -2,7 +2,7 @@
 //!
 //! A subscription is a per-user `LIVE SELECT` held BY THE KERNEL over a WS
 //! RPC connection authenticated with the subscriber's own record JWT — the
-//! DB enforces the row clause on the push path (REQ-6.5.1); the kernel never
+//! DB enforces the row clause on the push path; the kernel never
 //! filters it. Notifications are buffered as INVALIDATION TICKS (action +
 //! record id, no row data): clients refetch through the normal read door, so
 //! the push path carries nothing a leak could ride on.
@@ -11,7 +11,7 @@
 //! write pays ~70 µs per subscription on its table — so subscriptions are
 //! BUDGETED per table, and idle ones (no poll for IDLE_REAP) are reaped:
 //! parked count tracks focused views, not open tabs. Over budget is a loud
-//! typed refusal; the client stays on polling (REQ-6.5.2, transparent).
+//! typed refusal; the client stays on polling (transparently).
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -35,7 +35,7 @@ pub const LIVE_SUB_BUDGET_PER_TABLE: usize = 20;
 
 /// How much of the writer's latency realtime may cost at full budget. CI
 /// asserts it (`gate_submit_with_live_subscriptions`). This is a SEPARATE
-/// allowance from REQ-6.1.1's 25 ms floor, deliberately: the floor is a
+/// allowance from the 25 ms write-path floor, deliberately: the floor is a
 /// contract about the write path, and quietly widening it to absorb an
 /// optional feature would be a spec change by stealth.
 pub const LIVE_TAX_BUDGET_MS: u128 = 2;
