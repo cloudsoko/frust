@@ -1,6 +1,0 @@
-#V2
-DELETE expense_claim; SELECT count() FROM expense_claim GROUP ALL;
-REMOVE DATABASE IF EXISTS frustmcp; USE NS frust; INFO FOR NS;
-INFO FOR NS;
-REMOVE DATABASE IF EXISTS frustmcp;
-INFO FOR NS;
