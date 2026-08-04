@@ -434,8 +434,18 @@ impl Rest {
             ["logout"] => {
                 let t = surql::escape_str(token.unwrap_or_default());
                 ctx.broker.db.sql_root(&format!("DELETE {SESSION_TABLE} WHERE token = '{t}';"))?;
-                // a revoked token must not survive in cache for even
-                // one request. Coarse on purpose — correctness over hit rate.
+                // Drop the session from cache right after deleting its row, so
+                // subsequent requests re-read (and fail) instead of serving the
+                // cached caller for up to SESSION_TTL. Coarse on purpose —
+                // correctness over hit rate.
+                //
+                // RACE (documented, not yet closed): the DELETE and this
+                // generation bump are two separate operations. A concurrent
+                // `session_caller` that read the old generation before the bump
+                // can still return the cached caller for its in-flight request,
+                // authorizing it after the row was deleted. The window is one
+                // cache lookup wide; closing it needs a synchronized or
+                // DB-backed revocation check on the caller path (follow-up).
                 crate::tenant_gen::invalidate_sessions(ctx.broker.db.tenant_id());
                 Ok(serde_json::json!({ "ok": true }))
             }
@@ -447,9 +457,16 @@ impl Rest {
             //
             // Same two-step as logout, which is why there is no new machinery
             // to prove: delete the rows, then bump the generation so the
-            // session cache drops immediately instead of serving the
-            // revoked token for up to SESSION_TTL. The TTL stays as the
-            // backstop for a direct-DB deletion that bypasses even this.
+            // session cache stops serving the revoked token instead of holding
+            // it for up to SESSION_TTL. The TTL stays as the backstop for a
+            // direct-DB deletion that bypasses even this.
+            //
+            // Carries logout's race: delete and generation bump are separate
+            // operations, so a `session_caller` in flight between them can be
+            // authorized once from cache with the old generation. Immediate
+            // rejection of concurrent requests is NOT guaranteed today — a
+            // synchronized or DB-backed check on the caller path would be
+            // required (follow-up).
             ["revoke", user] => {
                 require_manager(caller)?;
                 ident(user)?;

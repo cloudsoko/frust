@@ -196,22 +196,39 @@ fn the_accounting_seed_runs_as_an_app() {
     // silently destroying the embedded child rows shipped through the entire
     // platform milestone. A test that only checks what it changed cannot catch
     // what it silently destroyed.
-    let lines_len = |b: &Broker| -> usize {
-        b.db.sql_root(&format!("SELECT VALUE array::len(lines) FROM sales_invoice:{key};"))
+    // Snapshot the FULL line rows before any transition, then assert byte-for-
+    // byte equality after each state change. array::len alone passes even when
+    // a transition replaces or corrupts both child rows while keeping the count
+    // at 2 — the exact silent-destruction this test exists to catch. Compare
+    // values, not cardinality.
+    let lines_value = |b: &Broker| -> serde_json::Value {
+        b.db.sql_root(&format!("SELECT VALUE lines FROM sales_invoice:{key};"))
             .unwrap()
             .as_array()
-            .and_then(|a| a.first())
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0) as usize
+            .and_then(|a| a.first().cloned())
+            .unwrap_or(serde_json::Value::Null)
     };
-    assert_eq!(lines_len(&broker), 2, "two lines before any transition");
+    let lines_before = lines_value(&broker);
+    assert_eq!(
+        lines_before.as_array().map(|a| a.len()),
+        Some(2),
+        "two lines before any transition"
+    );
 
     b.db_transition(&clerk(), &HookChain::default(), "sales_invoice", &key, "Submit").expect("submit");
-    assert_eq!(lines_len(&broker), 2, "lines survive the clerk's Submit (0->0)");
+    assert_eq!(
+        lines_value(&broker),
+        lines_before,
+        "the whole line rows survive the clerk's Submit (0->0) — values, not just count"
+    );
 
     let approved = b.db_transition(&mgr(), &HookChain::default(), "sales_invoice", &key, "Approve").expect("approve");
     assert_eq!(approved["docstatus"], serde_json::json!(1), "approved invoice is docstatus 1");
-    assert_eq!(lines_len(&broker), 2, "lines survive the manager's Approve (0->1)");
+    assert_eq!(
+        lines_value(&broker),
+        lines_before,
+        "the whole line rows survive the manager's Approve (0->1) — values, not just count"
+    );
 
     // ── 4. AR: the counter charged the customer by the exact total ──
     // counters fire on docstatus = 1, so AR moved on approval
