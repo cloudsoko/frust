@@ -876,6 +876,49 @@ impl Rest {
                 Ok(serde_json::json!({ "rows": rows }))
             }
 
+            ["single", doctype] => {
+                self.require_single(ctx, doctype)?;
+                let record = crate::sync::single_record_id(doctype);
+                let filter = Filter::Cmp {
+                    path: vec![PathSegment::Field("id".into())],
+                    op: CmpOp::Eq,
+                    value: Value::RecordId(record.clone()),
+                };
+                let rows = ctx.broker.db_read(
+                    caller,
+                    doctype,
+                    Some(&filter),
+                    &[],
+                    &ReadOpts::default(),
+                )?;
+                Ok(serde_json::json!({
+                    "doctype": doctype,
+                    "record": record,
+                    "row": rows.into_iter().next().unwrap_or(serde_json::Value::Null),
+                }))
+            }
+
+            ["single", doctype, "write"] => {
+                self.require_single(ctx, doctype)?;
+                known_keys(&json, &["doc"])?;
+                let doc = parse_doc(json.get("doc"))?;
+                let key = crate::sync::single_record_key(doctype);
+                let out = ctx.broker.db_write(
+                    caller,
+                    &HookChain::default(),
+                    WriteOp::Update,
+                    doctype,
+                    Some(key),
+                    &doc,
+                )?;
+                let id = out.get("id").cloned().unwrap_or(serde_json::Value::Null);
+                Ok(serde_json::json!({
+                    "saved": out,
+                    "action": "updated",
+                    "record": id,
+                }))
+            }
+
             ["write", doctype] => {
                 // **An unknown key is refused, not discarded.**
                 // `op` was accepted and silently dropped, so a client that sent
@@ -885,7 +928,20 @@ impl Rest {
                 // happened disagreed, and nothing said so.
                 known_keys(&json, &["doc", "record"])?;
                 let doc = parse_doc(json.get("doc"))?;
+                let is_single = self.is_single(ctx, doctype)?;
                 let record = json.get("record").and_then(|r| r.as_str());
+                if is_single {
+                    if record.is_some_and(|r| r != crate::sync::single_record_key(doctype)) {
+                        return Err(BrokerError::InvalidValue {
+                            detail: format!(
+                                "Single DocType '{doctype}' only accepts record '{}'",
+                                crate::sync::single_record_key(doctype)
+                            ),
+                        });
+                    }
+                }
+                let single_key = crate::sync::single_record_key(doctype);
+                let record = if is_single { Some(single_key) } else { record };
                 let op = if record.is_some() { WriteOp::Update } else { WriteOp::Create };
                 let out = ctx.broker.db_write(caller, &HookChain::default(), op, doctype, record, &doc)?;
                 // **G3, additive.** `created` has always carried the ROW, so
@@ -1097,6 +1153,33 @@ impl Rest {
         caller: &Caller,
     ) -> Result<serde_json::Value, BrokerError> {
         self.route_with_caller(path, body, caller)
+    }
+
+    fn is_single(&self, ctx: &TenantContext, doctype: &str) -> Result<bool, BrokerError> {
+        ident(doctype)?;
+        let n = surql::escape_str(doctype);
+        let rows = ctx.broker.db.sql_root(&format!(
+            "SELECT issingle FROM doctype WHERE name = '{n}' LIMIT 1;"
+        ))?;
+        let Some(row) = rows.as_array().and_then(|a| a.first()) else {
+            return Err(BrokerError::UnknownDoctype {
+                name: doctype.to_string(),
+            });
+        };
+        Ok(row
+            .get("issingle")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false))
+    }
+
+    fn require_single(&self, ctx: &TenantContext, doctype: &str) -> Result<(), BrokerError> {
+        if self.is_single(ctx, doctype)? {
+            Ok(())
+        } else {
+            Err(BrokerError::InvalidValue {
+                detail: format!("DocType '{doctype}' is not a Single"),
+            })
+        }
     }
 
     fn manifest_from(&self, json: &serde_json::Value) -> Result<crate::app::Manifest, BrokerError> {
