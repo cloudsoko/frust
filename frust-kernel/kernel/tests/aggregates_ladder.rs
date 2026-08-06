@@ -467,6 +467,7 @@ fn tier1_counter_at_1m() {
     let dt = DocTypeDef {
         name: "sales_invoice".into(),
         app: None,
+        issingle: false,
         submittable: false,
         fields: vec![],
         aggregates: vec![],

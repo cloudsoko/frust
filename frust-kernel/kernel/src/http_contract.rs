@@ -82,6 +82,8 @@ fn policy_for(url: &str) -> Option<MethodPolicy> {
         | ["subscribe", _]
         | ["unsubscribe", _]
         | ["read", _]
+        | ["single", _]
+        | ["single", _, "write"]
         | ["write", _]
         | ["aggregate", _]
         | ["enqueue", _] => Some(POST),
@@ -129,6 +131,8 @@ mod tests {
             "/subscribe/Invoice",
             "/unsubscribe/sub-1",
             "/read/Invoice",
+            "/single/Invoice",
+            "/single/Invoice/write",
             "/write/Invoice",
             "/aggregate/Invoice",
             "/enqueue/rebuild",

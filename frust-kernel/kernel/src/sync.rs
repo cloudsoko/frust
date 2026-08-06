@@ -20,6 +20,10 @@ pub struct DocTypeDef {
     pub name: String,
     #[serde(default)]
     pub app: Option<String>,
+    /// A Single DocType has one real row in its own table, addressed as
+    /// `{doctype}:{doctype}`. It is not a key-value metadata store.
+    #[serde(default, alias = "is_single")]
+    pub issingle: bool,
     /// Submittable doctypes get `docstatus` + the lattice EVENT (the DB
     /// tier's one resident).
     #[serde(default)]
@@ -132,6 +136,53 @@ fn lattice_event(table: &str) -> String {
 
 fn ident_ok(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+pub fn single_record_key(doctype: &str) -> &str {
+    doctype
+}
+
+pub fn single_record_id(doctype: &str) -> String {
+    format!("{doctype}:{}", single_record_key(doctype))
+}
+
+fn single_required_guard(dt: &DocTypeDef) -> Option<String> {
+    let checks: Vec<String> = dt
+        .fields
+        .iter()
+        .filter(|f| f.required)
+        .map(|f| {
+            let name = &f.fieldname;
+            let empty = match f.fieldtype.as_str() {
+                "Currency" | "Link" | "Table" => format!("$after.{name} = NONE"),
+                _ => format!("$after.{name} = NONE OR string::len(<string>$after.{name}) = 0"),
+            };
+            format!("IF {empty} {{ THROW 'FRUST:E_SINGLE_REQUIRED:{name}'; }}")
+        })
+        .collect();
+    if checks.is_empty() {
+        return None;
+    }
+
+    // Product invariant: a new Single must be editable even when it has
+    // required fields. We seed the one row incomplete, then the first save must
+    // complete every required field. After that, the same guard keeps required
+    // fields complete on every edit.
+    Some(format!(
+        "DEFINE EVENT OVERWRITE single_required_guard ON TABLE {} WHEN $event = 'UPDATE' THEN {{ {} }}",
+        dt.name,
+        checks.join("; ")
+    ))
+}
+
+fn single_identity_guard(dt: &DocTypeDef) -> String {
+    let rid = single_record_id(&dt.name);
+    format!(
+        "DEFINE EVENT OVERWRITE single_identity_guard ON TABLE {} WHEN $event = 'CREATE' THEN {{ \
+         IF $after.id != type::record('{rid}') {{ THROW 'FRUST:E_SINGLE_RECORD'; }}; \
+         }}",
+        dt.name
+    )
 }
 
 /// The Tier-1 counter EVENT. One algebra: a doc contributes its metrics to
@@ -303,6 +354,12 @@ pub fn doctype_ddl_in(dt: &DocTypeDef, rollup_targets: &[String]) -> Result<Stri
         stmts.push(format!("DEFINE FIELD OVERWRITE docstatus ON {t} TYPE int DEFAULT 0"));
         stmts.push(lattice_event(t));
     }
+    if dt.issingle {
+        stmts.push(single_identity_guard(dt));
+        if let Some(guard) = single_required_guard(dt) {
+            stmts.push(guard);
+        }
+    }
     for f in &dt.fields {
         let name = &f.fieldname;
         if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || name.is_empty() {
@@ -332,6 +389,7 @@ pub fn doctype_ddl_in(dt: &DocTypeDef, rollup_targets: &[String]) -> Result<Stri
                 }
             }
         }
+        let db_required = f.required && !dt.issingle;
         let def = match f.fieldtype.as_str() {
             "Link" => {
                 let target = f.options.first().cloned().unwrap_or_default();
@@ -346,13 +404,17 @@ pub fn doctype_ddl_in(dt: &DocTypeDef, rollup_targets: &[String]) -> Result<Stri
             // were float-typed, money would become a float the moment it
             // landed, rollups included (a rollup metric is a Currency field
             // too).
-            "Currency" if f.required => "TYPE decimal ASSERT $value >= 0dec".to_string(),
+            "Currency" if db_required => "TYPE decimal ASSERT $value >= 0dec".to_string(),
             "Currency" => "TYPE option<decimal> ASSERT $value = NONE OR $value >= 0dec".to_string(),
-            "Select" if f.required && !f.options.is_empty() => {
+            "Select" if db_required && !f.options.is_empty() => {
                 let opts = f.options.iter().map(|o| format!("'{o}'")).collect::<Vec<_>>().join(", ");
                 format!("TYPE string ASSERT $value INSIDE [{opts}]")
             }
-            _ if f.required => "TYPE string ASSERT string::len($value) > 0".to_string(),
+            "Select" if !f.options.is_empty() => {
+                let opts = f.options.iter().map(|o| format!("'{o}'")).collect::<Vec<_>>().join(", ");
+                format!("TYPE option<string> ASSERT $value = NONE OR $value INSIDE [{opts}]")
+            }
+            _ if db_required => "TYPE string ASSERT string::len($value) > 0".to_string(),
             _ => "TYPE option<string>".to_string(),
         };
         stmts.push(format!("DEFINE FIELD OVERWRITE {name} ON {t} {def}"));
@@ -675,6 +737,25 @@ pub fn load_doctypes(db: &Db) -> Result<Vec<DocTypeDef>, BrokerError> {
     serde_json::from_value(v).map_err(|e| BrokerError::Db { detail: format!("bad doctype metadata: {e}") })
 }
 
+fn seed_single_rows(db: &Db, doctypes: &[DocTypeDef]) -> Result<usize, BrokerError> {
+    let mut seeded = 0;
+    for dt in doctypes.iter().filter(|dt| dt.issingle) {
+        if !ident_ok(&dt.name) {
+            return Err(BrokerError::InvalidValue {
+                detail: format!("bad doctype name: {}", dt.name),
+            });
+        }
+        let key = single_record_key(&dt.name);
+        let existing = db.sql_root(&format!("SELECT id FROM ONLY {}:{key};", dt.name))?;
+        if !existing.is_null() {
+            continue;
+        }
+        db.sql_root(&format!("CREATE {}:{key} SET status = 'Draft';", dt.name))?;
+        seeded += 1;
+    }
+    Ok(seeded)
+}
+
 /// What a user-DocType sync did, and what it deliberately left alone.
 #[derive(Debug, Clone, Default)]
 pub struct SyncOutcome {
@@ -894,6 +975,7 @@ impl MetadataSync {
         let report = migrator
             .migrate_tenant_with(&ctx, &specs, "default", opts)
             .map_err(|e| BrokerError::Db { detail: format!("metadata sync: {e}") })?;
+        seed_single_rows(db, &doctypes)?;
         // ── orphan columns are drift, not a boot failure ──
         //
         // A column present in the schema that no DocType declares is a
@@ -932,6 +1014,81 @@ impl MetadataSync {
 impl SchemaSync for MetadataSync {
     fn sync_user_doctypes(&self, db: &Db) -> Result<SyncOutcome, BrokerError> {
         self.sync(db)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field(name: &str, fieldtype: &str, required: bool) -> FieldDef {
+        FieldDef {
+            fieldname: name.into(),
+            fieldtype: fieldtype.into(),
+            required,
+            options: vec![],
+            child_storage: None,
+            depends_on: None,
+            read_only_when: None,
+            required_when: None,
+            invalid_when: None,
+            fetch_from: None,
+        }
+    }
+
+    fn doctype(issingle: bool, submittable: bool) -> DocTypeDef {
+        DocTypeDef {
+            name: "settings".into(),
+            app: None,
+            issingle,
+            submittable,
+            fields: vec![
+                field("title", "Data", true),
+                field("total", "Currency", true),
+            ],
+            aggregates: vec![],
+        }
+    }
+
+    fn permission_block(sql: &str) -> &str {
+        let start = sql.find("PERMISSIONS").expect("permissions block");
+        let end = sql[start..].find("CHANGEFEED").expect("changefeed marker") + start;
+        &sql[start..end]
+    }
+
+    #[test]
+    fn single_keeps_table_permissions_byte_identical() {
+        let normal = doctype(false, false);
+        let single = doctype(true, false);
+        assert_eq!(
+            permission_block(&doctype_ddl(&normal).unwrap()),
+            permission_block(&doctype_ddl(&single).unwrap()),
+            "Single is metadata and a fixed-row surface; row permissions stay byte-identical"
+        );
+
+        let normal = doctype(false, true);
+        let single = doctype(true, true);
+        assert_eq!(
+            permission_block(&doctype_ddl(&normal).unwrap()),
+            permission_block(&doctype_ddl(&single).unwrap()),
+            "submittable Singles must not fork row permissions either"
+        );
+    }
+
+    #[test]
+    fn single_required_fields_are_seedable_and_first_save_completed() {
+        let ddl = doctype_ddl(&doctype(true, false)).unwrap();
+        assert!(
+            ddl.contains("DEFINE FIELD OVERWRITE title ON settings TYPE option<string>"),
+            "{ddl}"
+        );
+        assert!(
+            ddl.contains("DEFINE FIELD OVERWRITE total ON settings TYPE option<decimal>"),
+            "{ddl}"
+        );
+        assert!(ddl.contains("single_required_guard"), "{ddl}");
+        assert!(ddl.contains("FRUST:E_SINGLE_REQUIRED:title"), "{ddl}");
+        assert!(ddl.contains("FRUST:E_SINGLE_REQUIRED:total"), "{ddl}");
     }
 }
 
