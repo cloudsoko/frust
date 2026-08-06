@@ -34,37 +34,25 @@ governed by `frust-kernel/docs/evolution-policy.md`.
 
 ## Required gates
 
-Protect pull-request merges to `main` with these successful checks:
+Protect pull-request merges to `main` with the single successful `Checks`
+context. It aggregates three parallel, bounded jobs: metadata and formatting,
+kernel compile/lint coverage, and Desk lint/unit tests. Artifact rebuilding and
+database integration are not part of routine pull-request or `main` CI.
+Documentation-only changes keep the required context while skipping those
+inapplicable jobs.
 
-1. `Static, unit, and reproducibility`
-2. `Live integration (jwt)`
-3. Dependency review and RustSec checks
+The scheduled and manually dispatchable `Full integration` workflow rebuilds
+and verifies the runtime artifacts, then runs the exhaustive SurrealDB lane with
+basic root authentication across four isolated workers. RustSec audits likewise
+run weekly or on explicit dispatch. These workflows are operational evidence,
+not merge blockers. Before tagging a release candidate, run both workflows
+manually on the candidate commit and review their results. JWT remains an
+available runtime mode, but the project does not claim an automatic two-mode CI
+guarantee.
 
-The protected quality context aggregates parallel governance, artifact, kernel
-lint, offline-test, and Desk lanes. Artifact inputs are rebuilt only when their
-sources change or the lock-bound runtime cache is empty; every executable change
-still verifies checksums and refuses generated drift. Documentation-only changes
-retain the required context names but skip their inapplicable work.
-
-Offline hook tests and live integration both consume the verified runtime
-artifact output explicitly; they do not rely on files left behind by another
-step on a shared runner.
-
-Pull requests run the bounded, hermetic SurrealDB smoke lane with JWT root
-authentication. Every protected `main` push and manual CI run executes the
-exhaustive live lane with both JWT and basic root authentication. Do not tag a
-release commit until its post-merge `Live integration (jwt)` and `Live
-integration (basic)` main-push contexts have both succeeded; this preserves the
-two-mode release guarantee without serializing both modes on every pull request.
-The exhaustive target list is deterministically divided across four workers per
-authentication mode, and each named context aggregates every worker result.
-Each exhaustive worker serializes tests within a test binary: live tests
-provision shared SurrealDB metadata, and even two concurrent setup paths can
-create transaction write conflicts. Parallelism comes from the four isolated
-workers while Cargo compilation may still use all four runner cores.
-Exhaustive workers retain the 40-minute command budget so a cold Rust cache
-cannot turn the main-push proof into a false failure; the shards overlap that
-work instead of weakening its bound.
+The release workflow remains the reproducibility boundary: it rebuilds locked
+runtime artifacts, verifies their checksums, and rejects generated drift before
+assembling or publishing a release.
 
 Ignored performance tests are deliberately outside pull-request CI. The weekly
 workflow runs the self-contained measurement gates in release mode and retains
@@ -107,7 +95,7 @@ trust channels are promised.
 
 ## Operator configuration still required
 
-- Enable protected branches and require the checks above.
+- Enable protected branches and require `Checks`.
 - Keep the `release` and `staging` Environments restricted to version tags.
 - Enable private vulnerability reporting or publish a monitored security
   contact before inviting third-party adoption.

@@ -1,0 +1,103 @@
+name: Full integration
+
+on:
+  schedule:
+    - cron: "17 2 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: full-integration
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CARGO_BUILD_JOBS: "4"
+  FRUST_ROOT_AUTH: basic
+  FRUST_DB_ENDPOINT: http://127.0.0.1:8899
+  FRUST_DB_ROOT_USER: root
+  FRUST_DB_ROOT_PASS: root
+
+jobs:
+  inputs:
+    name: Verify integration inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Cache runtime artifact build outputs
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: |
+            wasm-spike/script-engine
+            wasm-spike/plugin-demo
+          key: integration-runtime-artifacts
+      - name: Install pinned Node and pnpm
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.17.0
+      - name: Activate pnpm
+        run: corepack enable && corepack install --global pnpm@11.1.2
+      - name: Build runtime artifacts
+        shell: pwsh
+        run: ./scripts/frust.ps1 build-artifacts
+      - name: Verify runtime artifacts
+        run: python .github/scripts/release-preflight.py --require-license
+      - name: Upload runtime inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verified-runtime-inputs
+          path: wasm-spike/artifacts/*.wasm
+          if-no-files-found: error
+          retention-days: 1
+
+  workers:
+    name: Basic integration (${{ matrix.shard_label }})
+    needs: inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard_index: 0
+            shard_label: 1/4
+          - shard_index: 1
+            shard_label: 2/4
+          - shard_index: 2
+            shard_label: 3/4
+          - shard_index: 3
+            shard_label: 4/4
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Run live integration shard
+        uses: ./.github/actions/live-worker
+        with:
+          code: "true"
+          root-auth: basic
+          lane: live
+          shard-index: ${{ matrix.shard_index }}
+          shard-count: 4
+
+  complete:
+    name: Full integration
+    needs: workers
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Require every integration shard
+        env:
+          WORKERS: ${{ needs.workers.result }}
+        run: test "$WORKERS" = success
