@@ -245,3 +245,45 @@ fn single_keeps_live_compiled_permissions_byte_identical() {
         "Single must not fork the compiled permission clauses consumed by broker/REST"
     );
 }
+
+#[test]
+fn single_refuses_delete_of_the_fixed_row() {
+    let _g = lock();
+    let (rest, db, _cfg) = setup("single_no_delete");
+    call(
+        &rest,
+        "/doctype",
+        serde_json::json!({ "meta": settings_meta() }),
+    )
+    .expect("doctype");
+
+    // The fixed row is seeded.
+    let before = db.sql_root("SELECT id FROM settings;").expect("seed");
+    assert_eq!(
+        before.as_array().map(Vec::len),
+        Some(1),
+        "the fixed Single row must exist before the delete attempt: {before}"
+    );
+
+    // Even a root delete — which bypasses table PERMISSIONS entirely — is
+    // refused by the EVENT guard. This is exactly why the guard is an EVENT and
+    // not a `FOR delete NONE` clause: a permission clause could never stop root,
+    // and adding one would fork the compiled permissions the byte-identity test
+    // pins. A manager (who passes `FOR delete WHERE role = 'manager'`) is
+    // likewise stopped, since the EVENT fires for every writer.
+    let err = db
+        .sql_root("DELETE settings:settings;")
+        .expect_err("the fixed Single row must not be deletable");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("FRUST:E_SINGLE_NO_DELETE"), "{msg}");
+
+    // The row survives the refused delete.
+    let after = db.sql_root("SELECT id FROM settings;").expect("post-delete read");
+    let rows = after.as_array().cloned().unwrap_or_default();
+    assert_eq!(
+        rows.len(),
+        1,
+        "the fixed row must survive a refused delete: {after}"
+    );
+    assert_eq!(rows[0]["id"], serde_json::json!("settings:settings"));
+}

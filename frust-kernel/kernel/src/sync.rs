@@ -177,9 +177,14 @@ fn single_required_guard(dt: &DocTypeDef) -> Option<String> {
 
 fn single_identity_guard(dt: &DocTypeDef) -> String {
     let rid = single_record_id(&dt.name);
+    // A Single has exactly one permanent row. CREATE may only mint the fixed
+    // record; DELETE of that fixed row is refused. Both live in an EVENT, never
+    // a PERMISSIONS clause, so the compiled table permissions stay
+    // byte-identical to an equivalent non-Single DocType.
     format!(
-        "DEFINE EVENT OVERWRITE single_identity_guard ON TABLE {} WHEN $event = 'CREATE' THEN {{ \
-         IF $after.id != type::record('{rid}') {{ THROW 'FRUST:E_SINGLE_RECORD'; }}; \
+        "DEFINE EVENT OVERWRITE single_identity_guard ON TABLE {} WHEN $event = 'CREATE' OR $event = 'DELETE' THEN {{ \
+         IF $event = 'CREATE' AND $after.id != type::record('{rid}') {{ THROW 'FRUST:E_SINGLE_RECORD'; }}; \
+         IF $event = 'DELETE' AND $before.id = type::record('{rid}') {{ THROW 'FRUST:E_SINGLE_NO_DELETE'; }}; \
          }}",
         dt.name
     )
