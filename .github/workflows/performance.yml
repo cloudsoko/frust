@@ -15,7 +15,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: "2"
-  FRUST_ROOT_AUTH: jwt
+  FRUST_ROOT_AUTH: basic
   FRUST_DB_ENDPOINT: http://127.0.0.1:8899
   FRUST_DB_ROOT_USER: root
   FRUST_DB_ROOT_PASS: root
