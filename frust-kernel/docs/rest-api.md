@@ -219,7 +219,7 @@ refused.
 
 ### `POST /single/{doctype}` — session
 
-```
+```json
 → POST /single/company_settings   {}
 ← 200 {"doctype":"company_settings",
        "record":"company_settings:company_settings",
@@ -231,7 +231,7 @@ as `/read/{doctype}`. A non-Single DocType is refused.
 
 ### `POST /single/{doctype}/write` — session
 
-```
+```json
 → POST /single/company_settings/write
   {"doc": {"title": "Acme", "default_currency": "USD"}}
 ← 200 {"action":"updated",
