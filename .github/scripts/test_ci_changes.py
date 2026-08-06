@@ -13,6 +13,8 @@ SCRIPT = Path(__file__).with_name("ci-changes.py")
 ROOT = SCRIPT.parents[2]
 TEST_RUNNER = ROOT / "scripts" / "test.ps1"
 LIVE_WORKER = ROOT / ".github" / "actions" / "live-worker" / "action.yml"
+MVP_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+INTEGRATION_WORKFLOW = ROOT / ".github" / "workflows" / "integration.yml"
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 SPEC = importlib.util.spec_from_file_location("ci_changes", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
@@ -26,57 +28,14 @@ class ChangeClassificationTests(unittest.TestCase):
             ["frust/03 Architecture Decisions/ADR-016.md", "deploy/recovery-runbook.md"]
         )
         self.assertFalse(changes.code)
-        self.assertFalse(changes.artifacts)
 
     def test_code_beside_documentation_keeps_code_gates(self) -> None:
         changes = CI_CHANGES.classify(["README.md", "frust-kernel/kernel/src/rest.rs"])
         self.assertTrue(changes.code)
-        self.assertFalse(changes.artifacts)
-
-    def test_artifact_sources_and_desk_gitlink_trigger_rebuilds(self) -> None:
-        for path in (
-            "wasm-spike/script-engine/src/lib.rs",
-            "frust-desk/assets/engine/script_engine.js",
-            "frust-desk",
-            "pnpm-lock.yaml",
-            "rust-toolchain.toml",
-        ):
-            with self.subTest(path=path):
-                changes = CI_CHANGES.classify([path])
-                self.assertTrue(changes.code)
-                self.assertTrue(changes.artifacts)
 
     def test_manual_and_scheduled_runs_force_every_gate(self) -> None:
         changes = CI_CHANGES.classify([], force_all=True)
         self.assertTrue(changes.code)
-        self.assertTrue(changes.artifacts)
-
-    def test_pull_requests_smoke_jwt_while_protected_main_runs_both_modes(self) -> None:
-        self.assertEqual(CI_CHANGES.auth_matrix("pull_request"), ["jwt"])
-        self.assertEqual(CI_CHANGES.auth_matrix("push"), ["jwt", "basic"])
-        self.assertEqual(CI_CHANGES.auth_matrix("workflow_dispatch"), ["jwt", "basic"])
-
-        pull_request = CI_CHANGES.live_matrix("pull_request", code=True)["include"]
-        self.assertEqual(
-            pull_request,
-            [
-                {
-                    "lane": "smoke",
-                    "shard_index": 0,
-                    "shard_count": 1,
-                    "shard_label": "1/1",
-                }
-            ],
-        )
-
-        main = CI_CHANGES.live_matrix("push", code=True)["include"]
-        self.assertEqual(len(main), CI_CHANGES.LIVE_SHARD_COUNT)
-        self.assertEqual([entry["shard_index"] for entry in main], list(range(4)))
-        self.assertTrue(all(entry["lane"] == "live" for entry in main))
-
-        documentation = CI_CHANGES.live_matrix("push", code=False)["include"]
-        self.assertEqual(len(documentation), 1)
-        self.assertTrue(all(entry["shard_count"] == 1 for entry in documentation))
 
     def test_deleted_files_remain_in_the_classified_diff(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -115,6 +74,23 @@ class ChangeClassificationTests(unittest.TestCase):
             ).stdout.strip()
 
             self.assertEqual(CI_CHANGES.changed_paths(base, head, cwd=repository), ["kernel.rs"])
+
+
+class CiWorkflowTests(unittest.TestCase):
+    def test_protected_workflow_stays_database_free(self) -> None:
+        workflow = MVP_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("name: Checks", workflow)
+        self.assertNotIn("live-worker", workflow)
+        self.assertNotIn("-Lane offline", workflow)
+        self.assertNotIn("FRUST_ROOT_AUTH", workflow)
+        self.assertIn("--skip-artifacts", workflow)
+
+    def test_full_integration_is_explicit_and_basic_only(self) -> None:
+        workflow = INTEGRATION_WORKFLOW.read_text(encoding="utf-8")
+        self.assertNotIn("pull_request:", workflow)
+        self.assertIn("FRUST_ROOT_AUTH: basic", workflow)
+        self.assertNotIn("root-auth: jwt", workflow)
+        self.assertIn("build-artifacts", workflow)
 
 
 @unittest.skipUnless(POWERSHELL, "PowerShell is required to verify live test shards")
