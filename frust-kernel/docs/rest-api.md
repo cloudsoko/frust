@@ -210,8 +210,41 @@ message and its app.
 database accepts the statement but persists no row — a write-closed table
 (kernel-maintained rollups and registries), or a row your role may not write —
 the answer is `403 permission-denied` with `E_WRITE_NO_ROWS`, naming the table.
-It is never a `200` carrying a null record. (Both the create and update halves;
-WO-020 fixed update, WO-057 create.)
+It is never a `200` carrying a null record.
+
+For a Single DocType, `/write/{doctype}` always addresses the fixed single row.
+If `record` is omitted, the write updates `{doctype}:{doctype}`. If `record` is
+present, it must be the fixed key (`{doctype}`), otherwise the request is
+refused.
+
+### `POST /single/{doctype}` — session
+
+```json
+→ POST /single/company_settings   {}
+← 200 {"doctype":"company_settings",
+       "record":"company_settings:company_settings",
+       "row": {...}}
+```
+
+Reads the one real row of a Single DocType through the same row-permission path
+as `/read/{doctype}`. A non-Single DocType is refused.
+
+### `POST /single/{doctype}/write` — session
+
+```json
+→ POST /single/company_settings/write
+  {"doc": {"title": "Acme", "default_currency": "USD"}}
+← 200 {"action":"updated",
+       "record":"company_settings:company_settings",
+       "saved": {...}}
+```
+
+Writes the one real row of a Single DocType. Singles are seeded as an incomplete
+fixed row so a required-field Single has a viable first form load and first
+save. Required fields are enforced on update: the first save must complete every
+required field, and later edits must keep them complete. The permission compiler
+does not fork for Singles; the generated table permissions are byte-identical
+to an equivalent non-Single DocType.
 
 ### `POST /aggregate/{doctype}` — session
 

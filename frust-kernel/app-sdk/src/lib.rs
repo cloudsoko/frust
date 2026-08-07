@@ -171,6 +171,7 @@ pub fn doctype(name: impl Into<String>, fields: Vec<FieldDef>) -> DocTypeDef {
     DocTypeDef {
         name: name.into(),
         app: None,
+        issingle: false,
         submittable: false,
         fields,
         aggregates: Vec::new(),
