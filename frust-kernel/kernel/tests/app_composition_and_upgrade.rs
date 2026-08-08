@@ -49,7 +49,7 @@ fn mgr() -> Caller {
 
 /// A broker that sees installed server scripts (the live-serve wiring).
 fn scripted_broker(cfg: &ResolvedTenant) -> Arc<Broker> {
-    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source(scoped_db(&cfg));
+    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source();
     Arc::new(Broker::new(scoped_db(&cfg), Box::new(hooks)))
 }
 

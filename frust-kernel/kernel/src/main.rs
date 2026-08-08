@@ -113,23 +113,12 @@ fn main() {
     // one engine serves every tenant.
     let artifacts = std::env::var("FRUST_ARTIFACTS")
         .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../wasm-spike/artifacts").to_string());
-    // The resident kernel must attach the per-DocType script
-    // source, or `frust serve` runs only the engine's built-in default and an
-    // app's server scripts never fire live.
-    //
-    // LIMITATION — the script source is a SINGLE tenant's `Db` (`targets[0]`),
-    // and this one `WasmHooks` is then shared by every tenant broker below.
-    // `ScriptSource` loads scripts from that stored `Db` and keys its pool by
-    // `db.tenant_id()`, so both the script text AND the pool/cache resolve to
-    // `targets[0]` regardless of which tenant a write belongs to. This is
-    // correct for a single-tenant process (the only shape with server scripts
-    // exercised today). In a multi-tenant process (`database-per-tenant` /
-    // `namespace-per-tenant` with >1 target) that also uses per-DocType server
-    // scripts, tenant B's writes would execute tenant A's scripts against
-    // tenant A's cache state — server-script isolation across tenants is NOT
-    // yet implemented. See broker.rs / hooks.rs for the matching notes.
+    // The resident kernel must attach the per-DocType script source, or
+    // `frust serve` runs only the engine's built-in default. The shared source
+    // owns caches and pooled instances only; each broker supplies the current
+    // request's scoped database and generation handles during dispatch.
     let hooks: Arc<dyn HookDispatch> = match WasmHooks::load(&artifacts) {
-        Ok(h) => Arc::new(h.with_script_source(scoped_db(&targets[0]))),
+        Ok(h) => Arc::new(h.with_script_source()),
         Err(e) => refuse("hooks_unavailable", e.to_string()),
     };
 
@@ -171,10 +160,16 @@ fn main() {
     //
     // Built from the SAME registry the strategy resolved, so a token prefix
     // that finds a context here has been through `TenancyStrategy::resolve`.
-    let mut made = brokers.iter().cloned();
     let router = match TenantRouter::build(&tenancy, |target| {
+        let broker = brokers
+            .iter()
+            .find(|broker| broker.db.tenant_id() == target.tenant_id().as_str())
+            .cloned()
+            .ok_or_else(|| frust_kernel::contract::BrokerError::InvalidValue {
+                detail: format!("no broker was booted for tenant {}", target.tenant_id()),
+            })?;
         Ok(TenantContext {
-            broker: made.next().expect("one broker per resolved tenant"),
+            broker,
             sync: Some(Arc::new(MetadataSync { base: target.clone() })),
         })
     }) {

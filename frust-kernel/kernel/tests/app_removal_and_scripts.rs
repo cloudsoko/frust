@@ -36,7 +36,7 @@ fn setup(name: &str) -> (Rest, Db, ResolvedTenant) {
         "CREATE app_user:mgr SET name = 'mgr', role = 'manager', pass = crypto::argon2::generate('pw-mgr');",
     )
     .unwrap();
-    let hooks = WasmHooks::load(artifacts()).expect("hooks").with_script_source(scoped_db(&cfg));
+    let hooks = WasmHooks::load(artifacts()).expect("hooks").with_script_source();
     let broker = Arc::new(Broker::new(scoped_db(&cfg), Box::new(hooks)));
     let rest = Rest::single(broker, "127.0.0.1:0".into(), Some(Arc::new(MetadataSync { base: cfg.clone() })), None);
     (rest, db, cfg)
@@ -151,7 +151,7 @@ fn a_bundled_server_script_actually_runs_on_a_write() {
     call(&rest, "/app/install", bundle(Some("doc.flag = \"server-script-ran\";")))
         .expect("install");
 
-    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source(scoped_db(&cfg));
+    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source();
     let b = Broker::new(scoped_db(&cfg), Box::new(hooks));
     let created = b
         .db_write(&mgr(), &HookChain::default(), WriteOp::Create, "acct_note", None,
@@ -171,7 +171,7 @@ fn a_server_script_can_reject_a_write() {
     call(&rest, "/app/install", bundle(Some("throw new Error(\"notes must be approved first\");")))
         .expect("install");
 
-    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source(scoped_db(&cfg));
+    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source();
     let b = Broker::new(scoped_db(&cfg), Box::new(hooks));
     let err = b
         .db_write(&mgr(), &HookChain::default(), WriteOp::Create, "acct_note", None,
@@ -202,7 +202,7 @@ fn editing_a_server_script_takes_effect_without_a_restart() {
     let (rest, _db, cfg) = setup("app_srvlive");
     call(&rest, "/app/install", bundle(Some("doc.flag = \"v1\";"))).expect("install");
 
-    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source(scoped_db(&cfg));
+    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source();
     let b = Broker::new(scoped_db(&cfg), Box::new(hooks));
     let write = |b: &Broker| {
         b.db_write(&mgr(), &HookChain::default(), WriteOp::Create, "acct_note", None,
@@ -239,7 +239,7 @@ fn an_out_of_band_script_edit_is_not_seen_until_the_generation_bumps() {
     let (rest, db, cfg) = setup("app_srvoob");
     call(&rest, "/app/install", bundle(Some("doc.flag = \"v1\";"))).expect("install");
 
-    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source(scoped_db(&cfg));
+    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source();
     let b = Broker::new(scoped_db(&cfg), Box::new(hooks));
     let write = |b: &Broker| {
         b.db_write(&mgr(), &HookChain::default(), WriteOp::Create, "acct_note", None,
@@ -271,7 +271,7 @@ fn a_doctype_without_a_script_runs_nothing() {
     let (rest, _db, cfg) = setup("app_srvnone");
     call(&rest, "/app/install", bundle(None)).expect("install");
 
-    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source(scoped_db(&cfg));
+    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source();
     let b = Broker::new(scoped_db(&cfg), Box::new(hooks));
     let created = b
         .db_write(&mgr(), &HookChain::default(), WriteOp::Create, "acct_note", None,

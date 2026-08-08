@@ -121,7 +121,7 @@ fn setup() -> (Rest, Arc<Broker>, ResolvedTenant) {
          CREATE app_user:clerk SET name = 'clerk', role = 'clerk', pass = crypto::argon2::generate('pw-clerk');",
     )
     .unwrap();
-    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source(scoped_db(&cfg));
+    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source();
     let broker = Arc::new(Broker::new(scoped_db(&cfg), Box::new(hooks)));
     let rest = Rest::single(Arc::clone(&broker), "127.0.0.1:0".into(), Some(Arc::new(MetadataSync { base: cfg.clone() })), None);
     (rest, broker, cfg)
@@ -146,7 +146,7 @@ fn the_accounting_seed_runs_as_an_app() {
     assert_eq!(out["action"], serde_json::json!("installed"));
 
     // a fresh broker sees the installed server script via the script source
-    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source(scoped_db(&cfg));
+    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source();
     let b = Arc::new(Broker::new(scoped_db(&cfg), Box::new(hooks)));
 
     // ── 2. clerk creates an invoice with lines; qty × rate computed exactly ──
