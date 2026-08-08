@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM surrealdb/surrealdb:v3.2.3 AS surrealdb
+FROM surrealdb/surrealdb:v3.2.4 AS surrealdb
 
 FROM debian:bookworm-slim AS runtime
 
