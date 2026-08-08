@@ -16,5 +16,5 @@
     "desk-load:sweep": "node desk-load.mjs sweep",
     "desk-load:contention": "node desk-load.mjs contention"
   },
-  "devDependencies": { "playwright": "^1.62.0" }
+  "devDependencies": { "playwright": "^1.62.1" }
 }
