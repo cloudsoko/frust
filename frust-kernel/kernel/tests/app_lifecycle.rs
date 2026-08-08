@@ -63,6 +63,52 @@ fn call(rest: &Rest, path: &str, body: serde_json::Value) -> Result<serde_json::
     rest.route_for_test(path, &body, &mgr())
 }
 
+fn fixture_bundle(app: &str, version: &str, label: &str) -> serde_json::Value {
+    let doctypes = if app == "acct" {
+        serde_json::json!([{
+            "name": "acct_country",
+            "fields": [
+                { "fieldname": "code", "fieldtype": "Data", "required": true },
+                { "fieldname": "label", "fieldtype": "Data" }
+            ]
+        }])
+    } else {
+        serde_json::json!([])
+    };
+    serde_json::json!({
+        "manifest_version": 1,
+        "name": app,
+        "version": version,
+        "doctypes": doctypes,
+        "fixtures": [{
+            "doctype": "acct_country",
+            "key": "kenya",
+            "values": { "code": "KE", "label": label }
+        }]
+    })
+}
+
+fn fixture_row(db: &Db) -> serde_json::Value {
+    db.sql_root("SELECT code, label FROM acct_country:kenya;")
+        .expect("read fixture")
+        .as_array()
+        .and_then(|rows| rows.first())
+        .cloned()
+        .expect("fixture row exists")
+}
+
+fn fixture_provenance(db: &Db) -> serde_json::Value {
+    db.sql_root(
+        "SELECT app, doctype, record_key, shipped, active, orphaned_at \
+         FROM app_fixture WHERE doctype = 'acct_country' AND record_key = 'kenya';",
+    )
+    .expect("read provenance")
+    .as_array()
+    .and_then(|rows| rows.first())
+    .cloned()
+    .expect("fixture provenance exists")
+}
+
 /// Install: validate → plan → gate → apply → registry record.
 #[test]
 fn install_applies_schema_attaches_metadata_and_records_the_app() {
@@ -232,5 +278,111 @@ fn the_app_surface_is_manager_only() {
             matches!(err, BrokerError::PermissionDenied { .. }),
             "{path}: expected permission denied, got {err:?}"
         );
+    }
+}
+
+/// The complete fixture lifecycle. Every stage is asserted by record value
+/// and durable provenance rather than by an operation's success response.
+#[test]
+fn fixture_records_follow_the_app_lifecycle_without_silent_overwrite_or_delete() {
+    let (rest, db) = rest_for("app_fixtures");
+
+    let v1 = fixture_bundle("acct", "1.0.0", "Kenya");
+    let plan = call(&rest, "/app/plan", v1.clone()).expect("fixture plan");
+    assert_eq!(plan["fixtures"][0]["doctype"], serde_json::json!("acct_country"));
+    assert_eq!(plan["fixtures"][0]["key"], serde_json::json!("kenya"));
+    assert_eq!(plan["fixtures"][0]["action"], serde_json::json!("create"));
+
+    call(&rest, "/app/install", v1).expect("install fixture bundle");
+    assert_eq!(fixture_row(&db)["code"], serde_json::json!("KE"));
+    assert_eq!(fixture_row(&db)["label"], serde_json::json!("Kenya"));
+    let installed_provenance = fixture_provenance(&db);
+    assert_eq!(installed_provenance["app"], serde_json::json!("acct"));
+    assert_eq!(installed_provenance["active"], serde_json::json!(true));
+    let shipped: serde_json::Value =
+        serde_json::from_str(installed_provenance["shipped"].as_str().unwrap()).unwrap();
+    assert_eq!(shipped["label"], serde_json::json!("Kenya"));
+
+    let registry = db
+        .sql_root("SELECT manifest FROM installed_app WHERE name = 'acct';")
+        .expect("registry");
+    let stored: serde_json::Value = serde_json::from_str(
+        registry.as_array().unwrap()[0]["manifest"].as_str().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(stored["fixtures"][0]["key"], serde_json::json!("kenya"));
+
+    call(
+        &rest,
+        "/app/update",
+        fixture_bundle("acct", "1.1.0", "Republic of Kenya"),
+    )
+    .expect("unchanged shipped row takes the app update");
+    assert_eq!(fixture_row(&db)["label"], serde_json::json!("Republic of Kenya"));
+    let shipped: serde_json::Value =
+        serde_json::from_str(fixture_provenance(&db)["shipped"].as_str().unwrap()).unwrap();
+    assert_eq!(shipped["label"], serde_json::json!("Republic of Kenya"));
+
+    db.sql_root("UPDATE acct_country:kenya SET label = 'Local Name';")
+        .expect("user edits fixture");
+    let refused = call(
+        &rest,
+        "/app/update",
+        fixture_bundle("acct", "1.2.0", "Kenya v2"),
+    )
+    .expect_err("user-modified fixture must refuse");
+    match refused {
+        BrokerError::FixtureRefused { code, doctype, key, apps, detail } => {
+            assert_eq!(code, "FRUST:E_FIXTURE:USER_MODIFIED");
+            assert_eq!(doctype, "acct_country");
+            assert_eq!(key, "kenya");
+            assert_eq!(apps, vec!["acct".to_string()]);
+            assert!(detail.contains("acct") && detail.contains("acct_country:kenya"));
+            assert!(detail.contains("acknowledge"), "refusal gives the overwrite path: {detail}");
+        }
+        other => panic!("expected typed fixture refusal, got {other:?}"),
+    }
+    assert_eq!(fixture_row(&db)["label"], serde_json::json!("Local Name"));
+
+    let mut acknowledged = fixture_bundle("acct", "1.2.0", "Kenya v2");
+    acknowledged["acknowledge"] = serde_json::json!(true);
+    call(&rest, "/app/update", acknowledged).expect("acknowledged overwrite");
+    assert_eq!(fixture_row(&db)["label"], serde_json::json!("Kenya v2"));
+
+    call(&rest, "/app/acct/uninstall", serde_json::json!({})).expect("uninstall");
+    assert_eq!(fixture_row(&db)["label"], serde_json::json!("Kenya v2"));
+    let orphaned = fixture_provenance(&db);
+    assert_eq!(orphaned["app"], serde_json::json!("acct"));
+    assert_eq!(orphaned["active"], serde_json::json!(false));
+    assert!(!orphaned["orphaned_at"].is_null());
+
+    call(
+        &rest,
+        "/app/install",
+        fixture_bundle("acct", "2.0.0", "Kenya after reinstall"),
+    )
+    .expect("re-install re-adopts the row");
+    assert_eq!(
+        fixture_row(&db)["label"],
+        serde_json::json!("Kenya after reinstall"),
+        "re-adoption is verified by the stored value"
+    );
+    assert_eq!(fixture_provenance(&db)["active"], serde_json::json!(true));
+
+    let ambiguous = call(
+        &rest,
+        "/app/install",
+        fixture_bundle("regional", "1.0.0", "Other Kenya"),
+    )
+    .expect_err("two apps cannot own one fixture row");
+    match ambiguous {
+        BrokerError::FixtureRefused { code, doctype, key, apps, detail } => {
+            assert_eq!(code, "FRUST:E_FIXTURE:AMBIGUOUS_OWNER");
+            assert_eq!(doctype, "acct_country");
+            assert_eq!(key, "kenya");
+            assert!(apps.contains(&"acct".to_string()) && apps.contains(&"regional".to_string()));
+            assert!(detail.contains("acct") && detail.contains("regional"));
+        }
+        other => panic!("expected typed ambiguity refusal, got {other:?}"),
     }
 }
