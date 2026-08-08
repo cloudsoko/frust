@@ -50,7 +50,7 @@ fn setup(name: &str) -> (Arc<Broker>, Db, ResolvedTenant) {
     )
     .unwrap();
     MetadataSync { base: cfg.clone() }.sync(&db).expect("sync");
-    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source(scoped_db(&cfg));
+    let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source();
     (Arc::new(Broker::new(scoped_db(&cfg), Box::new(hooks))), db, cfg)
 }
 

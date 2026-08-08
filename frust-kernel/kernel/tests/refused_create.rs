@@ -13,8 +13,6 @@
 
 mod common;
 
-use std::sync::Arc;
-
 use frust_kernel::broker::{Broker, Caller, HookChain};
 use frust_kernel::contract::{BrokerError, Value, WriteOp};
 use frust_kernel::db::{scoped_db, Db};
@@ -58,7 +56,7 @@ fn setup(name: &str) -> (Broker, Db, ResolvedTenant) {
     )
     .unwrap();
     MetadataSync { base: cfg.clone() }.sync(&db).expect("sync");
-    let hooks = WasmHooks::load(artifacts()).expect("hooks").with_script_source(scoped_db(&cfg));
+    let hooks = WasmHooks::load(artifacts()).expect("hooks").with_script_source();
     (Broker::new(scoped_db(&cfg), Box::new(hooks)), db, cfg)
 }
 

@@ -316,33 +316,20 @@ impl WasmHooks {
     /// makes "scripts are data, live-mutable" true server-side rather than
     /// only proven in principle.
     ///
-    /// SINGLE-TENANT SCOPE: the `db` passed here is ONE tenant's handle. Both
-    /// `ScriptSource::scripts_for` (script loading) and `dispatch_doctype_script`
-    /// (pool keying) resolve the tenant from THIS `db`, not from the tenant of
-    /// the write being processed. When one `WasmHooks` is shared across tenant
-    /// brokers (as `frust serve` does), every tenant's writes are validated with
-    /// the attached tenant's scripts and cache. This is correct while a single
-    /// tenant is served; cross-tenant server-script isolation is not yet built.
+    /// The source owns only shared caches and pooled instances. Script loading,
+    /// pool identity and invalidation all use the database and generation
+    /// handles supplied by the broker for the current request. One runtime can
+    /// therefore serve many tenants without carrying an ambient tenant.
     ///
     /// **Delivery is by seam, never by env inheritance.** The guest's world
     /// stays empty apart from the single `FRUST_SCRIPT` variable the host
     /// chooses to put there. Inheriting the kernel's environment would hand a
     /// sandboxed guest every secret the process holds; that posture is the
     /// point, and this does not weaken it.
-    pub fn with_script_source(mut self, db: Db) -> Self {
-        // The generation handle is resolved ONCE here, never on the write path
-        // — the same rule `Db` follows for its agent and its root credential:
-        // a registry lock per query is not a cache, it is a different
-        // bottleneck. Note this ties the handle (like the `Db` above) to the
-        // attached tenant: under a shared multi-tenant `WasmHooks` it tracks the
-        // attached tenant's invalidations, not the request tenant's — the same
-        // single-tenant scope documented on this method.
-        let gens = crate::tenant_gen::for_tenant(db.tenant_id());
+    pub fn with_script_source(mut self) -> Self {
         self.scripts = Some(ScriptSource {
-            db,
             pool: Mutex::new(HashMap::new()),
             script_cache: Mutex::new(HashMap::new()),
-            gens,
         });
         self
     }
@@ -357,7 +344,6 @@ impl WasmHooks {
 /// no restart. A pool that ignored the text would make scripts data in name
 /// and configuration in practice.
 struct ScriptSource {
-    db: Db,
     /// Keyed `(tenant, doctype, app)`. A single `(tenant, doctype)` key would
     /// hold exactly one instance per DocType, so a second contributor would
     /// silently replace the first; the app in the key is what lets the owner's
@@ -378,16 +364,19 @@ struct ScriptSource {
     /// is the invalidation the doctype cache already relies on, so the two
     /// cannot drift apart.
     script_cache: Mutex<HashMap<(String, String), (u64, crate::sync::HookPlan)>>,
-    /// This tenant's generation counters, resolved once at construction.
-    gens: crate::tenant_gen::TenantGenerations,
 }
 
 impl ScriptSource {
     /// Every app's script for `doctype`, owner first, from cache when the
     /// generation still matches.
-    fn scripts_for(&self, doctype: &str) -> Result<crate::sync::HookPlan, BrokerError> {
-        let gen = self.gens.meta.load(std::sync::atomic::Ordering::Acquire);
-        let key = (self.db.tenant_id().to_string(), doctype.to_string());
+    fn scripts_for(
+        &self,
+        db: &Db,
+        gens: &crate::tenant_gen::TenantGenerations,
+        doctype: &str,
+    ) -> Result<crate::sync::HookPlan, BrokerError> {
+        let gen = gens.meta.load(std::sync::atomic::Ordering::Acquire);
+        let key = (db.tenant_id().to_string(), doctype.to_string());
         if let Some((cached_gen, plan)) = self
             .script_cache
             .lock()
@@ -398,7 +387,7 @@ impl ScriptSource {
                 return Ok(plan.clone());
             }
         }
-        let plan = crate::sync::load_server_scripts(&self.db, doctype)?;
+        let plan = crate::sync::load_server_scripts(db, doctype)?;
         self.script_cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -459,12 +448,13 @@ impl WasmHooks {
     /// rejecting app. It may not skip, reorder or replace anyone.
     fn dispatch_doctype_script(
         &self,
+        tenant: crate::broker::HookTenant<'_>,
         class: crate::contract::HookClass,
         doctype: &str,
         doc: &[(String, Value)],
     ) -> Result<Option<Vec<(String, Value)>>, BrokerError> {
         let Some(src) = &self.scripts else { return Ok(None) };
-        let plan = src.scripts_for(doctype)?;
+        let plan = src.scripts_for(tenant.db, tenant.gens, doctype)?;
         // **The class selects who runs.** A script subscribes to one event;
         // the others are not its business. Filtering here rather than inside
         // the loop keeps the empty case cheap — the overwhelmingly
@@ -475,7 +465,7 @@ impl WasmHooks {
             return Ok(None);
         }
 
-        let tenant = src.db.tenant_id().to_string();
+        let tenant = tenant.db.tenant_id().to_string();
         let mut current = doc.to_vec();
         for entry in entries {
             // `app` is part of the KEY, so the owner's instance and each
@@ -584,18 +574,36 @@ impl WasmHooks {
 }
 
 impl HookDispatch for WasmHooks {
-    fn validate(&self, doctype: &str, doc: &[(String, Value)]) -> Result<Vec<(String, Value)>, BrokerError> {
+    fn validate(&self, _doctype: &str, doc: &[(String, Value)]) -> Result<Vec<(String, Value)>, BrokerError> {
         let after_plugin = self.dispatch_one("plugin", &self.plugin, doc)?;
-        // A DocType's own server script REPLACES the built-in default rather
-        // than running after it â€” two scripts silently chained is a debugging
-        // nightmare nobody asked for. With a script source attached and no
-        // script declared, nothing runs.
-        match self.dispatch_doctype_script(crate::contract::HookClass::Validate, doctype, &after_plugin)? {
-            Some(out) => return Ok(out),
-            None if self.scripts.is_some() => return Ok(after_plugin),
-            None => {}
+        if self.scripts.is_some() {
+            return Err(BrokerError::InvalidValue {
+                detail: "tenant-scoped scripts require broker dispatch".into(),
+            });
         }
         self.dispatch_one("script", &self.script, &after_plugin)
+    }
+
+    fn validate_for(
+        &self,
+        tenant: crate::broker::HookTenant<'_>,
+        doctype: &str,
+        doc: &[(String, Value)],
+    ) -> Result<Vec<(String, Value)>, BrokerError> {
+        let after_plugin = self.dispatch_one("plugin", &self.plugin, doc)?;
+        // A DocType's own server script replaces the built-in default rather
+        // than silently chaining two independent policies. With a script
+        // source attached and no declaration, no Tier-2 script runs.
+        match self.dispatch_doctype_script(
+            tenant,
+            crate::contract::HookClass::Validate,
+            doctype,
+            &after_plugin,
+        )? {
+            Some(out) => Ok(out),
+            None if self.scripts.is_some() => Ok(after_plugin),
+            None => self.dispatch_one("script", &self.script, &after_plugin),
+        }
     }
 
     /// **Lifecycle-event hooks.**
@@ -611,11 +619,26 @@ impl HookDispatch for WasmHooks {
     /// the vocabulary reaches scripts without the engine changing world at all.
     fn fire(
         &self,
+        _class: crate::contract::HookClass,
+        _doctype: &str,
+        doc: &[(String, Value)],
+    ) -> Result<Vec<(String, Value)>, BrokerError> {
+        if self.scripts.is_some() {
+            return Err(BrokerError::InvalidValue {
+                detail: "tenant-scoped scripts require broker dispatch".into(),
+            });
+        }
+        Ok(doc.to_vec())
+    }
+
+    fn fire_for(
+        &self,
+        tenant: crate::broker::HookTenant<'_>,
         class: crate::contract::HookClass,
         doctype: &str,
         doc: &[(String, Value)],
     ) -> Result<Vec<(String, Value)>, BrokerError> {
-        let out = self.dispatch_doctype_script(class, doctype, doc)?;
+        let out = self.dispatch_doctype_script(tenant, class, doctype, doc)?;
         match (out, class.may_mutate()) {
             // a mutating class takes the document back
             (Some(next), true) => Ok(next),

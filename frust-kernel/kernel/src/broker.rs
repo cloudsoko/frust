@@ -51,6 +51,21 @@ impl HookChain {
 pub trait HookDispatch: Send + Sync {
     fn validate(&self, doctype: &str, doc: &[(String, Value)]) -> Result<Vec<(String, Value)>, BrokerError>;
 
+    /// Validate for the tenant that owns the current request.
+    ///
+    /// Dispatchers without tenant-owned state keep the ordinary validation
+    /// behaviour. A dispatcher that loads tenant data overrides this method so
+    /// the request's already-scoped database and generation handles travel
+    /// together into that lookup.
+    fn validate_for(
+        &self,
+        _tenant: HookTenant<'_>,
+        doctype: &str,
+        doc: &[(String, Value)],
+    ) -> Result<Vec<(String, Value)>, BrokerError> {
+        self.validate(doctype, doc)
+    }
+
     /// Fire one lifecycle class. Returns the (possibly mutated)
     /// document for a mutating class, the input unchanged otherwise; `Err`
     /// rejects and blocks the write.
@@ -66,6 +81,29 @@ pub trait HookDispatch: Send + Sync {
     ) -> Result<Vec<(String, Value)>, BrokerError> {
         Ok(doc.to_vec())
     }
+
+    /// Fire a lifecycle hook for the tenant that owns the current request.
+    fn fire_for(
+        &self,
+        _tenant: HookTenant<'_>,
+        class: crate::contract::HookClass,
+        doctype: &str,
+        doc: &[(String, Value)],
+    ) -> Result<Vec<(String, Value)>, BrokerError> {
+        self.fire(class, doctype, doc)
+    }
+}
+
+/// Tenant-owned state already resolved when the broker was constructed.
+///
+/// Passing these borrowed handles into shared hooks keeps the Wasm engine
+/// process-wide while every persistence lookup and cache generation remains
+/// owned by the request tenant. Constructing this value performs no lookup and
+/// takes no lock.
+#[derive(Clone, Copy)]
+pub struct HookTenant<'a> {
+    pub db: &'a Db,
+    pub gens: &'a crate::tenant_gen::TenantGenerations,
 }
 
 /// External hook-runner (the legacy composition process on :8787). Retained
@@ -234,13 +272,9 @@ pub struct Broker {
     /// N engines + N threads, multiplying the 60 MB idle footprint by tenant
     /// count. The engine itself carries no tenant state, so sharing it is safe.
     ///
-    /// CAVEAT: if the shared `WasmHooks` also carries a `ScriptSource` (attached
-    /// via `with_script_source`), that source holds ONE tenant's `Db` and keys
-    /// its pool by that `Db`'s `tenant_id()` — NOT by the tenant of the current
-    /// request. Per-DocType server scripts and their cache are therefore shared
-    /// from the attached tenant across every broker that shares this handle.
-    /// That is correct for a single-tenant process; multi-tenant server-script
-    /// isolation is not yet implemented (see `hooks.rs` and `main.rs`).
+    /// Per-DocType scripts receive the current broker's scoped database and
+    /// generation handles on every dispatch. The engine and script pools are
+    /// shared; script text and invalidation identity remain tenant-owned.
     pub hooks: std::sync::Arc<dyn HookDispatch>,
     /// This tenant's cache generations, resolved ONCE here so the per-request
     /// path stays a single atomic load rather than a registry lookup — trading
@@ -272,12 +306,9 @@ impl Broker {
     /// whole process. This is what keeps per-tenant cost at a `Db` plus a
     /// metadata cache — kilobytes — instead of a wasm engine apiece.
     ///
-    /// The per-broker `db` here IS request-tenant-scoped, so metadata, rules and
-    /// authority are correctly per tenant. The one piece of shared state that is
-    /// NOT re-scoped per request is a `ScriptSource` inside the shared `hooks`:
-    /// it resolves scripts and pool keys from its own stored `Db`, so server
-    /// scripts are only tenant-safe when a single tenant is served (see the
-    /// `hooks` field caveat and `with_script_source`).
+    /// The per-broker `db` and generation handles are request-tenant-scoped.
+    /// Hook dispatch borrows both, so a shared runtime never needs an ambient
+    /// current tenant or a request-path registry lookup.
     pub fn with_shared_hooks(db: Db, hooks: std::sync::Arc<dyn HookDispatch>) -> Self {
         let gens = crate::tenant_gen::for_tenant(db.tenant_id());
         Self {
@@ -786,6 +817,7 @@ impl Broker {
         if !hook_doc.iter().any(|(k, _)| k == "id") {
             hook_doc.push(("id".into(), Value::Text(format!("{}:{record_key}", meta.name))));
         }
+        let hook_tenant = HookTenant { db: &self.db, gens: &self.gens };
         // ── before_insert, ahead of validate and creates only ──
         //
         // Stated, not inherited: it fires only for a CREATE (there is no
@@ -797,7 +829,8 @@ impl Broker {
         if op == WriteOp::Create {
             let chain = chain.push(&format!("{}:{record_key}", meta.name), HookClass::BeforeInsert)?;
             let _ = &chain;
-            hook_doc = self.hooks.fire(HookClass::BeforeInsert, doctype, &hook_doc)?;
+            hook_doc =
+                self.hooks.fire_for(hook_tenant, HookClass::BeforeInsert, doctype, &hook_doc)?;
         }
 
         // ── the docstatus edges, BEFORE the write ──
@@ -822,11 +855,11 @@ impl Broker {
                 let _ = &chain;
                 // the return is DISCARDED by the dispatcher for a non-mutating
                 // class; only the Err matters here
-                self.hooks.fire(class, doctype, &hook_doc)?;
+                self.hooks.fire_for(hook_tenant, class, doctype, &hook_doc)?;
             }
         }
 
-        let mut entries = self.hooks.validate(doctype, &hook_doc)?;
+        let mut entries = self.hooks.validate_for(hook_tenant, doctype, &hook_doc)?;
         // the injected id is a hook input, never a stored column
         entries.retain(|(k, _)| k != "id");
         // Hook output is bounded by the metadata envelope — a hook cannot

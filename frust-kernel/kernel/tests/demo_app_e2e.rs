@@ -126,7 +126,7 @@ fn boot() -> &'static (Arc<Broker>, ResolvedTenant) {
 
         let hooks = WasmHooks::load(artifacts())
             .expect("hooks")
-            .with_script_source(scoped_db(&cfg));
+            .with_script_source();
         let broker = Arc::new(Broker::new(scoped_db(&cfg), Box::new(hooks)));
         let rest = Rest::single(Arc::clone(&broker), ADDR.to_string(), Some(Arc::new(MetadataSync { base: cfg.clone() })), None);
         std::thread::spawn(move || {

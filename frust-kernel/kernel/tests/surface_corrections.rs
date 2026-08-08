@@ -33,7 +33,7 @@ fn setup(name: &str) -> (Rest, Db, ResolvedTenant) {
          pass = crypto::argon2::generate('pw-mgr');",
     )
     .unwrap();
-    let hooks = WasmHooks::load(artifacts()).expect("hooks").with_script_source(scoped_db(&cfg));
+    let hooks = WasmHooks::load(artifacts()).expect("hooks").with_script_source();
     let broker = Arc::new(Broker::new(scoped_db(&cfg), Box::new(hooks)));
     let rest = Rest::single(
         broker,
