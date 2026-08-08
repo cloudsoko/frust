@@ -14,7 +14,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 pub use frust_kernel::app::{
-    ExtensionDecl, Manifest, RouteDecl, ScriptDecl, MANIFEST_VERSION, RESERVED_ROUTE_PATHS,
+    ExtensionDecl, FixtureDecl, Manifest, RouteDecl, ScriptDecl, MANIFEST_VERSION,
+    RESERVED_ROUTE_PATHS,
 };
 pub use frust_kernel::sync::{AggregateDef, DocTypeDef, FetchFrom, FieldDef, MetricSpec, Rule};
 pub use frust_kernel::workflow::{StateDef, StateRule, TransitionDef, WorkflowDef};
@@ -93,6 +94,7 @@ impl ManifestBuilder {
                 components: Vec::new(),
                 workflows: Vec::new(),
                 extends: Vec::new(),
+                fixtures: Vec::new(),
             },
         }
     }
@@ -153,6 +155,11 @@ impl ManifestBuilder {
 
     pub fn extension(mut self, extension: ExtensionDecl) -> Self {
         self.manifest.extends.push(extension);
+        self
+    }
+
+    pub fn fixture(mut self, fixture: FixtureDecl) -> Self {
+        self.manifest.fixtures.push(fixture);
         self
     }
 

@@ -202,6 +202,12 @@ pub fn error_code(err: &crate::contract::BrokerError) -> String {
         E::FieldNotReadable { .. } => "E_FIELD_NOT_READABLE",
         E::PathTooDeep { .. } => "E_PATH_TOO_DEEP",
         E::InvalidValue { .. } => "E_INVALID_VALUE",
+        E::FixtureRefused { code, .. } => match code.as_str() {
+            "FRUST:E_FIXTURE:AMBIGUOUS_OWNER" => "E_FIXTURE_AMBIGUOUS_OWNER",
+            "FRUST:E_FIXTURE:USER_MODIFIED" => "E_FIXTURE_USER_MODIFIED",
+            "FRUST:E_FIXTURE:UNOWNED_ROW" => "E_FIXTURE_UNOWNED_ROW",
+            _ => "E_FIXTURE_REFUSED",
+        },
         E::HookCycle { .. } => "E_HOOK_CYCLE",
         E::HookDepthExceeded { .. } => "E_HOOK_DEPTH",
         E::HookRejected { .. } => "E_HOOK_REJECTED",

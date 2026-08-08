@@ -754,8 +754,8 @@ impl Rest {
             ["app", "plan"] => {
                 require_manager(caller)?;
                 let manifest = self.manifest_from(&json)?;
-                let plan = manifest.plan(ctx.broker.db.target(), &ctx.broker.db)?;
-                Ok(app_plan_json(&plan))
+                let (plan, fixtures) = self.plan_app(ctx, &manifest)?;
+                Ok(app_plan_json(&plan, &fixtures))
             }
 
             ["app", "install"] => {
@@ -1117,13 +1117,123 @@ fn unauthenticated() -> BrokerError {
 /// The plan, as an operator sees it. Destructive statements are surfaced at
 /// the TOP LEVEL rather than buried in the schema half: the whole point of a
 /// preview is that the dangerous part is the part you cannot miss.
-fn app_plan_json(plan: &crate::app::InstallPlan) -> serde_json::Value {
+#[derive(Debug)]
+struct FixturePlan {
+    rows: Vec<FixturePlanRow>,
+    overwrites: Vec<FixtureOverwrite>,
+}
+
+#[derive(Debug)]
+struct FixturePlanRow {
+    doctype: String,
+    key: String,
+    action: &'static str,
+}
+
+#[derive(Debug)]
+struct FixtureOverwrite {
+    doctype: String,
+    key: String,
+    code: String,
+    detail: String,
+    apps: Vec<String>,
+}
+
+fn fixture_refusal(casualties: &[FixtureOverwrite]) -> BrokerError {
+    let first = &casualties[0];
+    let mut apps = casualties
+        .iter()
+        .flat_map(|c| c.apps.iter().cloned())
+        .collect::<Vec<_>>();
+    apps.sort();
+    apps.dedup();
+    BrokerError::FixtureRefused {
+        code: first.code.clone(),
+        doctype: first.doctype.clone(),
+        key: first.key.clone(),
+        apps,
+        detail: casualties.iter().map(|c| c.detail.as_str()).collect::<Vec<_>>().join("\n- "),
+    }
+}
+
+fn fixture_overwrite_refusal(
+    manifest: &crate::app::Manifest,
+    casualties: &[FixtureOverwrite],
+) -> BrokerError {
+    let mut err = fixture_refusal(casualties);
+    if let BrokerError::FixtureRefused { detail, .. } = &mut err {
+        *detail = format!(
+            "refused fixture overwrite for app '{}':\n- {}\nRetry with \"acknowledge\": true to overwrite the named rows.",
+            manifest.name, detail
+        );
+    }
+    err
+}
+
+fn fixture_provenance_id(doctype: &str, key: &str) -> String {
+    let mut out = String::with_capacity((doctype.len() + key.len()) * 2 + 1);
+    for byte in doctype.bytes() {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out.push('_');
+    for byte in key.bytes() {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+fn without_record_id(mut row: serde_json::Value) -> serde_json::Value {
+    if let Some(object) = row.as_object_mut() {
+        object.remove("id");
+    }
+    row
+}
+
+fn fixture_content(fixture: &crate::app::FixtureDecl) -> Result<String, BrokerError> {
+    fixture_values_content(&fixture.values)
+}
+
+fn fixture_values_content(
+    values: &serde_json::Map<String, serde_json::Value>,
+) -> Result<String, BrokerError> {
+    let entries = values
+        .iter()
+        .map(|(field, value)| Ok((field.clone(), parse_value(value)?)))
+        .collect::<Result<Vec<_>, BrokerError>>()?;
+    surql::render_value(&Value::Object(entries))
+}
+
+fn validate_fixture_fields(
+    fixture: &crate::app::FixtureDecl,
+    doctype: &crate::sync::DocTypeDef,
+    invalid: &mut Vec<String>,
+) {
+    for field in fixture.values.keys() {
+        let engine_field = field == "status" || (field == "docstatus" && doctype.submittable);
+        if !engine_field && !doctype.fields.iter().any(|f| f.fieldname == *field) {
+            invalid.push(format!(
+                "fixture '{}:{}' sets undeclared field '{}'",
+                fixture.doctype, fixture.key, field
+            ));
+        }
+    }
+    for required in doctype.fields.iter().filter(|f| f.required) {
+        if !fixture.values.contains_key(&required.fieldname) {
+            invalid.push(format!(
+                "fixture '{}:{}' omits required field '{}'",
+                fixture.doctype, fixture.key, required.fieldname
+            ));
+        }
+    }
+}
+
+fn app_plan_json(plan: &crate::app::InstallPlan, fixtures: &FixturePlan) -> serde_json::Value {
     let destructive = plan.destructive();
     serde_json::json!({
         "app": plan.app,
         "version": plan.version,
         "destructive": destructive,
-        "needs_acknowledgement": !destructive.is_empty(),
+        "needs_acknowledgement": !destructive.is_empty() || !fixtures.overwrites.is_empty(),
         "planned": plan.schema.planned.iter().map(|p| serde_json::json!({
             "resource": p.name,
             "statements": p.statements,
@@ -1135,6 +1245,18 @@ fn app_plan_json(plan: &crate::app::InstallPlan) -> serde_json::Value {
         "server_scripts": plan.server_scripts,
         "routes": plan.routes,
         "workflows": plan.workflows,
+        "fixtures": fixtures.rows.iter().map(|f| serde_json::json!({
+            "doctype": f.doctype,
+            "key": f.key,
+            "action": f.action,
+        })).collect::<Vec<_>>(),
+        "fixture_overwrites": fixtures.overwrites.iter().map(|f| serde_json::json!({
+            "doctype": f.doctype,
+            "key": f.key,
+            "code": f.code,
+            "apps": f.apps,
+            "detail": f.detail,
+        })).collect::<Vec<_>>(),
     })
 }
 
@@ -1311,6 +1433,7 @@ impl Rest {
         // are not this app's to delete, so the fields and chain link it added
         // are removed surgically and the owner's DocType is left standing.
         self.detach_extensions(ctx, name)?;
+        self.orphan_app_fixtures(ctx, name)?;
 
         let n = surql::escape_str(name);
         ctx.broker
@@ -1322,6 +1445,9 @@ impl Rest {
             "action": "uninstalled",
             "metadata_removed": manifest.doctypes.iter().map(|d| &d.name).collect::<Vec<_>>(),
             "routes_removed": manifest.routes.len(),
+            "fixtures_retained": manifest.fixtures.iter()
+                .map(|f| format!("{}:{}", f.doctype, f.key))
+                .collect::<Vec<_>>(),
             "data_retained": retained,
             "note": "Metadata detached and the manifest removed. Tables and rows remain â€” \
                      dropping them is a separate, explicitly acknowledged act.",
@@ -1351,6 +1477,16 @@ impl Rest {
             crate::meta::APP_TABLE
         ))?;
         Ok(rows.as_array().and_then(|a| a.first()).cloned())
+    }
+
+    fn plan_app(
+        &self,
+        ctx: &TenantContext,
+        manifest: &crate::app::Manifest,
+    ) -> Result<(crate::app::InstallPlan, FixturePlan), BrokerError> {
+        let plan = manifest.plan(ctx.broker.db.target(), &ctx.broker.db)?;
+        let fixtures = self.plan_fixtures(ctx, manifest)?;
+        Ok((plan, fixtures))
     }
 
     /// Install or update: **validate â†’ plan â†’ gate â†’ apply â†’ record**, in that
@@ -1413,7 +1549,7 @@ impl Rest {
         }
 
         // PLAN FIRST â€” the same dry run the operator was shown.
-        let plan = manifest.plan(ctx.broker.db.target(), &ctx.broker.db)?;
+        let (plan, fixture_plan) = self.plan_app(ctx, manifest)?;
         let destructive = plan.destructive();
         if !destructive.is_empty() && !acknowledge {
             return Err(BrokerError::InvalidValue {
@@ -1450,6 +1586,10 @@ impl Rest {
             });
         }
 
+        if !fixture_plan.overwrites.is_empty() && !acknowledge {
+            return Err(fixture_overwrite_refusal(manifest, &fixture_plan.overwrites));
+        }
+
         let mut opts = frust_orm::MigrationOptions::default_for_dev();
         opts.allow_destructive = acknowledge;
         opts.acknowledge = acknowledge;
@@ -1462,6 +1602,14 @@ impl Rest {
 
         self.attach_metadata(ctx, manifest)?;
         self.attach_workflows(ctx, manifest)?;
+        self.apply_fixtures(ctx, manifest)?;
+
+        if let Some(row) = &existing {
+            let previous = crate::app::Manifest::parse(
+                row.get("manifest").and_then(|m| m.as_str()).unwrap_or("{}"),
+            )?;
+            self.orphan_removed_fixtures(ctx, &previous, manifest)?;
+        }
 
         let content = surql::render_value(&Value::Text(
             serde_json::to_string(manifest).unwrap_or_default(),
@@ -1488,7 +1636,329 @@ impl Rest {
             "action": if is_update { "updated" } else { "installed" },
             "applied": applied.schema.applied.len(),
             "destructive": destructive,
+            "fixtures": fixture_plan.rows.iter().map(|f| serde_json::json!({
+                "doctype": f.doctype,
+                "key": f.key,
+                "action": f.action,
+            })).collect::<Vec<_>>(),
         }))
+    }
+
+    /// Plans record ownership and overwrite casualties before schema or data
+    /// changes. Ambiguous ownership is never acknowledgeable; a row has one
+    /// shipping app or the bundle is refused.
+    fn plan_fixtures(
+        &self,
+        ctx: &TenantContext,
+        manifest: &crate::app::Manifest,
+    ) -> Result<FixturePlan, BrokerError> {
+        let stored = crate::sync::load_doctypes(&ctx.broker.db)?;
+        let mut invalid = Vec::new();
+        let mut ambiguous = Vec::new();
+        let mut rows = Vec::new();
+        let mut overwrites = Vec::new();
+
+        for fixture in &manifest.fixtures {
+            let provenance = self.fixture_provenance(ctx, &fixture.doctype, &fixture.key)?;
+            if let Some(owner) = provenance
+                .as_ref()
+                .and_then(|row| row.get("app"))
+                .and_then(|value| value.as_str())
+            {
+                if owner != manifest.name {
+                    ambiguous.push(FixtureOverwrite {
+                        doctype: fixture.doctype.clone(),
+                        key: fixture.key.clone(),
+                        code: "FRUST:E_FIXTURE:AMBIGUOUS_OWNER".into(),
+                        detail: format!(
+                            "fixture '{}:{}' is declared by both app '{}' and app '{}'",
+                            fixture.doctype, fixture.key, owner, manifest.name
+                        ),
+                        apps: vec![owner.to_string(), manifest.name.clone()],
+                    });
+                    continue;
+                }
+            }
+            let doctype = manifest
+                .doctypes
+                .iter()
+                .find(|dt| dt.name == fixture.doctype)
+                .or_else(|| stored.iter().find(|dt| dt.name == fixture.doctype));
+            let Some(doctype) = doctype else {
+                invalid.push(format!(
+                    "fixture '{}:{}' targets unknown doctype '{}'",
+                    fixture.doctype, fixture.key, fixture.doctype
+                ));
+                continue;
+            };
+            validate_fixture_fields(fixture, doctype, &mut invalid);
+            if let Err(err) = fixture_content(fixture) {
+                invalid.push(format!(
+                    "fixture '{}:{}' has invalid values: {err}",
+                    fixture.doctype, fixture.key
+                ));
+                continue;
+            }
+
+            let current = self.fixture_record(ctx, &fixture.doctype, &fixture.key)?;
+            match provenance {
+                Some(provenance) => {
+                    let shipped = provenance
+                        .get("shipped")
+                        .and_then(|v| v.as_str())
+                        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok());
+                    if current != shipped {
+                        overwrites.push(FixtureOverwrite {
+                            doctype: fixture.doctype.clone(),
+                            key: fixture.key.clone(),
+                            code: "FRUST:E_FIXTURE:USER_MODIFIED".into(),
+                            detail: format!(
+                                "app '{}' fixture '{}:{}' differs from its recorded shipped state",
+                                manifest.name, fixture.doctype, fixture.key
+                            ),
+                            apps: vec![manifest.name.clone()],
+                        });
+                    }
+                    let active = provenance.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
+                    rows.push(FixturePlanRow {
+                        doctype: fixture.doctype.clone(),
+                        key: fixture.key.clone(),
+                        action: if active { "update" } else { "re-adopt" },
+                    });
+                }
+                None => {
+                    if current.is_some() {
+                        overwrites.push(FixtureOverwrite {
+                            doctype: fixture.doctype.clone(),
+                            key: fixture.key.clone(),
+                            code: "FRUST:E_FIXTURE:UNOWNED_ROW".into(),
+                            detail: format!(
+                                "app '{}' fixture '{}:{}' would overwrite an existing row with no app provenance",
+                                manifest.name, fixture.doctype, fixture.key
+                            ),
+                            apps: vec![manifest.name.clone()],
+                        });
+                    }
+                    rows.push(FixturePlanRow {
+                        doctype: fixture.doctype.clone(),
+                        key: fixture.key.clone(),
+                        action: if current.is_some() { "adopt" } else { "create" },
+                    });
+                }
+            }
+        }
+
+        if !invalid.is_empty() {
+            return Err(BrokerError::InvalidValue {
+                detail: format!("bundle fixtures are not installable:\n- {}", invalid.join("\n- ")),
+            });
+        }
+        if !ambiguous.is_empty() {
+            return Err(fixture_refusal(&ambiguous));
+        }
+        Ok(FixturePlan { rows, overwrites })
+    }
+
+    fn fixture_record(
+        &self,
+        ctx: &TenantContext,
+        doctype: &str,
+        key: &str,
+    ) -> Result<Option<serde_json::Value>, BrokerError> {
+        ident(doctype)?;
+        ident(key)?;
+        let info = ctx.broker.db.sql_root("INFO FOR DB;")?;
+        if !info
+            .get("tables")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|tables| tables.contains_key(doctype))
+        {
+            return Ok(None);
+        }
+        let rid = surql::render_value(&Value::RecordId(format!("{doctype}:{key}")))?;
+        let rows = ctx.broker.db.sql_root(&format!("SELECT * FROM {rid};"))?;
+        Ok(rows
+            .as_array()
+            .and_then(|a| a.first())
+            .cloned()
+            .map(without_record_id))
+    }
+
+    fn fixture_provenance(
+        &self,
+        ctx: &TenantContext,
+        doctype: &str,
+        key: &str,
+    ) -> Result<Option<serde_json::Value>, BrokerError> {
+        let id = fixture_provenance_id(doctype, key);
+        let rows = ctx.broker.db.sql_root(&format!(
+            "SELECT * FROM {}:{id};",
+            crate::meta::APP_FIXTURE_TABLE
+        ))?;
+        Ok(rows.as_array().and_then(|a| a.first()).cloned())
+    }
+
+    fn apply_fixtures(
+        &self,
+        ctx: &TenantContext,
+        manifest: &crate::app::Manifest,
+    ) -> Result<(), BrokerError> {
+        for fixture in &manifest.fixtures {
+            let current = self.fixture_record(ctx, &fixture.doctype, &fixture.key)?;
+            let provenance = self.fixture_provenance(ctx, &fixture.doctype, &fixture.key)?;
+            if let Some(owner) = provenance
+                .as_ref()
+                .and_then(|row| row.get("app"))
+                .and_then(|value| value.as_str())
+            {
+                if owner != manifest.name {
+                    return Err(BrokerError::FixtureRefused {
+                        code: "FRUST:E_FIXTURE:AMBIGUOUS_OWNER".into(),
+                        doctype: fixture.doctype.clone(),
+                        key: fixture.key.clone(),
+                        apps: vec![owner.to_string(), manifest.name.clone()],
+                        detail: format!(
+                            "fixture '{}:{}' is declared by both app '{}' and app '{}'",
+                            fixture.doctype, fixture.key, owner, manifest.name
+                        ),
+                    });
+                }
+            }
+            let doctype = surql::escape_str(&fixture.doctype);
+            let key = surql::escape_str(&fixture.key);
+            let app = surql::escape_str(&manifest.name);
+            let provenance_id = fixture_provenance_id(&fixture.doctype, &fixture.key);
+            if provenance.is_none() {
+                let claim = ctx.broker.db.sql_root(&format!(
+                    "CREATE ONLY {}:{provenance_id} SET doctype = '{doctype}', \
+                     record_key = '{key}', app = '{app}', shipped = '{{}}', active = false, \
+                     adopted_at = time::now(), orphaned_at = NONE;",
+                    crate::meta::APP_FIXTURE_TABLE
+                ));
+                if let Err(error) = claim {
+                    let raced = self.fixture_provenance(ctx, &fixture.doctype, &fixture.key)?;
+                    let owner = raced
+                        .as_ref()
+                        .and_then(|row| row.get("app"))
+                        .and_then(|value| value.as_str());
+                    if owner.is_some_and(|owner| owner != manifest.name) {
+                        let owner = owner.unwrap_or("?");
+                        return Err(BrokerError::FixtureRefused {
+                            code: "FRUST:E_FIXTURE:AMBIGUOUS_OWNER".into(),
+                            doctype: fixture.doctype.clone(),
+                            key: fixture.key.clone(),
+                            apps: vec![owner.to_string(), manifest.name.clone()],
+                            detail: format!(
+                                "fixture '{}:{}' was claimed concurrently by app '{}' while app '{}' was applying",
+                                fixture.doctype, fixture.key, owner, manifest.name
+                            ),
+                        });
+                    }
+                    if owner.is_none() {
+                        return Err(error);
+                    }
+                }
+            }
+            let rid = surql::render_value(&Value::RecordId(format!(
+                "{}:{}",
+                fixture.doctype, fixture.key
+            )))?;
+            let mut values = fixture.values.clone();
+            let previous_shipped = provenance
+                .as_ref()
+                .and_then(|p| p.get("shipped"))
+                .and_then(|v| v.as_str())
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok());
+            for engine_field in ["status", "docstatus"] {
+                if !values.contains_key(engine_field) {
+                    if let Some(value) = previous_shipped
+                        .as_ref()
+                        .and_then(|row| row.get(engine_field))
+                    {
+                        values.insert(engine_field.to_string(), value.clone());
+                    }
+                }
+            }
+            let content = fixture_values_content(&values)?;
+            ctx.broker
+                .db
+                .sql_root(&format!("UPSERT {rid} MERGE {content};"))?;
+
+            let mut clear = current
+                .as_ref()
+                .and_then(|row| row.as_object())
+                .into_iter()
+                .flatten()
+                .map(|(field, _)| field)
+                .filter(|field| !matches!(field.as_str(), "owner" | "status" | "docstatus"))
+                .filter(|field| !fixture.values.contains_key(*field))
+                .cloned()
+                .collect::<Vec<_>>();
+            clear.sort();
+            if !clear.is_empty() {
+                ctx.broker.db.sql_root(&format!(
+                    "UPDATE {rid} SET {};",
+                    clear
+                        .iter()
+                        .map(|field| format!("{field} = NONE"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))?;
+            }
+            let row = self
+                .fixture_record(ctx, &fixture.doctype, &fixture.key)?
+                .ok_or_else(|| BrokerError::Db {
+                    detail: format!(
+                        "fixture apply returned no row for {}:{}",
+                        fixture.doctype, fixture.key
+                    ),
+                })?;
+            let shipped = surql::render_value(&Value::Text(
+                serde_json::to_string(&row).map_err(|e| BrokerError::Db {
+                    detail: format!("serialize shipped fixture state: {e}"),
+                })?,
+            ))?;
+            ctx.broker.db.sql_root(&format!(
+                "UPDATE {}:{provenance_id} SET doctype = '{doctype}', record_key = '{key}', \
+                 app = '{app}', shipped = {shipped}, active = true, adopted_at = time::now(), \
+                 orphaned_at = NONE;",
+                crate::meta::APP_FIXTURE_TABLE
+            ))?;
+        }
+        Ok(())
+    }
+
+    fn orphan_removed_fixtures(
+        &self,
+        ctx: &TenantContext,
+        previous: &crate::app::Manifest,
+        next: &crate::app::Manifest,
+    ) -> Result<(), BrokerError> {
+        for old in &previous.fixtures {
+            if next
+                .fixtures
+                .iter()
+                .any(|new| new.doctype == old.doctype && new.key == old.key)
+            {
+                continue;
+            }
+            let id = fixture_provenance_id(&old.doctype, &old.key);
+            ctx.broker.db.sql_root(&format!(
+                "UPDATE {}:{id} SET active = false, orphaned_at = time::now();",
+                crate::meta::APP_FIXTURE_TABLE
+            ))?;
+        }
+        Ok(())
+    }
+
+    fn orphan_app_fixtures(&self, ctx: &TenantContext, app: &str) -> Result<(), BrokerError> {
+        let app = surql::escape_str(app);
+        ctx.broker.db.sql_root(&format!(
+            "UPDATE {} SET active = false, orphaned_at = time::now() \
+             WHERE app = '{app}' AND active = true;",
+            crate::meta::APP_FIXTURE_TABLE
+        ))?;
+        Ok(())
     }
 
     /// Writes the bundle's DocType records and attaches its client scripts.
@@ -1882,6 +2352,7 @@ fn status_for(e: &BrokerError) -> u16 {
         BrokerError::PermissionDenied { .. } | BrokerError::FieldNotReadable { .. } => 403,
         BrokerError::IdentityUnresolved => 403,
         BrokerError::UnknownDoctype { .. } => 404,
+        BrokerError::FixtureRefused { .. } => 409,
         // a refused transition is a rule violation, not a bad request
         BrokerError::WorkflowDenied { .. } => 422,
         BrokerError::HookRejected { .. } | BrokerError::HookCycle { .. } | BrokerError::HookDepthExceeded { .. } => 422,

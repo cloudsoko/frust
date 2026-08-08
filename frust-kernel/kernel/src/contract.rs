@@ -178,6 +178,14 @@ pub enum BrokerError {
     FieldNotReadable { field: String },
     PathTooDeep { max: usize },
     InvalidValue { detail: String },
+    /// A fixture ownership or shipped-state gate refused a lifecycle action.
+    FixtureRefused {
+        code: String,
+        doctype: String,
+        key: String,
+        apps: Vec<String>,
+        detail: String,
+    },
     HookCycle { record: String, hook: String },
     HookDepthExceeded { max: usize },
     HookRejected { stage: String, message: String },
