@@ -68,6 +68,21 @@ pub struct Manifest {
     /// how an extension quietly becomes an owner.
     #[serde(default)]
     pub extends: Vec<ExtensionDecl>,
+    /// App-owned records shipped as part of the bundle.
+    #[serde(default)]
+    pub fixtures: Vec<FixtureDecl>,
+}
+
+/// One app-owned record shipped in a bundle.
+///
+/// The explicit key makes ownership stable across versions and lets the
+/// lifecycle gate name the exact record before any schema or data is changed.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FixtureDecl {
+    pub doctype: String,
+    pub key: String,
+    #[serde(default)]
+    pub values: serde_json::Map<String, serde_json::Value>,
 }
 
 /// One app's extension of a DocType another app owns.
@@ -144,6 +159,8 @@ pub struct InstallPlan {
     pub routes: Vec<String>,
     /// Reserved-slot passthrough count.
     pub workflows: usize,
+    /// App-owned records that will be installed or updated.
+    pub fixtures: Vec<String>,
 }
 
 impl InstallPlan {
@@ -319,6 +336,66 @@ impl Manifest {
             }
         }
 
+        let mut fixture_rows = std::collections::BTreeSet::new();
+        for fixture in &self.fixtures {
+            if !is_ident(&fixture.doctype) {
+                errs.push(format!(
+                    "fixture doctype '{}' is not an identifier",
+                    fixture.doctype
+                ));
+            }
+            if !is_ident(&fixture.key) {
+                errs.push(format!(
+                    "fixture '{}:{}' has a key that is not an identifier",
+                    fixture.doctype, fixture.key
+                ));
+            }
+            if !fixture_rows.insert((&fixture.doctype, &fixture.key)) {
+                errs.push(format!(
+                    "fixture '{}:{}' is declared twice",
+                    fixture.doctype, fixture.key
+                ));
+            }
+            for field in fixture.values.keys() {
+                if !is_ident(field) {
+                    errs.push(format!(
+                        "fixture '{}:{}' field '{}' is not an identifier",
+                        fixture.doctype, fixture.key, field
+                    ));
+                }
+                if field == "id" || field == "owner" {
+                    errs.push(format!(
+                        "fixture '{}:{}' may not set kernel-managed field '{}'",
+                        fixture.doctype, fixture.key, field
+                    ));
+                }
+            }
+
+            // A bundle already carries enough schema to validate fixtures for
+            // its own DocTypes without touching the database. Fixtures for an
+            // existing DocType are checked against stored metadata by the
+            // lifecycle planner.
+            if let Some(dt) = self.doctypes.iter().find(|dt| dt.name == fixture.doctype) {
+                for field in fixture.values.keys() {
+                    let engine_field = field == "status" || (field == "docstatus" && dt.submittable);
+                    if !engine_field && !dt.fields.iter().any(|f| f.fieldname == *field) {
+                        errs.push(format!(
+                            "fixture '{}:{}' sets undeclared field '{}'",
+                            fixture.doctype, fixture.key, field
+                        ));
+                    }
+                }
+                for required in dt.fields.iter().filter(|f| f.required) {
+                    if !fixture.values.contains_key(&required.fieldname) {
+                        errs.push(format!(
+                            "fixture '{}:{}' omits required field '{}'",
+                            fixture.doctype, fixture.key, required.fieldname
+                        ));
+                    }
+                }
+            }
+        }
+
         // A workflow whose transitions name states it never declared
         // is the half-installed app again, one layer up. Caught here, not on
         // the first click.
@@ -416,6 +493,11 @@ impl Manifest {
             server_scripts: self.server_scripts.iter().map(|s| s.doctype.clone()).collect(),
             routes: self.routes.iter().map(|r| format!("/app/{}/{}", self.name, r.path)).collect(),
             workflows: self.workflows.len(),
+            fixtures: self
+                .fixtures
+                .iter()
+                .map(|f| format!("{}:{}", f.doctype, f.key))
+                .collect(),
         })
     }
 }

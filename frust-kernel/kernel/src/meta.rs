@@ -23,7 +23,8 @@
 /// v9: crash-safe background jobs - typed lease/fencing fields plus scheduling
 /// and lease-expiry indexes. Existing SCHEMALESS rows get defaults when next
 /// claimed, so no record rewrite is required.
-pub const META_SCHEMA_VERSION: i64 = 9;
+/// v10: durable fixture provenance, retained when an app is uninstalled.
+pub const META_SCHEMA_VERSION: i64 = 10;
 
 /// Version + application log records live here.
 pub const META_TABLE: &str = "_frust_meta";
@@ -124,6 +125,27 @@ pub fn app_registry_ddl() -> String {
         format!("DEFINE FIELD OVERWRITE manifest ON {APP_TABLE} TYPE string"),
         format!("DEFINE FIELD OVERWRITE installed_at ON {APP_TABLE} TYPE datetime"),
         format!("DEFINE FIELD OVERWRITE updated_at ON {APP_TABLE} TYPE option<datetime>"),
+    ]
+    .join(";\n")
+}
+
+/// Durable ownership and last-shipped state for app fixture rows.
+///
+/// A registry manifest says what the installed version currently ships. This
+/// table carries that ownership across uninstall, when the registry row is
+/// deliberately removed but app-owned data remains available for re-adoption.
+pub const APP_FIXTURE_TABLE: &str = "app_fixture";
+
+pub fn app_fixture_ddl() -> String {
+    [
+        format!("DEFINE TABLE OVERWRITE {APP_FIXTURE_TABLE} SCHEMAFULL CHANGEFEED 30d PERMISSIONS NONE"),
+        format!("DEFINE FIELD OVERWRITE doctype ON {APP_FIXTURE_TABLE} TYPE string"),
+        format!("DEFINE FIELD OVERWRITE record_key ON {APP_FIXTURE_TABLE} TYPE string"),
+        format!("DEFINE FIELD OVERWRITE app ON {APP_FIXTURE_TABLE} TYPE string"),
+        format!("DEFINE FIELD OVERWRITE shipped ON {APP_FIXTURE_TABLE} TYPE string"),
+        format!("DEFINE FIELD OVERWRITE active ON {APP_FIXTURE_TABLE} TYPE bool"),
+        format!("DEFINE FIELD OVERWRITE adopted_at ON {APP_FIXTURE_TABLE} TYPE datetime"),
+        format!("DEFINE FIELD OVERWRITE orphaned_at ON {APP_FIXTURE_TABLE} TYPE option<datetime>"),
     ]
     .join(";\n")
 }
@@ -239,6 +261,7 @@ pub fn meta_data_migrations() -> String {
 pub fn meta_ddl() -> String {
     [
         app_registry_ddl(),
+        app_fixture_ddl(),
         workflow_ddl(),
         mail_ddl(),
         // kernel bookkeeping
@@ -281,5 +304,16 @@ mod tests {
         assert!(ddl.contains("job_lease_expiry ON TABLE job FIELDS status, lease_expires_at"));
         assert!(meta_ddl().contains(&ddl));
         assert!(meta_data_migrations().contains("legacy running claim recovered"));
+    }
+
+    #[test]
+    fn fixture_provenance_is_kernel_owned_and_durable() {
+        let ddl = app_fixture_ddl();
+        assert!(ddl.contains("SCHEMAFULL CHANGEFEED 30d PERMISSIONS NONE"));
+        assert!(ddl.contains("app ON app_fixture TYPE string"));
+        assert!(ddl.contains("shipped ON app_fixture TYPE string"));
+        assert!(ddl.contains("active ON app_fixture TYPE bool"));
+        assert!(ddl.contains("orphaned_at ON app_fixture TYPE option<datetime>"));
+        assert!(meta_ddl().contains(&ddl));
     }
 }

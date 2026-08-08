@@ -40,6 +40,11 @@ fn good_bundle() -> String {
         "server_scripts": [{ "doctype": "acct_invoice", "hook": "validate", "script": "doc;" }],
         "routes": [{ "path": "ledger", "component": "plugin_demo.wasm" }],
         "components": ["plugin_demo.wasm"],
+        "fixtures": [{
+            "doctype": "acct_invoice",
+            "key": "opening_balance",
+            "values": { "customer": "Opening Balance" }
+        }],
         // The workflow slot is a typed WorkflowDef, validated like
         // everything else, so the fixture is a real (minimal) workflow.
         "workflows": [{
@@ -57,9 +62,9 @@ fn good_bundle() -> String {
     .to_string()
 }
 
-/// One file format that round-trips — including the reserved workflow slot.
+/// One file format that round-trips, including workflow and fixture records.
 #[test]
-fn a_bundle_round_trips_and_preserves_the_reserved_workflow_slot() {
+fn a_bundle_round_trips_and_preserves_workflows_and_fixtures() {
     let m = Manifest::parse(&good_bundle()).expect("parses");
     assert!(m.validate().is_empty(), "valid bundle: {:?}", m.validate());
     assert_eq!(m.workflows.len(), 1, "workflow slot carried");
@@ -77,7 +82,25 @@ fn a_bundle_round_trips_and_preserves_the_reserved_workflow_slot() {
     assert_eq!(again.doctypes.len(), 1);
     assert_eq!(again.doctypes[0].fields.len(), 2);
     assert_eq!(again.routes[0].path, "ledger");
+    assert_eq!(again.fixtures.len(), 1, "fixture slot carried");
+    assert_eq!(again.fixtures[0].key, "opening_balance");
     assert!(again.doctypes[0].submittable, "submittable survives");
+}
+
+/// Adding the defaulted slot does not invalidate manifests already stored in
+/// the app registry by earlier kernels.
+#[test]
+fn a_stored_manifest_without_the_fixture_slot_still_parses() {
+    let old = serde_json::json!({
+        "manifest_version": MANIFEST_VERSION,
+        "name": "installed_before_fixtures",
+        "version": "1.0.0",
+        "doctypes": []
+    })
+    .to_string();
+    let manifest = Manifest::parse(&old).expect("stored manifest remains compatible");
+    assert!(manifest.fixtures.is_empty());
+    assert!(manifest.validate().is_empty());
 }
 
 /// Validation reports EVERY problem, the way `MigrationReport::errors` does.
@@ -117,6 +140,31 @@ fn validation_collects_every_problem_at_once() {
     assert!(joined.contains("missing.wasm"), "{joined}");
     assert!(joined.contains("bare .wasm filename"), "{joined}");
     assert!(errs.len() >= 8, "expected the whole list, got {}: {joined}", errs.len());
+}
+
+#[test]
+fn fixture_validation_names_duplicate_rows_bad_keys_and_schema_casualties() {
+    let bad = serde_json::json!({
+        "manifest_version": MANIFEST_VERSION,
+        "name": "seed",
+        "version": "1.0.0",
+        "doctypes": [{
+            "name": "country",
+            "fields": [{ "fieldname": "code", "fieldtype": "Data", "required": true }]
+        }],
+        "fixtures": [
+            { "doctype": "country", "key": "bad key", "values": { "ghost": "x" } },
+            { "doctype": "country", "key": "bad key", "values": {} }
+        ]
+    })
+    .to_string();
+
+    let joined = Manifest::parse(&bad).unwrap().validate().join("\n");
+    assert!(joined.contains("country:bad key"), "names the row: {joined}");
+    assert!(joined.contains("not an identifier"), "names the bad key: {joined}");
+    assert!(joined.contains("declared twice"), "names the duplicate: {joined}");
+    assert!(joined.contains("ghost") && joined.contains("undeclared"), "names the field: {joined}");
+    assert!(joined.contains("code") && joined.contains("required"), "names the omission: {joined}");
 }
 
 /// Nothing applies before validation passes — the refusal names the problems
@@ -171,6 +219,7 @@ fn dry_run_previews_the_bundle_without_touching_schema() {
     assert_eq!(plan.routes, vec!["/app/acct/ledger".to_string()]);
     assert_eq!(plan.client_scripts, vec!["acct_invoice".to_string()]);
     assert_eq!(plan.workflows, 1);
+    assert_eq!(plan.fixtures, vec!["acct_invoice:opening_balance".to_string()]);
 
     // schema genuinely untouched
     let info = db.sql_root("INFO FOR DB;").unwrap();
