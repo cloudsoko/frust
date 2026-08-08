@@ -15,7 +15,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --locked --release --package frust-kernel && \
     install -Dm0755 target/release/frust /out/frust
 
-FROM surrealdb/surrealdb:v3.2.3 AS surrealdb
+FROM surrealdb/surrealdb:v3.2.4 AS surrealdb
 
 FROM debian:bookworm-slim AS runtime
 
