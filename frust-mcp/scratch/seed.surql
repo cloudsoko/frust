@@ -1,13 +1,11 @@
--- WO-059 MCP probe: identity seed only.
+-- WO-060 MCP proof: identity seed only.
 -- Identities are write-closed (WO-008): no REST door creates app_user rows, so
 -- the three principals must be seeded directly as root. EVERYTHING else in the
 -- fixture (the doctype, its workflow, the rows) is created through the running
 -- kernel's REST surface, exactly as a BYO client would — the probe dogfoods it.
 --
--- Isolation: a fresh, uniquely-named database on the shared dev surreal (the
--- kernel binary hardcodes endpoint 127.0.0.1:8899, so a separate surreal PROCESS
--- is not reachable without a kernel edit the probe forbids). REMOVE-then-DEFINE
--- guarantees the fixture is clean and never sees the dev store's data.
+-- Isolation: a fresh database in the proof-owned in-memory SurrealDB process
+-- on port 8895. REMOVE-then-DEFINE guarantees a clean fixture.
 
 DEFINE NAMESPACE IF NOT EXISTS frust;
 USE NS frust;

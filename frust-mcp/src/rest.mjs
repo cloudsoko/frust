@@ -1,16 +1,21 @@
-// A thin CLIENT of the documented Frust REST surface (docs/rest-api.md).
-// No SurrealDB, no kernel internals — just HTTP + JSON, exactly what
-// byo-quickstart.md describes. Node 20+ has global fetch, so zero deps here.
+import { randomUUID } from "node:crypto";
 
+// Thin client for the documented Frust REST surface. Authentication is always
+// a kernel session token; the adapter never derives roles or permissions.
 export class FrustRest {
-  constructor(base) {
+  constructor(base, token = null) {
     this.base = base.replace(/\/+$/, "");
-    this.token = null; // set by login(); forwarded as Bearer on every call
+    this.token = token;
+    this.lastTraceId = null;
   }
 
-  async #call(method, path, { body, auth = true } = {}) {
+  async call(method, path, { body, auth = true, trace = true } = {}) {
     const headers = { "content-type": "application/json" };
     if (auth && this.token) headers.authorization = `Bearer ${this.token}`;
+    if (trace) {
+      this.lastTraceId = `mcp-${randomUUID()}`;
+      headers["x-trace-id"] = this.lastTraceId;
+    }
     const res = await fetch(this.base + path, {
       method,
       headers,
@@ -23,37 +28,32 @@ export class FrustRest {
     } catch {
       json = { raw: text };
     }
-    return { ok: res.ok, status: res.status, json };
+    return { ok: res.ok, status: res.status, json, traceId: this.lastTraceId };
   }
 
-  // /login is the auth-forwarding root: the kernel resolves+authenticates the
-  // tenant and returns "<TenantId>.<random>". We hold it and send it back
-  // verbatim. The prefix is the kernel's, not ours.
   async login(user, pass, tenant) {
     const body = { user, pass };
     if (tenant) body.tenant = tenant;
-    const r = await this.#call("POST", "/login", { body, auth: false });
-    if (!r.ok) {
-      throw new Error(`login failed (HTTP ${r.status}): ${JSON.stringify(r.json)}`);
-    }
+    const r = await this.call("POST", "/login", { body, auth: false });
+    if (!r.ok) throw new Error(`login failed (HTTP ${r.status}): ${JSON.stringify(r.json)}`);
     this.token = r.json.token;
-    return r.json; // { token, user, role, tenant }
+    return r.json;
   }
 
-  ready() { return this.#call("GET", "/ready", { auth: false }); }
-  meta() { return this.#call("GET", "/meta"); }
-  metaOne(dt) { return this.#call("GET", `/meta/${encodeURIComponent(dt)}`); }
-  read(dt, body) { return this.#call("POST", `/read/${encodeURIComponent(dt)}`, { body: body ?? {} }); }
-  write(dt, body) { return this.#call("POST", `/write/${encodeURIComponent(dt)}`, { body }); }
-  workflow(dt, key) { return this.#call("GET", `/workflow/${encodeURIComponent(dt)}/${encodeURIComponent(key)}`); }
+  ready() { return this.call("GET", "/ready", { auth: false, trace: false }); }
+  meta() { return this.call("GET", "/meta"); }
+  metaOne(dt) { return this.call("GET", `/meta/${encodeURIComponent(dt)}`); }
+  read(dt, body) { return this.call("POST", `/read/${encodeURIComponent(dt)}`, { body: body ?? {} }); }
+  write(dt, body) { return this.call("POST", `/write/${encodeURIComponent(dt)}`, { body }); }
+  workflow(dt, key) { return this.call("GET", `/workflow/${encodeURIComponent(dt)}/${encodeURIComponent(key)}`); }
   transition(dt, key, action) {
-    return this.#call("POST", `/transition/${encodeURIComponent(dt)}/${encodeURIComponent(key)}`, { body: { action } });
+    return this.call("POST", `/transition/${encodeURIComponent(dt)}/${encodeURIComponent(key)}`, { body: { action } });
   }
+  subscribe(dt) { return this.call("POST", `/subscribe/${encodeURIComponent(dt)}`, { body: {} }); }
+  events(sub) { return this.call("GET", `/events/${encodeURIComponent(sub)}`); }
+  unsubscribe(sub) { return this.call("POST", `/unsubscribe/${encodeURIComponent(sub)}`, { body: {} }); }
 }
 
-// The kernel wants the bare key on write.record and /transition/{dt}/{key};
-// reads hand back the full "doctype:key" id. Strip the table prefix if present
-// so a caller may pass either form.
 export function bareKey(id) {
   if (typeof id !== "string") return id;
   const i = id.indexOf(":");

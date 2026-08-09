@@ -1,15 +1,18 @@
 {
   "name": "frust-mcp",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "WO-059 probe: a Model Context Protocol server that is a CLIENT of the Frust REST surface. Generates MCP tools from GET /meta; tools/call forwards the caller's bearer token to /read /write /transition; all permission enforcement stays in the kernel (the fourth consumer of the one permission compiler).",
+  "description": "Multi-user Model Context Protocol adapter for the Frust REST surface.",
   "engines": { "node": ">=20" },
   "bin": { "frust-mcp": "src/server.mjs" },
   "scripts": {
     "start": "node src/server.mjs",
-    "proof": "node proof/containment.mjs",
-    "inspector": "pnpm dlx @modelcontextprotocol/inspector node src/server.mjs"
+    "proof": "node proof/full.mjs",
+    "proof:unit": "node proof/unit.mjs",
+    "proof:fidelity": "node proof/fidelity.mjs",
+    "proof:containment": "node proof/containment.mjs",
+    "proof:subscriptions": "node proof/subscriptions.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0"
