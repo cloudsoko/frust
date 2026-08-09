@@ -1,4 +1,4 @@
-name: Performance and destructive drills
+name: Advisory performance evidence and destructive drills
 
 on:
   schedule:
@@ -21,7 +21,8 @@ env:
   FRUST_DB_ROOT_PASS: root
 
 jobs:
-  measured-gates:
+  advisory-measured-gates:
+    name: Advisory performance evidence
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -33,11 +34,11 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
 
-      - name: Cache Rust build outputs
+      - name: Cache Rust build outputs for advisory measurements
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: frust-kernel
-          key: measured-gates
+          key: advisory-measured-gates
 
       - name: Install pinned Node and pnpm
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -53,7 +54,7 @@ jobs:
           ./scripts/frust.ps1 build-artifacts
           python .github/scripts/release-preflight.py
 
-      - name: Start pinned SurrealDB
+      - name: Start pinned SurrealDB for advisory measurements
         run: |
           docker run --detach --name frust-surreal --publish 127.0.0.1:8899:8000 \
             surrealdb/surrealdb:v3.2.3 start --user root --pass root memory
@@ -65,7 +66,11 @@ jobs:
           curl --fail --silent http://127.0.0.1:8899/version |
             grep -Eq '^surrealdb-3\.2\.3(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 
-      - name: Run release-mode ignored measurement gates
+      # Shared runners cannot guarantee a quiet machine. Even with this run's
+      # fresh store, measurements are advisory; authoritative performance numbers
+      # come from dedicated local runs on a quiet machine with a fresh store.
+      - name: Run advisory release-mode ignored measurement gates
+        continue-on-error: true
         run: |
           set -o pipefail
           cargo test --manifest-path frust-kernel/Cargo.toml --release --test fuel_overhead --locked -- --ignored --nocapture --test-threads=1 2>&1 | tee fuel-overhead.log
@@ -73,11 +78,11 @@ jobs:
           cargo test --manifest-path frust-kernel/Cargo.toml --release --test mail_notifications --locked -- --ignored --nocapture --test-threads=1 2>&1 | tee mail-notifications.log
           cargo test --manifest-path frust-kernel/Cargo.toml --release --test tenant_fairness --locked -- --ignored --nocapture --test-threads=1 2>&1 | tee tenant-fairness.log
 
-      - name: Capture SurrealDB diagnostics
+      - name: Capture advisory SurrealDB diagnostics
         if: always()
         run: docker logs frust-surreal > surrealdb.log 2>&1
 
-      - name: Upload measurement evidence
+      - name: Upload advisory measurement evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
