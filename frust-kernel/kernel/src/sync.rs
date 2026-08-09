@@ -126,14 +126,18 @@ pub struct FetchFrom {
     pub field: String,
 }
 
-/// The docstatus lattice EVENT: 0 -> 1 -> 2 only; no edits at 2; machine
-/// codes survive to clients.
+pub const DOCSTATUS_DELETE_REFUSAL: &str = "FRUST:E_DOCSTATUS:DELETE_REQUIRES_DRAFT";
+pub const SINGLE_DELETE_REFUSAL: &str = "FRUST:E_SINGLE_NO_DELETE";
+
+/// The docstatus lattice EVENT: 0 -> 1 -> 2 only; no edits at 2; deletion only
+/// at 0; machine codes survive to clients.
 fn lattice_event(table: &str) -> String {
     format!(
-        "DEFINE EVENT OVERWRITE docstatus_lattice ON TABLE {table} WHEN $event = 'UPDATE' THEN {{ \
-         IF $before.docstatus = 2 {{ THROW 'FRUST:E_DOCSTATUS:RESURRECTION'; }}; \
-         IF $before.docstatus = 1 AND $after.docstatus = 0 {{ THROW 'FRUST:E_DOCSTATUS:ILLEGAL_TRANSITION_1_0'; }}; \
-         IF $before.docstatus = 0 AND $after.docstatus = 2 {{ THROW 'FRUST:E_DOCSTATUS:ILLEGAL_TRANSITION_0_2'; }}; \
+        "DEFINE EVENT OVERWRITE docstatus_lattice ON TABLE {table} WHEN $event = 'UPDATE' OR $event = 'DELETE' THEN {{ \
+         IF $event = 'DELETE' AND $before.docstatus != 0 {{ THROW '{DOCSTATUS_DELETE_REFUSAL}'; }}; \
+         IF $event = 'UPDATE' AND $before.docstatus = 2 {{ THROW 'FRUST:E_DOCSTATUS:RESURRECTION'; }}; \
+         IF $event = 'UPDATE' AND $before.docstatus = 1 AND $after.docstatus = 0 {{ THROW 'FRUST:E_DOCSTATUS:ILLEGAL_TRANSITION_1_0'; }}; \
+         IF $event = 'UPDATE' AND $before.docstatus = 0 AND $after.docstatus = 2 {{ THROW 'FRUST:E_DOCSTATUS:ILLEGAL_TRANSITION_0_2'; }}; \
          }}"
     )
 }
@@ -188,7 +192,7 @@ fn single_identity_guard(dt: &DocTypeDef) -> String {
     format!(
         "DEFINE EVENT OVERWRITE single_identity_guard ON TABLE {} WHEN $event = 'CREATE' OR $event = 'DELETE' THEN {{ \
          IF $event = 'CREATE' AND $after.id != type::record('{rid}') {{ THROW 'FRUST:E_SINGLE_RECORD'; }}; \
-         IF $event = 'DELETE' AND $before.id = type::record('{rid}') {{ THROW 'FRUST:E_SINGLE_NO_DELETE'; }}; \
+         IF $event = 'DELETE' AND $before.id = type::record('{rid}') {{ THROW '{SINGLE_DELETE_REFUSAL}'; }}; \
          }}",
         dt.name
     )

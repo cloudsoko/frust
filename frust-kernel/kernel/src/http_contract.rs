@@ -40,6 +40,9 @@ const STATEFUL_GET: MethodPolicy = MethodPolicy {
 const POST: MethodPolicy = MethodPolicy {
     allowed: &["POST", "OPTIONS"],
 };
+const DELETE: MethodPolicy = MethodPolicy {
+    allowed: &["DELETE", "OPTIONS"],
+};
 const APP_ROUTE: MethodPolicy = MethodPolicy {
     allowed: &["GET", "POST", "OPTIONS"],
 };
@@ -75,6 +78,7 @@ fn policy_for(url: &str) -> Option<MethodPolicy> {
         ["health" | "metrics" | "ready"] => Some(GET),
         ["login" | "logout"] | ["revoke", _] => Some(POST),
         ["meta"] | ["meta", _] => Some(GET),
+        ["doc", _, _] => Some(DELETE),
         ["doctype"]
         | ["doctype", _, "script" | "reclaim"]
         | ["notification"]
@@ -170,6 +174,16 @@ mod tests {
             assert_eq!(gate("HEAD", path), MethodGate::Dispatch, "{path}");
             assert_eq!(allow("POST", path), ["GET", "HEAD", "OPTIONS"], "{path}");
         }
+    }
+
+    #[test]
+    fn document_delete_route_is_delete_only() {
+        assert_eq!(gate("DELETE", "/doc/Invoice/one"), MethodGate::Dispatch);
+        assert_eq!(allow("POST", "/doc/Invoice/one"), ["DELETE", "OPTIONS"]);
+        assert_eq!(
+            allow("OPTIONS", "/doc/Invoice/one?ignored=true"),
+            ["DELETE", "OPTIONS"]
+        );
     }
 
     #[test]
