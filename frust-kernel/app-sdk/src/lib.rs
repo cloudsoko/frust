@@ -17,6 +17,7 @@ pub use frust_kernel::app::{
     ExtensionDecl, FixtureDecl, Manifest, RouteDecl, ScriptDecl, MANIFEST_VERSION,
     RESERVED_ROUTE_PATHS,
 };
+pub use frust_kernel::mail::NotificationDef;
 pub use frust_kernel::sync::{AggregateDef, DocTypeDef, FetchFrom, FieldDef, MetricSpec, Rule};
 pub use frust_kernel::workflow::{StateDef, StateRule, TransitionDef, WorkflowDef};
 
@@ -93,6 +94,7 @@ impl ManifestBuilder {
                 routes: Vec::new(),
                 components: Vec::new(),
                 workflows: Vec::new(),
+                notifications: Vec::new(),
                 extends: Vec::new(),
                 fixtures: Vec::new(),
             },
@@ -150,6 +152,11 @@ impl ManifestBuilder {
 
     pub fn workflow(mut self, workflow: WorkflowDef) -> Self {
         self.manifest.workflows.push(workflow);
+        self
+    }
+
+    pub fn notification(mut self, notification: NotificationDef) -> Self {
+        self.manifest.notifications.push(notification);
         self
     }
 

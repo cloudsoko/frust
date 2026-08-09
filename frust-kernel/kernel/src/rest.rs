@@ -342,11 +342,12 @@ impl Rest {
     ) -> Result<serde_json::Value, BrokerError> {
         let path = url.split('?').next().unwrap_or(url);
         let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
-        let json: serde_json::Value = if body.is_empty() {
+        let mut json: serde_json::Value = if body.is_empty() {
             serde_json::json!({})
         } else {
             serde_json::from_str(body).map_err(|e| BrokerError::InvalidValue { detail: format!("bad json body: {e}") })?
         };
+        apply_export_query(url, &mut json)?;
 
         // `/health` is the only route with no tenant: it answers for the
         // process, not for anyone's data.
@@ -415,10 +416,12 @@ impl Rest {
     ) -> Result<serde_json::Value, BrokerError> {
         let path = url.split('?').next().unwrap_or(url);
         let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
+        let mut json = json.clone();
+        apply_export_query(url, &mut json)?;
         let ctx = self.router.sole().ok_or_else(|| BrokerError::InvalidValue {
             detail: "route_with_caller needs a single-tenant router".into(),
         })?;
-        self.dispatch(ctx, &segs, json, caller, None)
+        self.dispatch(ctx, &segs, &json, caller, None)
     }
 
     fn dispatch(
@@ -811,6 +814,17 @@ impl Rest {
                 require_manager(caller)?;
                 ident(name)?;
                 self.uninstall_app(ctx, name)
+            }
+
+            ["app", name, "export"] => {
+                require_manager(caller)?;
+                ident(name)?;
+                known_keys(&json, &["include_unowned"])?;
+                let include_unowned = json
+                    .get("include_unowned")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                self.export_app(ctx, name, include_unowned)
             }
 
             // A plugin-declared route, served.
@@ -1266,6 +1280,7 @@ fn app_plan_json(plan: &crate::app::InstallPlan, fixtures: &FixturePlan) -> serd
         "server_scripts": plan.server_scripts,
         "routes": plan.routes,
         "workflows": plan.workflows,
+        "notifications": plan.notifications,
         "fixtures": fixtures.rows.iter().map(|f| serde_json::json!({
             "doctype": f.doctype,
             "key": f.key,
@@ -1450,6 +1465,18 @@ impl Rest {
             ctx.broker.db.sql_root(&format!("DELETE workflow WHERE name = '{wn}';"))?;
         }
 
+        for notification in &manifest.notifications {
+            ident(&notification.name)?;
+            let notification_name = surql::escape_str(&notification.name);
+            ctx.broker.db.sql_root(&format!(
+                "DELETE {} WHERE name = '{notification_name}';",
+                crate::mail::NOTIFICATION_TABLE
+            ))?;
+        }
+        if !manifest.notifications.is_empty() {
+            crate::broker::invalidate_meta(ctx.broker.db.tenant_id());
+        }
+
         // And its contributions to OTHER apps' DocTypes. Those rows
         // are not this app's to delete, so the fields and chain link it added
         // are removed surgically and the owner's DocType is left standing.
@@ -1488,6 +1515,29 @@ impl Rest {
             let n = surql::escape_str(&w.name);
             ctx.broker.db.sql_root(&format!("UPSERT workflow:{n} CONTENT {content};"))?;
         }
+
+        Ok(())
+    }
+
+    fn attach_notifications(
+        &self,
+        ctx: &TenantContext,
+        manifest: &crate::app::Manifest,
+    ) -> Result<(), BrokerError> {
+        for notification in &manifest.notifications {
+            ident(&notification.name)?;
+            let content = surql::render_value(&infer_value(
+                &serde_json::to_value(notification).unwrap_or_default(),
+            ))?;
+            let name = surql::escape_str(&notification.name);
+            ctx.broker.db.sql_root(&format!(
+                "UPSERT {}:{name} CONTENT {content};",
+                crate::mail::NOTIFICATION_TABLE
+            ))?;
+        }
+        if !manifest.notifications.is_empty() {
+            crate::broker::invalidate_meta(ctx.broker.db.tenant_id());
+        }
         Ok(())
     }
 
@@ -1498,6 +1548,329 @@ impl Rest {
             crate::meta::APP_TABLE
         ))?;
         Ok(rows.as_array().and_then(|a| a.first()).cloned())
+    }
+
+    fn export_app(
+        &self,
+        ctx: &TenantContext,
+        name: &str,
+        include_unowned: bool,
+    ) -> Result<serde_json::Value, BrokerError> {
+        let Some(installed) = self.installed(ctx, name)? else {
+            return Err(BrokerError::UnknownDoctype { name: format!("app {name}") });
+        };
+        if !installed
+            .get("enabled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(BrokerError::InvalidValue {
+                detail: format!(
+                    "app '{name}' is disabled; enable it before exporting live metadata"
+                ),
+            });
+        }
+        let mut manifest = crate::app::Manifest::parse(
+            installed.get("manifest").and_then(|value| value.as_str()).unwrap_or("{}"),
+        )?;
+        let registered = ctx
+            .broker
+            .db
+            .sql_root(&format!("SELECT manifest FROM {};", crate::meta::APP_TABLE))?;
+        let mut claimed_workflows = std::collections::BTreeSet::new();
+        let mut claimed_notifications = std::collections::BTreeSet::new();
+        for row in registered.as_array().cloned().unwrap_or_default() {
+            let stored = crate::app::Manifest::parse(
+                row.get("manifest")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("{}"),
+            )?;
+            claimed_workflows.extend(stored.workflows.into_iter().map(|workflow| workflow.name));
+            claimed_notifications.extend(
+                stored
+                    .notifications
+                    .into_iter()
+                    .map(|notification| notification.name),
+            );
+        }
+        let app_workflows = manifest
+            .workflows
+            .iter()
+            .map(|workflow| workflow.name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let app_notifications = manifest
+            .notifications
+            .iter()
+            .map(|notification| notification.name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        let rows = ctx.broker.db.sql_root("SELECT * FROM doctype ORDER BY name;")?;
+        let rows = rows.as_array().cloned().unwrap_or_default();
+        let mut doctypes = Vec::new();
+        let mut client_scripts = Vec::new();
+        let mut server_scripts = Vec::new();
+        for mut row in rows.iter().cloned() {
+            let owner = row
+                .get("app")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            if owner.as_deref() != Some(name) && !(include_unowned && owner.is_none()) {
+                continue;
+            }
+
+            if let Some(fields) = row.get_mut("fields").and_then(serde_json::Value::as_array_mut) {
+                fields.retain(|field| {
+                    field.get("ext_app").map_or(true, serde_json::Value::is_null)
+                });
+            }
+            let doctype: crate::sync::DocTypeDef = serde_json::from_value(row.clone()).map_err(|e| {
+                BrokerError::Db { detail: format!("bad live doctype metadata during export: {e}") }
+            })?;
+
+            if let Some(script) = row
+                .get("client_script")
+                .and_then(serde_json::Value::as_str)
+                .filter(|script| !script.trim().is_empty())
+            {
+                client_scripts.push(crate::app::ScriptDecl {
+                    doctype: doctype.name.clone(),
+                    hook: "validate".into(),
+                    script: script.into(),
+                });
+            }
+
+            match row.get("server_script") {
+                Some(serde_json::Value::Array(scripts)) => {
+                    for script in scripts {
+                        let script_owner = script.get("app").and_then(serde_json::Value::as_str);
+                        if script_owner != Some(name) && !(owner.is_none() && script_owner.is_none()) {
+                            continue;
+                        }
+                        if let Some(source) = script
+                            .get("script")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|source| !source.trim().is_empty())
+                        {
+                            server_scripts.push(crate::app::ScriptDecl {
+                                doctype: doctype.name.clone(),
+                                hook: script
+                                    .get("hook")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or("validate")
+                                    .into(),
+                                script: source.into(),
+                            });
+                        }
+                    }
+                }
+                Some(serde_json::Value::String(source)) if !source.trim().is_empty() => {
+                    server_scripts.push(crate::app::ScriptDecl {
+                        doctype: doctype.name.clone(),
+                        hook: "validate".into(),
+                        script: source.clone(),
+                    });
+                }
+                _ => {}
+            }
+            doctypes.push(doctype);
+        }
+
+        for extension in &mut manifest.extends {
+            let Some(row) = rows.iter().find(|row| {
+                row.get("name").and_then(serde_json::Value::as_str)
+                    == Some(extension.doctype.as_str())
+            }) else {
+                continue;
+            };
+            extension.fields = row
+                .get("fields")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|field| {
+                    field.get("ext_app").and_then(serde_json::Value::as_str) == Some(name)
+                })
+                .cloned()
+                .map(|field| {
+                    serde_json::from_value(field).map_err(|error| BrokerError::Db {
+                        detail: format!(
+                            "bad live extension metadata on '{}': {error}",
+                            extension.doctype
+                        ),
+                    })
+                })
+                .collect::<Result<Vec<crate::sync::FieldDef>, BrokerError>>()?;
+            let script = row
+                .get("server_script")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|script| {
+                    script.get("app").and_then(serde_json::Value::as_str) == Some(name)
+                });
+            match script {
+                Some(script) => {
+                    extension.hook = script
+                        .get("hook")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("validate")
+                        .into();
+                    extension.script = script
+                        .get("script")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .into();
+                }
+                None => extension.script.clear(),
+            }
+        }
+
+        let exported_names = doctypes.iter().map(|doctype| doctype.name.as_str()).collect::<Vec<_>>();
+        let workflows = ctx.broker.db.sql_root("SELECT * FROM workflow ORDER BY name;")?;
+        let workflows = workflows
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|row| {
+                let name = row.get("name").and_then(serde_json::Value::as_str);
+                let doctype_is_exported = row
+                    .get("doctype")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|doctype| exported_names.contains(&doctype));
+                name.is_some_and(|name| {
+                    app_workflows.contains(name)
+                        || (include_unowned
+                            && !claimed_workflows.contains(name)
+                            && doctype_is_exported)
+                })
+            })
+            .map(|row| {
+                serde_json::from_value(row).map_err(|e| BrokerError::Db {
+                    detail: format!("bad live workflow metadata during export: {e}"),
+                })
+            })
+            .collect::<Result<Vec<crate::workflow::WorkflowDef>, BrokerError>>()?;
+
+        let notifications = ctx
+            .broker
+            .db
+            .sql_root(&format!("SELECT * FROM {} ORDER BY name;", crate::mail::NOTIFICATION_TABLE))?;
+        let notifications = notifications
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|row| {
+                let name = row.get("name").and_then(serde_json::Value::as_str);
+                let doctype_is_exported = row
+                    .get("doctype")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|doctype| exported_names.contains(&doctype));
+                name.is_some_and(|name| {
+                    app_notifications.contains(name)
+                        || (include_unowned
+                            && !claimed_notifications.contains(name)
+                            && doctype_is_exported)
+                })
+            })
+            .map(|row| {
+                serde_json::from_value(row).map_err(|e| BrokerError::Db {
+                    detail: format!("bad live notification metadata during export: {e}"),
+                })
+            })
+            .collect::<Result<Vec<crate::mail::NotificationDef>, BrokerError>>()?;
+
+        let app = surql::escape_str(name);
+        let fixtures = ctx.broker.db.sql_root(&format!(
+            "SELECT doctype, record_key, shipped FROM {} \
+             WHERE app = '{app}' AND active = true ORDER BY doctype, record_key;",
+            crate::meta::APP_FIXTURE_TABLE
+        ))?;
+        let fixtures = fixtures
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row| {
+                let doctype = row.get("doctype").and_then(serde_json::Value::as_str).unwrap_or_default();
+                let key = row.get("record_key").and_then(serde_json::Value::as_str).unwrap_or_default();
+                let values = row
+                    .get("shipped")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+                    .and_then(|value| value.as_object().cloned())
+                    .ok_or_else(|| BrokerError::Db {
+                        detail: format!("bad shipped fixture state during export for {doctype}:{key}"),
+                    })?;
+                Ok(crate::app::FixtureDecl {
+                    doctype: doctype.into(),
+                    key: key.into(),
+                    values,
+                })
+            })
+            .collect::<Result<Vec<_>, BrokerError>>()?;
+
+        manifest.doctypes = doctypes;
+        manifest.client_scripts = client_scripts;
+        manifest.server_scripts = server_scripts;
+        manifest.workflows = workflows;
+        manifest.notifications = notifications;
+        manifest.fixtures = fixtures;
+        let problems = manifest.validate();
+        if !problems.is_empty() {
+            return Err(BrokerError::InvalidValue {
+                detail: format!(
+                    "live app metadata cannot form an installable bundle:\n- {}",
+                    problems.join("\n- ")
+                ),
+            });
+        }
+
+        serde_json::to_value(manifest).map_err(|error| BrokerError::Db {
+            detail: format!("serialize exported manifest: {error}"),
+        })
+    }
+
+    fn detach_removed_bundle_metadata(
+        &self,
+        ctx: &TenantContext,
+        previous: &crate::app::Manifest,
+        next: &crate::app::Manifest,
+    ) -> Result<(), BrokerError> {
+        for workflow in &previous.workflows {
+            if next
+                .workflows
+                .iter()
+                .any(|candidate| candidate.name == workflow.name)
+            {
+                continue;
+            }
+            let name = surql::escape_str(&workflow.name);
+            ctx.broker
+                .db
+                .sql_root(&format!("DELETE workflow WHERE name = '{name}';"))?;
+        }
+        let mut removed_notification = false;
+        for notification in &previous.notifications {
+            if next
+                .notifications
+                .iter()
+                .any(|candidate| candidate.name == notification.name)
+            {
+                continue;
+            }
+            let name = surql::escape_str(&notification.name);
+            ctx.broker.db.sql_root(&format!(
+                "DELETE {} WHERE name = '{name}';",
+                crate::mail::NOTIFICATION_TABLE
+            ))?;
+            removed_notification = true;
+        }
+        if removed_notification {
+            crate::broker::invalidate_meta(ctx.broker.db.tenant_id());
+        }
+        Ok(())
     }
 
     fn plan_app(
@@ -1623,12 +1996,14 @@ impl Rest {
 
         self.attach_metadata(ctx, manifest)?;
         self.attach_workflows(ctx, manifest)?;
+        self.attach_notifications(ctx, manifest)?;
         self.apply_fixtures(ctx, manifest)?;
 
         if let Some(row) = &existing {
             let previous = crate::app::Manifest::parse(
                 row.get("manifest").and_then(|m| m.as_str()).unwrap_or("{}"),
             )?;
+            self.detach_removed_bundle_metadata(ctx, &previous, manifest)?;
             self.orphan_removed_fixtures(ctx, &previous, manifest)?;
         }
 
@@ -2329,6 +2704,48 @@ fn known_keys(json: &serde_json::Value, allowed: &[&str]) -> Result<(), BrokerEr
             ),
         });
     }
+    Ok(())
+}
+
+fn apply_export_query(url: &str, json: &mut serde_json::Value) -> Result<(), BrokerError> {
+    let path = url.split('?').next().unwrap_or(url);
+    let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
+    if !matches!(segs.as_slice(), ["app", _, "export"]) {
+        return Ok(());
+    }
+    let Some((_, query)) = url.split_once('?') else {
+        return Ok(());
+    };
+    if query.is_empty() {
+        return Ok(());
+    }
+
+    let mut include_unowned = None;
+    for pair in query.split('&') {
+        let Some((key, value)) = pair.split_once('=') else {
+            return Err(BrokerError::InvalidValue {
+                detail: format!("bad export query parameter '{pair}'"),
+            });
+        };
+        if key != "include_unowned" || include_unowned.is_some() {
+            return Err(BrokerError::InvalidValue {
+                detail: format!("export accepts one query parameter: include_unowned=true|false; got '{key}'"),
+            });
+        }
+        include_unowned = Some(match value {
+            "true" => true,
+            "false" => false,
+            _ => {
+                return Err(BrokerError::InvalidValue {
+                    detail: "include_unowned must be true or false".into(),
+                })
+            }
+        });
+    }
+    if !json.is_object() {
+        *json = serde_json::json!({});
+    }
+    json["include_unowned"] = serde_json::json!(include_unowned.unwrap_or(false));
     Ok(())
 }
 
