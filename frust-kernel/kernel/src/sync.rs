@@ -66,6 +66,10 @@ pub struct MetricSpec {
 pub struct FieldDef {
     pub fieldname: String,
     pub fieldtype: String,
+    /// Human-facing field name. Older metadata may omit it; REST supplies a
+    /// display fallback without changing the stored definition.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
     #[serde(default)]
     pub required: bool,
     #[serde(default)]
@@ -1068,6 +1072,7 @@ mod tests {
         FieldDef {
             fieldname: name.into(),
             fieldtype: fieldtype.into(),
+            label: String::new(),
             required,
             options: vec![],
             child_storage: None,
