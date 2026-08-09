@@ -22,10 +22,11 @@ Known warts: [gaps.md](./gaps.md) — named, not papered over.
   route below.
 - **Failure**: a non-2xx status with `{"error": {"kind": "...", ...}}`. `kind`
   is the stable discriminant; the other fields carry detail.
-- **Method is not routed on.** The kernel dispatches on the path only, so any
-  method reaches any route. Use `POST` for everything that takes a body and
-  `GET` for `/health` and `/metrics`. This is a wart, recorded in
-  [gaps.md](./gaps.md) — do not build on it.
+- **Methods are part of the contract.** Read-only routes use `GET` (and support
+  `HEAD` where the route has no stateful read); body-bearing mutations use
+  `POST`; document deletion uses `DELETE`. A known path with the wrong method
+  returns `405 method-not-allowed` and an `Allow` header. `OPTIONS` reports the
+  same allow-set without authenticating or touching storage.
 
 ### Authentication
 
@@ -58,6 +59,7 @@ Read from `status_for()`:
 | `permission-denied`, `field-not-readable`, `identity-unresolved` | **403** | authenticated, not allowed |
 | `unknown-doctype` | **404** | no such DocType or record |
 | `workflow-denied` | **422** | a rule refused a transition (`code` carries `FRUST:E_WORKFLOW:*`) |
+| `delete-refused` | **422** | a lifecycle event refused deletion (`code` carries the exact reason) |
 | `hook-rejected`, `hook-cycle`, `hook-depth-exceeded` | **422** | app logic refused the write |
 | `tenant-throttled` | **429** | door budget spent; `retry_after_ms` says when |
 | `db` containing `FRUST:E_SUB_BUDGET` | **429** | live-subscription budget spent; poll instead |
@@ -82,7 +84,8 @@ the app that raised it.
   `/read/{doctype}` so row permissions are applied by the database on the
   refetch. A tick is a hint that something changed, never the change itself.
 - **`docstatus`**: `0` draft, `1` submitted, `2` cancelled. The lattice permits
-  `0→1`, `1→2`, `0→2` is refused, and nothing leaves `2`.
+  `0→1`, `1→2`, `0→2` is refused, nothing leaves `2`, and only status `0`
+  may be deleted.
 
 ---
 
@@ -252,6 +255,33 @@ For a Single DocType, `/write/{doctype}` always addresses the fixed single row.
 If `record` is omitted, the write updates `{doctype}:{doctype}`. If `record` is
 present, it must be the fixed key (`{doctype}`), otherwise the request is
 refused.
+
+### `DELETE /doc/{doctype}/{key}` — session
+
+```text
+→ DELETE /doc/sales_invoice/uc1ebw…
+← 200 {"action":"deleted","id":"sales_invoice:uc1ebw…"}
+```
+
+This is the only document delete door. It has no authorization policy of its
+own: the statement runs under the caller's database session, and the compiled
+table permission decides whether a row may be deleted. Today that compiled
+permission is manager-only. A clerk attempt, a missing record, or any other
+delete that removes no row is `403 permission-denied` with
+`E_DELETE_NO_ROWS`; it is never a successful response with a null id.
+
+The docstatus lattice permits deletion only while `docstatus == 0`.
+Submitted or cancelled records return `422 delete-refused` with
+`FRUST:E_DOCSTATUS:DELETE_REQUIRES_DRAFT`. Singles remain permanent: their
+existing identity event returns `422 delete-refused` with
+`FRUST:E_SINGLE_NO_DELETE`. Successful deletion emits the normal realtime
+invalidation tick, `{action:"DELETE", id:"doctype:key"}`, with no row data.
+
+Version 1 deliberately has no delete hooks: the hook vocabulary has no delete
+class, so no app callback runs before or after this operation. Version 1 also
+does not check Link fields. Deleting a row that other records link to leaves
+dangling references. The named follow-up is **DELETE LINK INTEGRITY**: define
+the reference policy and its typed refusal before adding any integrity check.
 
 ### `POST /single/{doctype}` — session
 

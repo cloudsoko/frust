@@ -260,6 +260,37 @@ async function main() {
   check('an update says action:"updated" (G3 — `created` said otherwise)',
     updated.json?.action === 'updated', JSON.stringify(updated.json).slice(0, 160));
 
+  const disposable = await call('/write/sales_invoice', {
+    token, body: { doc: { customer: 'Delete Example', total: '0', lines: [] } },
+  });
+  const disposableId = disposable.json?.record;
+  const disposableKey = disposableId?.split(':')[1];
+  check('delete example fixture is a manager-owned draft',
+    disposable.status === 200 && disposable.json?.created?.docstatus === 0 && !!disposableKey,
+    JSON.stringify(disposable.json).slice(0, 180));
+
+  const clerkDelete = await call(`/doc/sales_invoice/${disposableKey}`, {
+    token: clerkToken, method: 'DELETE',
+  });
+  check('clerk DELETE -> 403 E_DELETE_NO_ROWS from compiled permissions',
+    clerkDelete.status === 403 &&
+    /E_DELETE_NO_ROWS/.test(clerkDelete.json?.error?.detail ?? ''),
+    JSON.stringify(clerkDelete.json).slice(0, 180));
+
+  const deleted = await call(`/doc/sales_invoice/${disposableKey}`, {
+    token, method: 'DELETE',
+  });
+  check('DELETE /doc/{doctype}/{key} -> 200 {action:"deleted",id}',
+    deleted.status === 200 && deleted.json?.action === 'deleted' &&
+    deleted.json?.id === disposableId,
+    JSON.stringify(deleted.json));
+  const deleteReadAfter = await call('/read/sales_invoice', {
+    token, body: { filter: { path: 'id', op: 'eq', value: disposableId } },
+  });
+  check('delete read-after returns no row',
+    deleteReadAfter.status === 200 && deleteReadAfter.json?.rows?.length === 0,
+    JSON.stringify(deleteReadAfter.json));
+
   // G4: an unknown key is refused by name, not discarded
   const strayKey = await call('/write/sales_invoice', {
     token: clerkToken, body: { op: 'create', doc: { customer: 'nope' } },
