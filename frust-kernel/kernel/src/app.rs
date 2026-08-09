@@ -2,7 +2,7 @@
 //!
 //! An App is a **versioned bundle**: DocTypes, client scripts, server scripts,
 //! route declarations, `.wasm` components, aggregate declarations (which ride
-//! inside their DocTypes), and a reserved slot for workflows.
+//! inside their DocTypes), workflows, notifications, and fixtures.
 //!
 //! Two properties this module exists to hold:
 //!
@@ -36,7 +36,7 @@ use frust_orm::{EngineCtx, MigrationOptions, MigrationReport, ResourceMigrator};
 pub const MANIFEST_VERSION: i64 = 1;
 
 /// Route names the lifecycle surface already owns under `/app/{app}/…`.
-pub const RESERVED_ROUTE_PATHS: [&str; 2] = ["enable", "disable"];
+pub const RESERVED_ROUTE_PATHS: [&str; 3] = ["enable", "disable", "export"];
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Manifest {
@@ -61,6 +61,9 @@ pub struct Manifest {
     /// The workflows this app installs.
     #[serde(default)]
     pub workflows: Vec<crate::workflow::WorkflowDef>,
+    /// Notification rules targeting DocTypes owned by this app.
+    #[serde(default)]
+    pub notifications: Vec<crate::mail::NotificationDef>,
     /// **What this app adds to DocTypes it does NOT own.**
     ///
     /// Kept separate from `doctypes` on purpose: `doctypes` means "I ship and
@@ -159,6 +162,8 @@ pub struct InstallPlan {
     pub routes: Vec<String>,
     /// Reserved-slot passthrough count.
     pub workflows: usize,
+    /// Notification rules that will be attached.
+    pub notifications: Vec<String>,
     /// App-owned records that will be installed or updated.
     pub fixtures: Vec<String>,
 }
@@ -435,6 +440,20 @@ impl Manifest {
                 }
             }
         }
+        for notification in &self.notifications {
+            if !owns(&notification.doctype) {
+                errs.push(format!(
+                    "notification '{}' watches '{}', which this bundle does not declare",
+                    notification.name, notification.doctype
+                ));
+            }
+            errs.extend(
+                notification
+                    .validate()
+                    .into_iter()
+                    .map(|problem| format!("notification '{}': {problem}", notification.name)),
+            );
+        }
         errs
     }
 
@@ -493,6 +512,7 @@ impl Manifest {
             server_scripts: self.server_scripts.iter().map(|s| s.doctype.clone()).collect(),
             routes: self.routes.iter().map(|r| format!("/app/{}/{}", self.name, r.path)).collect(),
             workflows: self.workflows.len(),
+            notifications: self.notifications.iter().map(|n| n.name.clone()).collect(),
             fixtures: self
                 .fixtures
                 .iter()
