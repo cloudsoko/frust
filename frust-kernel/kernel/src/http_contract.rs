@@ -92,9 +92,7 @@ fn policy_for(url: &str) -> Option<MethodPolicy> {
         | ["audit", _, _]
         | ["lag", _]
         | ["app"]
-        | ["app", _, "export"] => {
-            Some(GET)
-        }
+        | ["app", _, "export"] => Some(GET),
         // Polling consumes the in-process queue. It is GET for compatibility,
         // but HEAD must not drain it while throwing the representation away.
         ["events", _] => Some(STATEFUL_GET),
