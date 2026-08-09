@@ -8,8 +8,8 @@ surrealdb = "3.2.3"
 
 [legal]
 license = "AGPL-3.0-only"
-approved_candidate = "v0.1.0-rc.3"
-frust_desk_commit = "61b3a6453fc8a7113aed73ba4849859e5406ae03"
+approved_candidate = "v0.1.0"
+frust_desk_commit = "a997e6d04a13f2420f94991e4e7ca70195f06745"
 frust_ui_commit = "a80b84004880d20534c6313f326d874dffcf94be"
 topcoat_commit = "082303f1cf2b938883846c1ecef53901765810cb"
 
