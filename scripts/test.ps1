@@ -176,10 +176,10 @@ function Test-LanePolicy {
     Assert-UniqueValues "perfExclusiveTargets" $perfExclusive
     Assert-UniqueValues "liveLibraryPackages" $liveLibraries
     if ("frust-orm" -notin $liveLibraries) {
-        throw "frust-orm must remain in the live lane while its cfg(test) testkit calls 127.0.0.1:8899"
+        throw "frust-orm must remain in the live lane while its cfg(test) testkit requires a live database endpoint"
     }
     $ormTestkit = Get-Content -LiteralPath (Join-Path $KernelRoot "orm/src/testkit.rs") -Raw
-    if ($ormTestkit -notmatch '127\.0\.0\.1:8899') {
+    if ($ormTestkit -notmatch 'FRUST_DB_ENDPOINT') {
         throw "frust-orm testkit topology changed; reclassify its library target before running lanes"
     }
 
