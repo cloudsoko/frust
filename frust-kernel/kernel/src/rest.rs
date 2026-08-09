@@ -2903,6 +2903,19 @@ fn parse_write_doc(
                 .any(|field| field.fieldname == *fieldname && field.fieldtype == "Currency");
             let value = match (currency, raw) {
                 (true, serde_json::Value::String(decimal)) => Value::Decimal(decimal.clone()),
+                // Money is a decimal string. A JSON number with fraction digits
+                // is a float, and a float never becomes money — refuse it here
+                // rather than let it coerce through the decimal column. Integers
+                // (no fraction) coerce cleanly and fall through.
+                (true, serde_json::Value::Number(n))
+                    if n.as_i64().is_none() && n.as_u64().is_none() =>
+                {
+                    return Err(BrokerError::InvalidValue {
+                        detail: format!(
+                            "money field '{fieldname}' must be a decimal string, not a float"
+                        ),
+                    });
+                }
                 _ => parse_value(raw)?,
             };
             Ok((fieldname.clone(), value))

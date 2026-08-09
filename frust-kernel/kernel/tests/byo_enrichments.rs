@@ -137,6 +137,10 @@ fn plain_string_id_filter_returns_the_same_row_as_typed_record_filter() {
         serde_json::json!({ "doc": { "customer": "Filter Fidelity", "total": "7.25" } }),
     );
     let id = created["record"].as_str().expect("record id");
+    // The bare key (no `doctype:` prefix) exercises the coercion that scopes an
+    // unqualified id to the route's DocType; a fully-qualified string would skip
+    // that branch entirely.
+    let bare_key = id.split_once(':').map(|(_, key)| key).expect("bare key");
 
     let typed = call(
         &rest,
@@ -149,7 +153,7 @@ fn plain_string_id_filter_returns_the_same_row_as_typed_record_filter() {
         &rest,
         "/read/invoice",
         serde_json::json!({
-            "filter": { "path": "id", "op": "eq", "value": id }
+            "filter": { "path": "id", "op": "eq", "value": bare_key }
         }),
     );
 
@@ -182,6 +186,18 @@ fn bare_decimal_currency_write_persists_the_exact_string() {
         &manager(),
     );
     assert!(matches!(invalid, Err(BrokerError::InvalidValue { .. })));
+
+    // A fractional JSON NUMBER is a float, and money never coerces from a float:
+    // the write is refused, never silently rounded into a Currency field.
+    let fractional = rest.route_for_test(
+        "/write/invoice",
+        &serde_json::json!({ "doc": { "customer": "Float Money", "total": 1234.56789 } }),
+        &manager(),
+    );
+    assert!(
+        matches!(fractional, Err(BrokerError::InvalidValue { .. })),
+        "fractional JSON number must be refused on a money field, got {fractional:?}"
+    );
 }
 
 #[test]

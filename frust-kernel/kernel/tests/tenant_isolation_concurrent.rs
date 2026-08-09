@@ -197,7 +197,7 @@ fn http_write(url: &str, token: &str, title: &str) -> u16 {
         .post(format!("{url}/write/purchase_order"))
         .header("Authorization", &format!("Bearer {token}"))
         .send(
-            serde_json::json!({ "doc": { "title": title, "total": 10.0 } }).to_string(),
+            serde_json::json!({ "doc": { "title": title, "total": "10.00" } }).to_string(),
         )
         .expect("write")
         .status()

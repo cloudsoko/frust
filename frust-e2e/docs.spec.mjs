@@ -239,10 +239,12 @@ async function main() {
   const typedId = await call('/read/sales_invoice', {
     token, body: { filter: { path: 'id', op: 'eq', value: { kind: 'record', v: rec?.id } } },
   });
+  // The bare key (no `doctype:` prefix) exercises the coercion that scopes an
+  // unqualified id to the route's DocType; a qualified string would skip it.
   const plainId = await call('/read/sales_invoice', {
-    token, body: { filter: { path: 'id', op: 'eq', value: rec?.id } },
+    token, body: { filter: { path: 'id', op: 'eq', value: key } },
   });
-  check('plain-string id filter returns the same row as the typed record filter',
+  check('a bare-key id filter returns the same row as the typed record filter',
     typedId.status === 200 && plainId.status === 200 &&
     typedId.json?.rows?.length === 1 &&
     JSON.stringify(plainId.json?.rows) === JSON.stringify(typedId.json?.rows),

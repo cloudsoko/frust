@@ -163,7 +163,7 @@ that predates labels gets a display fallback derived from `fieldname`. The
 additive `workflow` slot is the attached workflow's complete `states`,
 `transitions`, and `state_rules`, or `null` when the DocType is unmanaged.
 
-```
+```text
 → GET /meta/sales_invoice
 ← 200 {"doctype": {
      "name": "sales_invoice",
@@ -201,7 +201,7 @@ The `id` field is a record reference. Its filter value may use either the
 explicit typed form or the record id string returned by REST; both select the
 same row. A bare key is also scoped to the route's DocType.
 
-```
+```text
 → POST /read/sales_invoice
   {"filter":{"path":"id","op":"eq","value":"sales_invoice:uc1ebw…"}}
 ← 200 {"rows":[{"id":"sales_invoice:uc1ebw…", …}]}
@@ -214,7 +214,7 @@ same row. A bare key is also scoped to the route's DocType.
 
 ### `POST /write/{doctype}` — session
 
-```
+```text
 → POST /write/sales_invoice   {"doc": {"customer": "…", "total": "25.125"}}
 ← 200 {"action": "created", "record": "sales_invoice:…",
        "created": { "id": "sales_invoice:…", "total": "25.125",
@@ -363,7 +363,7 @@ is `429`, which is a capacity answer, not an error: poll instead.
 | `POST /app/update` | publish a new version; destructive changes need `{"acknowledge": true}` |
 | `POST /app/{name}/disable` | make the app unavailable; its routes become `404` |
 | `POST /app/{name}/enable` | restore it — restoration, not reconstruction |
-| `GET /app/{name}/export` | export the app's live manifest; accepts `?include_unowned=true|false` |
+| `GET /app/{name}/export` | export the app's live manifest; accepts `?include_unowned=true\|false` |
 | `POST /app/{name}/uninstall` | metadata detaches, **data remains** |
 
 ### `POST|GET /app/{app}/{path}` — session
