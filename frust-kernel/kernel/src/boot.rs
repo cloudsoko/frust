@@ -246,6 +246,7 @@ pub fn base_doctypes() -> Vec<DocTypeDef> {
     let field = |fieldname: &str, fieldtype: &str, required: bool, options: &[&str]| FieldDef {
         fieldname: fieldname.into(),
         fieldtype: fieldtype.into(),
+        label: String::new(),
         required,
         options: options.iter().map(|s| (*s).to_string()).collect(),
         child_storage: None,

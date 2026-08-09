@@ -521,6 +521,26 @@ impl Rest {
                     &caller.role,
                     &doctypes,
                 ));
+                if let Some(fields) = rec.get_mut("fields").and_then(serde_json::Value::as_array_mut)
+                {
+                    for field in fields {
+                        let stored = field.get("label").and_then(serde_json::Value::as_str);
+                        if stored.is_none_or(str::is_empty) {
+                            let fieldname = field
+                                .get("fieldname")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or_default();
+                            field["label"] = serde_json::json!(field_label(fieldname));
+                        }
+                    }
+                }
+                rec["workflow"] = serde_json::to_value(crate::sync::load_workflow(
+                    &ctx.broker.db,
+                    doctype,
+                )?)
+                .map_err(|e| BrokerError::Db {
+                    detail: format!("serialize workflow metadata: {e}"),
+                })?;
                 Ok(serde_json::json!({ "doctype": rec }))
             }
 
@@ -904,7 +924,7 @@ impl Rest {
             }
 
             ["read", doctype] => {
-                let filter = parse_filter(json.get("filter"))?;
+                let filter = parse_read_filter(json.get("filter"), doctype)?;
                 let fields = parse_fields(json.get("fields"))?;
                 let opts = parse_opts(&json)?;
                 let rows = ctx.broker.db_read(caller, doctype, filter.as_ref(), &fields, &opts)?;
@@ -936,7 +956,7 @@ impl Rest {
             ["single", doctype, "write"] => {
                 self.require_single(ctx, doctype)?;
                 known_keys(&json, &["doc"])?;
-                let doc = parse_doc(json.get("doc"))?;
+                let doc = parse_write_doc(&ctx.broker.db, doctype, json.get("doc"))?;
                 let key = crate::sync::single_record_key(doctype);
                 let out = ctx.broker.db_write(
                     caller,
@@ -962,7 +982,7 @@ impl Rest {
                 // silent-wrong class: the caller's stated intent and what
                 // happened disagreed, and nothing said so.
                 known_keys(&json, &["doc", "record"])?;
-                let doc = parse_doc(json.get("doc"))?;
+                let doc = parse_write_doc(&ctx.broker.db, doctype, json.get("doc"))?;
                 let is_single = self.is_single(ctx, doctype)?;
                 let record = json.get("record").and_then(|r| r.as_str());
                 if is_single {
@@ -2858,6 +2878,51 @@ fn parse_doc(v: Option<&serde_json::Value>) -> Result<Vec<(String, Value)>, Brok
     o.iter().map(|(k, v)| Ok((k.clone(), parse_value(v)?))).collect()
 }
 
+/// Parse a REST write with the DocType's field envelope in hand. Currency is
+/// the one inference that needs metadata: a JSON string remains text for every
+/// other field, while a Currency string crosses the broker as an exact decimal.
+fn parse_write_doc(
+    db: &crate::db::Db,
+    doctype: &str,
+    v: Option<&serde_json::Value>,
+) -> Result<Vec<(String, Value)>, BrokerError> {
+    let Some(serde_json::Value::Object(doc)) = v else {
+        return Err(BrokerError::InvalidValue { detail: "doc/payload must be an object".into() });
+    };
+    let doctypes = crate::sync::load_doctypes(db)?;
+    let meta = doctypes
+        .iter()
+        .find(|candidate| candidate.name == doctype)
+        .ok_or_else(|| BrokerError::UnknownDoctype { name: doctype.to_string() })?;
+
+    doc.iter()
+        .map(|(fieldname, raw)| {
+            let currency = meta
+                .fields
+                .iter()
+                .any(|field| field.fieldname == *fieldname && field.fieldtype == "Currency");
+            let value = match (currency, raw) {
+                (true, serde_json::Value::String(decimal)) => Value::Decimal(decimal.clone()),
+                // Money is a decimal string. A JSON number with fraction digits
+                // is a float, and a float never becomes money — refuse it here
+                // rather than let it coerce through the decimal column. Integers
+                // (no fraction) coerce cleanly and fall through.
+                (true, serde_json::Value::Number(n))
+                    if n.as_i64().is_none() && n.as_u64().is_none() =>
+                {
+                    return Err(BrokerError::InvalidValue {
+                        detail: format!(
+                            "money field '{fieldname}' must be a decimal string, not a float"
+                        ),
+                    });
+                }
+                _ => parse_value(raw)?,
+            };
+            Ok((fieldname.clone(), value))
+        })
+        .collect()
+}
+
 fn parse_path(v: &serde_json::Value) -> Result<Vec<PathSegment>, BrokerError> {
     // ["field", "link.hop"] -> segments; a plain string is a single field
     match v {
@@ -2890,19 +2955,38 @@ fn parse_fields(v: Option<&serde_json::Value>) -> Result<Vec<Vec<PathSegment>>, 
 
 fn parse_filter(v: Option<&serde_json::Value>) -> Result<Option<Filter>, BrokerError> {
     let Some(v) = v.filter(|v| !v.is_null()) else { return Ok(None) };
-    Ok(Some(parse_filter_inner(v)?))
+    Ok(Some(parse_filter_inner(v, None)?))
 }
 
-fn parse_filter_inner(v: &serde_json::Value) -> Result<Filter, BrokerError> {
+fn parse_read_filter(
+    v: Option<&serde_json::Value>,
+    doctype: &str,
+) -> Result<Option<Filter>, BrokerError> {
+    let Some(v) = v.filter(|v| !v.is_null()) else { return Ok(None) };
+    Ok(Some(parse_filter_inner(v, Some(doctype))?))
+}
+
+fn parse_filter_inner(
+    v: &serde_json::Value,
+    read_doctype: Option<&str>,
+) -> Result<Filter, BrokerError> {
     let obj = v.as_object().ok_or_else(|| BrokerError::InvalidValue { detail: "filter must be object".into() })?;
     if let Some(arr) = obj.get("and").and_then(|a| a.as_array()) {
-        return Ok(Filter::And(arr.iter().map(parse_filter_inner).collect::<Result<_, _>>()?));
+        return Ok(Filter::And(
+            arr.iter()
+                .map(|item| parse_filter_inner(item, read_doctype))
+                .collect::<Result<_, _>>()?,
+        ));
     }
     if let Some(arr) = obj.get("or").and_then(|a| a.as_array()) {
-        return Ok(Filter::Or(arr.iter().map(parse_filter_inner).collect::<Result<_, _>>()?));
+        return Ok(Filter::Or(
+            arr.iter()
+                .map(|item| parse_filter_inner(item, read_doctype))
+                .collect::<Result<_, _>>()?,
+        ));
     }
     if let Some(inner) = obj.get("not") {
-        return Ok(Filter::Not(Box::new(parse_filter_inner(inner)?)));
+        return Ok(Filter::Not(Box::new(parse_filter_inner(inner, read_doctype)?)));
     }
     // leaf: { path, op, value }
     let path = parse_path(obj.get("path").ok_or_else(|| BrokerError::InvalidValue { detail: "filter leaf needs path".into() })?)?;
@@ -2917,8 +3001,32 @@ fn parse_filter_inner(v: &serde_json::Value) -> Result<Filter, BrokerError> {
         "contains" => CmpOp::Contains,
         other => return Err(BrokerError::InvalidValue { detail: format!("unknown op: {other}") }),
     };
-    let value = parse_value(obj.get("value").unwrap_or(&serde_json::Value::Null))?;
+    let raw = obj.get("value").unwrap_or(&serde_json::Value::Null);
+    let value = match (read_doctype, path.as_slice(), raw) {
+        (Some(doctype), [PathSegment::Field(field)], serde_json::Value::String(id))
+            if field == "id" =>
+        {
+            let record = if id.contains(':') { id.clone() } else { format!("{doctype}:{id}") };
+            Value::RecordId(record)
+        }
+        _ => parse_value(raw)?,
+    };
     Ok(Filter::Cmp { path, op, value })
+}
+
+fn field_label(fieldname: &str) -> String {
+    fieldname
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn parse_opts(json: &serde_json::Value) -> Result<ReadOpts, BrokerError> {

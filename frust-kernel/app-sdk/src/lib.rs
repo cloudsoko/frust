@@ -197,6 +197,7 @@ pub fn field(name: impl Into<String>, fieldtype: impl Into<String>) -> FieldDef 
     FieldDef {
         fieldname: name.into(),
         fieldtype: fieldtype.into(),
+        label: String::new(),
         required: false,
         options: Vec::new(),
         child_storage: None,

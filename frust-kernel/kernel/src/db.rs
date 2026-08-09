@@ -10,6 +10,8 @@ use std::sync::{Mutex, OnceLock};
 use crate::contract::BrokerError;
 use crate::tenancy::ResolvedTenant;
 
+const DEVELOPMENT_DB_ENDPOINT: &str = "http://127.0.0.1:8899";
+
 /// **How to reach the store — never *which* store.**
 ///
 /// This struct carries no `ns`/`db`; placement lives in [`ResolvedTenant`].
@@ -34,7 +36,7 @@ impl ConnConfig {
     fn from_env(read: impl Fn(&str) -> Option<String>) -> Self {
         Self {
             endpoint: read("FRUST_DB_ENDPOINT")
-                .unwrap_or_else(|| "http://127.0.0.1:8899".into()),
+                .unwrap_or_else(|| DEVELOPMENT_DB_ENDPOINT.into()),
             root_user: read("FRUST_DB_ROOT_USER").unwrap_or_else(|| "root".into()),
             root_pass: read("FRUST_DB_ROOT_PASS").unwrap_or_else(|| "root".into()),
             access: read("FRUST_DB_ACCESS").unwrap_or_else(|| "account".into()),
@@ -44,13 +46,13 @@ impl ConnConfig {
 
 #[cfg(test)]
 mod conn_config_tests {
-    use super::ConnConfig;
+    use super::{ConnConfig, DEVELOPMENT_DB_ENDPOINT};
 
     #[test]
     fn connection_defaults_preserve_the_development_contract() {
         let config = ConnConfig::from_env(|_| None);
 
-        assert_eq!(config.endpoint, "http://127.0.0.1:8899");
+        assert_eq!(config.endpoint, DEVELOPMENT_DB_ENDPOINT);
         assert_eq!(config.root_user, "root");
         assert_eq!(config.root_pass, "root");
         assert_eq!(config.access, "account");

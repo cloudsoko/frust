@@ -2,7 +2,7 @@
 //! provisions a fresh, uniquely-named database on the local surreal.exe, so
 //! tests parallelize without sharing state.
 //!
-//! Requires: surreal.exe on 127.0.0.1:8899 (root/root), ns `frust`.
+//! Requires: `FRUST_DB_ENDPOINT` pointing at SurrealDB (root/root), ns `frust`.
 
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -11,9 +11,13 @@ use std::sync::{
 
 use crate::resource::{Conn, StmtResult};
 
-const ENDPOINT: &str = "http://127.0.0.1:8899";
 const NS: &str = "frust";
 const AUTH: &str = "Basic cm9vdDpyb290"; // root:root
+
+fn endpoint() -> anyhow::Result<String> {
+    std::env::var("FRUST_DB_ENDPOINT")
+        .map_err(|_| anyhow::anyhow!("FRUST_DB_ENDPOINT is required for live ORM tests"))
+}
 
 // Namespace-level database DDL conflicts even when two tests create different
 // database names. Keep provisioning and teardown serial within this test binary.
@@ -51,7 +55,7 @@ impl Drop for TestDb {
 
 impl TestDb {
     fn post(&self, query: &str, with_db: bool) -> anyhow::Result<Vec<StmtResult>> {
-        let mut req = ureq::post(format!("{ENDPOINT}/sql"))
+        let mut req = ureq::post(format!("{}/sql", endpoint()?))
             .header("Authorization", AUTH)
             .header("Accept", "application/json")
             .header("surreal-ns", NS);
@@ -93,7 +97,7 @@ pub fn mem_db() -> TestDb {
             &format!("REMOVE DATABASE IF EXISTS {db_name}; DEFINE DATABASE {db_name};"),
             false,
         )
-        .expect("provision test database (is surreal.exe on :8899 running?)");
+        .expect("provision test database at FRUST_DB_ENDPOINT");
     let failure = statements
         .iter()
         .find(|statement| !statement.ok)

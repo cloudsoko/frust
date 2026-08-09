@@ -71,10 +71,10 @@ the app that raised it.
 ### Conventions a client must know
 
 - **Money is a decimal string, never a float.** `"37.50"`, not `37.5`. The
-  kernel stores decimals; JSON numbers with fraction digits are floats and are
-  refused on money fields. Reads return money as a string. SurrealDB strips
-  trailing zeros on write, so `"25.00"` reads back as `"25"` — pad for display,
-  never round.
+  REST write door uses the DocType metadata to coerce that string to an exact
+  decimal; JSON numbers with fraction digits are floats and are refused on
+  money fields. Reads return money as a string. SurrealDB strips trailing zeros
+  on write, so `"25.00"` reads back as `"25"` — pad for display, never round.
 - **Typed values**: any field value may be written in the explicit form
   `{"kind":"decimal","v":"19.99"}` when inference is not enough. Inference
   handles strings, bools, integers, nulls, objects and arrays.
@@ -158,8 +158,28 @@ Every DocType the caller may see. `← 200 {"doctypes": [...]}`
 
 ### `GET /meta/{doctype}` — session
 
-One DocType's metadata: fields, types, options, client rules, workflow slot.
-`← 200 {"doctype": {...}}`
+One DocType's metadata. Every field includes its human-facing `label`; metadata
+that predates labels gets a display fallback derived from `fieldname`. The
+additive `workflow` slot is the attached workflow's complete `states`,
+`transitions`, and `state_rules`, or `null` when the DocType is unmanaged.
+
+```text
+→ GET /meta/sales_invoice
+← 200 {"doctype": {
+     "name": "sales_invoice",
+     "fields": [
+       {"fieldname":"customer", "fieldtype":"Data", "label":"Customer"},
+       {"fieldname":"total", "fieldtype":"Currency", "label":"Total"}
+     ],
+     "workflow": {
+       "name":"invoice_approval",
+       "states":[{"name":"Draft","docstatus":0}, …],
+       "transitions":[{"from":"Draft","to":"Submitted for Approval",
+                       "role":"clerk","action":"Submit"}],
+       "state_rules":[]
+     }
+   }}
+```
 
 ### `POST /read/{doctype}` — session
 
@@ -177,12 +197,28 @@ SurrealQL in any position is a parse error, not an escape. Row permissions are
 applied by the database under the caller's own session, so a filter cannot
 widen what the caller may see.
 
+The `id` field is a record reference. Its filter value may use either the
+explicit typed form or the record id string returned by REST; both select the
+same row. A bare key is also scoped to the route's DocType.
+
+```text
+→ POST /read/sales_invoice
+  {"filter":{"path":"id","op":"eq","value":"sales_invoice:uc1ebw…"}}
+← 200 {"rows":[{"id":"sales_invoice:uc1ebw…", …}]}
+
+→ POST /read/sales_invoice
+  {"filter":{"path":"id","op":"eq",
+             "value":{"kind":"record","v":"sales_invoice:uc1ebw…"}}}
+← 200 {"rows":[{"id":"sales_invoice:uc1ebw…", …}]}
+```
+
 ### `POST /write/{doctype}` — session
 
-```
-→ POST /write/sales_invoice   {"doc": {"customer": "…", "total": 25.00}}
+```text
+→ POST /write/sales_invoice   {"doc": {"customer": "…", "total": "25.125"}}
 ← 200 {"action": "created", "record": "sales_invoice:…",
-       "created": { "id": "sales_invoice:…", "docstatus": 0, … }}
+       "created": { "id": "sales_invoice:…", "total": "25.125",
+                    "docstatus": 0, … }}
 
 → POST /write/sales_invoice   {"record": "uc1ebw…", "doc": {"customer": "…"}}
 ← 200 {"action": "updated", "record": "sales_invoice:uc1ebw…", "created": { … }}
@@ -327,6 +363,7 @@ is `429`, which is a capacity answer, not an error: poll instead.
 | `POST /app/update` | publish a new version; destructive changes need `{"acknowledge": true}` |
 | `POST /app/{name}/disable` | make the app unavailable; its routes become `404` |
 | `POST /app/{name}/enable` | restore it — restoration, not reconstruction |
+| `GET /app/{name}/export` | export the app's live manifest; accepts `?include_unowned=true\|false` |
 | `POST /app/{name}/uninstall` | metadata detaches, **data remains** |
 
 ### `POST|GET /app/{app}/{path}` — session

@@ -45,7 +45,9 @@ curl -s $KERNEL/meta -H "Authorization: Bearer $TOKEN"
 # {"doctypes":[ … ]}
 
 curl -s $KERNEL/meta/sales_invoice -H "Authorization: Bearer $TOKEN"
-# {"doctype":{ "fields":[{"fieldname":"customer","fieldtype":"Data"}, … ] }}
+# {"doctype":{ "fields":[{"fieldname":"customer","fieldtype":"Data",
+#                           "label":"Customer"}, … ],
+#                "workflow":{"states":[…],"transitions":[…], …} }}
 ```
 
 Render your form from `fields`. `fieldtype` tells you the input; `options`
@@ -69,6 +71,13 @@ Filters are a **structured tree**, never query text:
 {"filter": {"path": "customer", "op": "eq", "value": "Northwind Traders"}}
 ```
 
+For a known row, `id` accepts the plain record string REST returned. The
+explicit `{"kind":"record","v":"sales_invoice:…"}` form remains equivalent:
+
+```json
+{"filter":{"path":"id","op":"eq","value":"sales_invoice:uc1…"}}
+```
+
 You cannot write SurrealQL here; it is not an escape hatch that is blocked, it
 is a shape that has no place to put one. Row permissions are applied by the
 database under *your* session, so two users running the same read get different
@@ -79,15 +88,17 @@ rows — correctly, without your client filtering anything.
 ```bash
 curl -s -X POST $KERNEL/write/sales_invoice \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"doc":{"customer":"Northwind Traders","total":25.00,
-              "lines":[{"item":"Sprocket","qty":"2","rate":"12.50","amount":"25.00"}]}}'
+  -d '{"doc":{"customer":"Northwind Traders","total":"25.125",
+              "lines":[{"item":"Sprocket","qty":"1","rate":"25.125","amount":"25.125"}]}}'
 # {"created":{"id":"sales_invoice:uc1…","docstatus":0, …}}
 ```
 
 To update, add `"record": "<key>"` — the presence of `record` is what makes it
 an update; there is no `op` field. Updates are partial.
 
-**Money.** Send and expect decimal *strings* on money fields. `"25.00"` reads
+**Money.** Send and expect decimal *strings* on money fields. Bare strings are
+coerced from the field's `Currency` metadata at the REST door; the explicit
+`{"kind":"decimal","v":"25.00"}` form remains supported. `"25.00"` reads
 back as `"25"` — the store drops trailing zeros — so pad to scale for display
 and never round. A value with *more* places than the field's scale is a defect
 to surface, not to round away.

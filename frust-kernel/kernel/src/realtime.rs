@@ -56,7 +56,7 @@ struct Subscription {
 }
 
 pub struct Realtime {
-    /// surreal WS host:port (e.g. "127.0.0.1:8899").
+    /// SurrealDB WebSocket host and port (for example, "database.internal:8000").
     addr: String,
     subs: Mutex<HashMap<String, Arc<Subscription>>>,
 }

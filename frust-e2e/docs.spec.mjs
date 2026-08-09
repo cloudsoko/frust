@@ -179,6 +179,16 @@ async function main() {
   const metaOne = await call('/meta/sales_invoice', { token });
   check('GET /meta/{doctype} -> 200 {doctype:{…}}',
     metaOne.status === 200 && !!metaOne.json?.doctype, JSON.stringify(metaOne.json).slice(0, 120));
+  const customerMeta = metaOne.json?.doctype?.fields?.find(f => f.fieldname === 'customer');
+  check('/meta/{doctype} exposes field label text by value',
+    customerMeta?.label === 'Customer', JSON.stringify(customerMeta));
+  check('/meta/{doctype} exposes the attached workflow states and transitions by value',
+    metaOne.json?.doctype?.workflow?.name === 'invoice_approval' &&
+    metaOne.json?.doctype?.workflow?.states?.some(s => s.name === 'Draft' && s.docstatus === 0) &&
+    metaOne.json?.doctype?.workflow?.transitions?.some(t =>
+      t.from === 'Draft' && t.to === 'Submitted for Approval' &&
+      t.role === 'clerk' && t.action === 'Submit'),
+    JSON.stringify(metaOne.json?.doctype?.workflow).slice(0, 240));
 
   const read = await call('/read/sales_invoice', {
     token,
@@ -211,8 +221,8 @@ async function main() {
   console.log('\n== write, money, and hooks ==');
   const created = await call('/write/sales_invoice', {
     token: clerkToken,
-    body: { doc: { customer: 'Docs Harness', total: 25.00,
-                   lines: [{ item: 'Sprocket', qty: '2', rate: '12.50', amount: '25.00' }] } },
+    body: { doc: { customer: 'Docs Harness', total: '25.125',
+                   lines: [{ item: 'Sprocket', qty: '1', rate: '25.125', amount: '25.125' }] } },
   });
   const rec = created.json?.created;
   check('POST /write/{doctype} create -> 200 {action,record,created}',
@@ -221,9 +231,25 @@ async function main() {
     JSON.stringify(created.json).slice(0, 220));
   check('money reads back as a STRING, not a float',
     typeof rec?.total === 'string', `total=${JSON.stringify(rec?.total)} (${typeof rec?.total})`);
+  check('a bare decimal Currency write persists the exact string',
+    rec?.total === '25.125', `total=${JSON.stringify(rec?.total)}`);
   check('a new document starts at docstatus 0', rec?.docstatus === 0, `docstatus=${rec?.docstatus}`);
 
   const key = rec?.id?.split(':')[1];
+  const typedId = await call('/read/sales_invoice', {
+    token, body: { filter: { path: 'id', op: 'eq', value: { kind: 'record', v: rec?.id } } },
+  });
+  // The bare key (no `doctype:` prefix) exercises the coercion that scopes an
+  // unqualified id to the route's DocType; a qualified string would skip it.
+  const plainId = await call('/read/sales_invoice', {
+    token, body: { filter: { path: 'id', op: 'eq', value: key } },
+  });
+  check('a bare-key id filter returns the same row as the typed record filter',
+    typedId.status === 200 && plainId.status === 200 &&
+    typedId.json?.rows?.length === 1 &&
+    JSON.stringify(plainId.json?.rows) === JSON.stringify(typedId.json?.rows),
+    `${JSON.stringify(plainId.json)} vs ${JSON.stringify(typedId.json)}`);
+
   const updated = await call('/write/sales_invoice', {
     token: clerkToken, body: { record: key, doc: { customer: 'Docs Harness II' } },
   });
@@ -310,7 +336,7 @@ async function main() {
     agg.status === 200 && Array.isArray(agg.json?.rows), JSON.stringify(agg.json).slice(0, 160));
 
   console.log('\n== realtime ==');
-  const sub = await call('/subscribe/sales_invoice', { token });
+  const sub = await call('/subscribe/sales_invoice', { token, method: 'POST' });
   check('POST /subscribe -> 200 {sub, budget}',
     sub.status === 200 && !!sub.json?.sub && typeof sub.json?.budget === 'number',
     JSON.stringify(sub.json));
@@ -318,7 +344,7 @@ async function main() {
   check('GET /events/{sub} -> 200 {alive, events:[…]}',
     events.status === 200 && events.json?.alive === true && Array.isArray(events.json?.events),
     JSON.stringify(events.json).slice(0, 160));
-  const unsub = await call(`/unsubscribe/${sub.json?.sub}`, { token });
+  const unsub = await call(`/unsubscribe/${sub.json?.sub}`, { token, method: 'POST' });
   check('POST /unsubscribe -> 200 {ok:true}', unsub.status === 200 && unsub.json?.ok === true,
     JSON.stringify(unsub.json));
 
