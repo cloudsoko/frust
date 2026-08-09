@@ -208,6 +208,7 @@ pub fn error_code(err: &crate::contract::BrokerError) -> String {
             "FRUST:E_FIXTURE:UNOWNED_ROW" => "E_FIXTURE_UNOWNED_ROW",
             _ => "E_FIXTURE_REFUSED",
         },
+        E::DeleteRefused { .. } => "E_DELETE_REFUSED",
         E::HookCycle { .. } => "E_HOOK_CYCLE",
         E::HookDepthExceeded { .. } => "E_HOOK_DEPTH",
         E::HookRejected { .. } => "E_HOOK_REJECTED",

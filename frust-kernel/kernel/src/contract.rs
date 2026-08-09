@@ -186,6 +186,10 @@ pub enum BrokerError {
         apps: Vec<String>,
         detail: String,
     },
+    /// A document lifecycle invariant refused deletion. `code` is the stable
+    /// machine-readable reason supplied by the database event that owns the
+    /// invariant.
+    DeleteRefused { code: String, detail: String },
     HookCycle { record: String, hook: String },
     HookDepthExceeded { max: usize },
     HookRejected { stage: String, message: String },

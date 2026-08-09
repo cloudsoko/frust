@@ -17,6 +17,7 @@
 //!   POST /logout             (bearer)
 //!   POST /read/{doctype}     body: { filter?, fields?, limit?, start?, order? }
 //!   POST /write/{doctype}    body: { doc: {..}, record? }
+//!   DELETE /doc/{doctype}/{key}
 //!   POST /aggregate/{doctype} body: { filter?, group_by?, metrics: [...] }
 //!   POST /enqueue/{kind}     body: { payload: {..} }
 //!   GET  /meta               all doctype metadata (any session)
@@ -1010,6 +1011,12 @@ impl Rest {
                     "action": if op == WriteOp::Create { "created" } else { "updated" },
                     "record": id,
                 }))
+            }
+
+            ["doc", doctype, key] => {
+                known_keys(&json, &[])?;
+                let id = ctx.broker.db_delete(caller, doctype, key)?;
+                Ok(serde_json::json!({ "action": "deleted", "id": id }))
             }
 
             ["aggregate", doctype] => {
@@ -2811,6 +2818,7 @@ fn status_for(e: &BrokerError) -> u16 {
         BrokerError::IdentityUnresolved => 403,
         BrokerError::UnknownDoctype { .. } => 404,
         BrokerError::FixtureRefused { .. } => 409,
+        BrokerError::DeleteRefused { .. } => 422,
         // a refused transition is a rule violation, not a bad request
         BrokerError::WorkflowDenied { .. } => 422,
         BrokerError::HookRejected { .. } | BrokerError::HookCycle { .. } | BrokerError::HookDepthExceeded { .. } => 422,

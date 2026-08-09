@@ -632,6 +632,56 @@ impl Broker {
         })
     }
 
+    /// db-delete: one caller-session statement. The compiled table clause
+    /// decides who may delete; database events decide which rows may be
+    /// deleted. The broker only preserves their typed outcomes.
+    pub fn db_delete(
+        &self,
+        caller: &Caller,
+        doctype: &str,
+        record: &str,
+    ) -> Result<serde_json::Value, BrokerError> {
+        self.instrument("db_delete", doctype, || {
+            let meta = self.load_doctype(doctype)?;
+            let rid = surql::render_value(&Value::RecordId(format!("{}:{record}", meta.name)))?;
+            let out = match self.db.sql_as(
+                &caller.user,
+                &caller.pass,
+                &format!("DELETE {rid} RETURN BEFORE;"),
+            ) {
+                Err(BrokerError::Db { detail })
+                    if detail.contains(crate::sync::DOCSTATUS_DELETE_REFUSAL) =>
+                {
+                    return Err(BrokerError::DeleteRefused {
+                        code: crate::sync::DOCSTATUS_DELETE_REFUSAL.into(),
+                        detail,
+                    });
+                }
+                Err(BrokerError::Db { detail })
+                    if detail.contains(crate::sync::SINGLE_DELETE_REFUSAL) =>
+                {
+                    return Err(BrokerError::DeleteRefused {
+                        code: crate::sync::SINGLE_DELETE_REFUSAL.into(),
+                        detail,
+                    });
+                }
+                other => other?,
+            };
+            let Some(row) = out.as_array().and_then(|rows| rows.first()) else {
+                return Err(BrokerError::PermissionDenied {
+                    detail: format!(
+                        "E_DELETE_NO_ROWS: delete of {}:{record} removed nothing — the record does not exist, \
+                         or the compiled permissions do not allow you to delete it",
+                        meta.name
+                    ),
+                });
+            };
+            row.get("id").cloned().ok_or_else(|| BrokerError::Db {
+                detail: format!("delete of {}:{record} returned no record id", meta.name),
+            })
+        })
+    }
+
     /// Take a workflow action on a document.
     ///
     /// **The kernel judges, then writes.** The judgement is ordinary Rust in

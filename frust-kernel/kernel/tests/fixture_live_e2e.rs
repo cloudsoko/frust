@@ -1,8 +1,9 @@
 //! Fixture lifecycle proof through a real `frust serve` process and REST.
 //!
-//! The process installs and reads the record, accepts a normal user write,
-//! then refuses the app update from the already-running binary. No lifecycle
-//! step recompiles or bypasses the HTTP/session path.
+//! The process installs and reads the record, deletes it through the document
+//! door, refuses the next app update as a shipped-state conflict, then re-ships
+//! it only after acknowledgment. No lifecycle step recompiles or bypasses the
+//! HTTP/session path.
 
 use std::process::{Child, Command, Stdio};
 
@@ -47,6 +48,7 @@ fn post(
 ) -> (u16, serde_json::Value) {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
+        .timeout_global(Some(std::time::Duration::from_secs(120)))
         .build()
         .into();
     let mut request = agent.post(format!("{base}{path}"));
@@ -54,6 +56,25 @@ fn post(
         request = request.header("Authorization", &format!("Bearer {token}"));
     }
     let mut response = request.send(body.to_string()).expect("REST request");
+    let status = response.status().as_u16();
+    let json = response
+        .body_mut()
+        .read_json()
+        .unwrap_or_else(|_| serde_json::json!({}));
+    (status, json)
+}
+
+fn delete(base: &str, path: &str, token: &str) -> (u16, serde_json::Value) {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(std::time::Duration::from_secs(120)))
+        .build()
+        .into();
+    let mut response = agent
+        .delete(format!("{base}{path}"))
+        .header("Authorization", &format!("Bearer {token}"))
+        .call()
+        .expect("REST delete");
     let status = response.status().as_u16();
     let json = response
         .body_mut()
@@ -79,7 +100,7 @@ fn setup_database(name: &str) -> Db {
 }
 
 #[test]
-fn serve_installs_visible_fixtures_and_refuses_a_user_modified_update_over_rest() {
+fn deleting_an_app_fixture_is_user_modified_until_acknowledged_reship() {
     let database = format!("fixture_serve_{}", std::process::id());
     let db = setup_database(&database);
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve port");
@@ -100,16 +121,19 @@ fn serve_installs_visible_fixtures_and_refuses_a_user_modified_update_over_rest(
         .expect("start frust serve");
     let _kernel = ServedKernel(child);
 
-    for _ in 0..200 {
-        if ureq::get(format!("{base}/health")).call().is_ok() {
+    let health_agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(2)))
+        .build()
+        .into();
+    let mut ready = false;
+    for _ in 0..1200 {
+        if health_agent.get(format!("{base}/health")).call().is_ok() {
+            ready = true;
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    assert!(
-        ureq::get(format!("{base}/health")).call().is_ok(),
-        "serve did not become ready"
-    );
+    assert!(ready, "serve did not become ready");
 
     let (status, login) = post(
         &base,
@@ -140,19 +164,18 @@ fn serve_installs_visible_fixtures_and_refuses_a_user_modified_update_over_rest(
         .expect("fixture visible through REST");
     assert_eq!(row["label"], serde_json::json!("Kenya"));
 
-    let (status, edited) = post(
-        &base,
-        "/write/geo_country",
-        Some(&token),
-        serde_json::json!({ "record": "kenya", "doc": { "label": "Local Name" } }),
-    );
-    assert_eq!(status, 200, "user edit: {edited}");
-    let stored = db
-        .sql_root("SELECT label FROM geo_country:kenya;")
-        .expect("stored row");
+    let (status, deleted) = delete(&base, "/doc/geo_country/kenya", &token);
+    assert_eq!(status, 200, "fixture delete: {deleted}");
+    assert_eq!(deleted["action"], serde_json::json!("deleted"));
+    assert_eq!(deleted["id"], serde_json::json!("geo_country:kenya"));
     assert_eq!(
-        stored.as_array().unwrap()[0]["label"],
-        serde_json::json!("Local Name")
+        db.sql_root("SELECT id FROM geo_country:kenya;")
+            .expect("read after delete")
+            .as_array()
+            .unwrap()
+            .len(),
+        0,
+        "fixture row is gone"
     );
 
     let (status, refused) = post(
@@ -163,11 +186,15 @@ fn serve_installs_visible_fixtures_and_refuses_a_user_modified_update_over_rest(
     );
     assert_eq!(
         status, 409,
-        "modified fixture update must conflict: {refused}"
+        "deleted fixture update must conflict: {refused}"
     );
     assert_eq!(
         refused["error"]["kind"],
         serde_json::json!("fixture-refused")
+    );
+    assert_eq!(
+        refused["error"]["code"],
+        serde_json::json!("FRUST:E_FIXTURE:USER_MODIFIED")
     );
     assert_eq!(
         refused["error"]["doctype"],
@@ -181,11 +208,30 @@ fn serve_installs_visible_fixtures_and_refuses_a_user_modified_update_over_rest(
             .unwrap_or("")
             .contains("acknowledge")
     );
-    let after = db
-        .sql_root("SELECT label FROM geo_country:kenya;")
-        .expect("row after refusal");
+    let after = db.sql_root("SELECT id FROM geo_country:kenya;").expect("row after refusal");
     assert_eq!(
-        after.as_array().unwrap()[0]["label"],
-        serde_json::json!("Local Name")
+        after.as_array().unwrap().len(),
+        0,
+        "refused update does not recreate the row"
+    );
+
+    let (status, acknowledged) = post(
+        &base,
+        "/app/update",
+        Some(&token),
+        serde_json::json!({
+            "manifest": bundle("1.1.0", "Republic of Kenya"),
+            "acknowledge": true
+        }),
+    );
+    assert_eq!(status, 200, "acknowledged update: {acknowledged}");
+    assert_eq!(acknowledged["action"], serde_json::json!("updated"));
+    let reshipped = db
+        .sql_root("SELECT label FROM geo_country:kenya;")
+        .expect("re-shipped row");
+    assert_eq!(
+        reshipped.as_array().unwrap()[0]["label"],
+        serde_json::json!("Republic of Kenya"),
+        "acknowledgment re-ships the fixture"
     );
 }
