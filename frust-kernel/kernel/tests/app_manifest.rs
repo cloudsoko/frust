@@ -57,6 +57,14 @@ fn good_bundle() -> String {
             "transitions": [
                 { "from": "Draft", "to": "Approved", "role": "manager", "action": "Approve" }
             ]
+        }],
+        "notifications": [{
+            "name": "invoice_created",
+            "doctype": "acct_invoice",
+            "event": "after_insert",
+            "recipients": ["ops@example.com"],
+            "subject": "Invoice created",
+            "body": "An invoice was created"
         }]
     })
     .to_string()
@@ -84,6 +92,8 @@ fn a_bundle_round_trips_and_preserves_workflows_and_fixtures() {
     assert_eq!(again.routes[0].path, "ledger");
     assert_eq!(again.fixtures.len(), 1, "fixture slot carried");
     assert_eq!(again.fixtures[0].key, "opening_balance");
+    assert_eq!(again.notifications.len(), 1, "notification slot carried");
+    assert_eq!(again.notifications[0].name, "invoice_created");
     assert!(again.doctypes[0].submittable, "submittable survives");
 }
 
@@ -100,6 +110,7 @@ fn a_stored_manifest_without_the_fixture_slot_still_parses() {
     .to_string();
     let manifest = Manifest::parse(&old).expect("stored manifest remains compatible");
     assert!(manifest.fixtures.is_empty());
+    assert!(manifest.notifications.is_empty());
     assert!(manifest.validate().is_empty());
 }
 
@@ -219,6 +230,7 @@ fn dry_run_previews_the_bundle_without_touching_schema() {
     assert_eq!(plan.routes, vec!["/app/acct/ledger".to_string()]);
     assert_eq!(plan.client_scripts, vec!["acct_invoice".to_string()]);
     assert_eq!(plan.workflows, 1);
+    assert_eq!(plan.notifications, vec!["invoice_created".to_string()]);
     assert_eq!(plan.fixtures, vec!["acct_invoice:opening_balance".to_string()]);
 
     // schema genuinely untouched

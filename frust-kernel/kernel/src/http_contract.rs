@@ -87,9 +87,12 @@ fn policy_for(url: &str) -> Option<MethodPolicy> {
         | ["write", _]
         | ["aggregate", _]
         | ["enqueue", _] => Some(POST),
-        ["mail", "outbox"] | ["workflow", _, _] | ["audit", _, _] | ["lag", _] | ["app"] => {
-            Some(GET)
-        }
+        ["mail", "outbox"]
+        | ["workflow", _, _]
+        | ["audit", _, _]
+        | ["lag", _]
+        | ["app"]
+        | ["app", _, "export"] => Some(GET),
         // Polling consumes the in-process queue. It is GET for compatibility,
         // but HEAD must not drain it while throwing the representation away.
         ["events", _] => Some(STATEFUL_GET),
@@ -161,6 +164,7 @@ mod tests {
             "/audit/Invoice/one",
             "/lag/balance",
             "/app",
+            "/app/accounts/export",
         ] {
             assert_eq!(gate("GET", path), MethodGate::Dispatch, "{path}");
             assert_eq!(gate("HEAD", path), MethodGate::Dispatch, "{path}");

@@ -285,12 +285,45 @@ pub fn doctype_ddl(dt: &DocTypeDef) -> Result<String, BrokerError> {
     doctype_ddl_in(dt, &[])
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectAccess {
+    Owned,
+    Shared,
+    Manager,
+}
+
+fn select_access(doctype: &str, rollup_targets: &[String]) -> SelectAccess {
+    if rollup_targets.iter().any(|target| target == doctype) {
+        SelectAccess::Manager
+    } else if doctype == "workspace" {
+        SelectAccess::Shared
+    } else {
+        SelectAccess::Owned
+    }
+}
+
+/// Whether the permission compiler gives an authenticated role a read path to
+/// a DocType. This is the same classification used to emit table permissions.
+pub fn role_can_select(doctype: &str, role: &str, doctypes: &[DocTypeDef]) -> bool {
+    if !doctypes.iter().any(|dt| dt.name == doctype) {
+        return false;
+    }
+    let rollup_targets: Vec<String> = doctypes
+        .iter()
+        .flat_map(|dt| dt.aggregates.iter().map(|agg| agg.rollup.clone()))
+        .collect();
+    match select_access(doctype, &rollup_targets) {
+        SelectAccess::Owned | SelectAccess::Shared => true,
+        SelectAccess::Manager => role == "manager",
+    }
+}
+
 pub fn doctype_ddl_in(dt: &DocTypeDef, rollup_targets: &[String]) -> Result<String, BrokerError> {
     let t = &dt.name;
     if !ident_ok(t) {
         return Err(BrokerError::InvalidValue { detail: format!("bad doctype name: {t}") });
     }
-    if rollup_targets.contains(t) {
+    if select_access(t, rollup_targets) == SelectAccess::Manager {
         // A rollup DocType: schemaless (values come from the maintaining
         // EVENT/worker), manager-readable, closed to record writes.
         return Ok(format!(
@@ -327,6 +360,11 @@ pub fn doctype_ddl_in(dt: &DocTypeDef, rollup_targets: &[String]) -> Result<Stri
     } else {
         "(owner != NONE AND owner = $auth.id) OR $auth.role = 'manager'"
     };
+    let select_clause = match select_access(t, rollup_targets) {
+        SelectAccess::Shared => "$auth.id != NONE",
+        SelectAccess::Owned => "(owner != NONE AND owner = $auth.id) OR $auth.role = 'manager'",
+        SelectAccess::Manager => unreachable!("rollups return before ordinary table compilation"),
+    };
     let mut stmts = vec![
         format!(
             // The owner clause is null-safe — NONE = NONE can never grant. A
@@ -336,7 +374,7 @@ pub fn doctype_ddl_in(dt: &DocTypeDef, rollup_targets: &[String]) -> Result<Stri
             // default, revisit on evidence.
             "DEFINE TABLE OVERWRITE {t} SCHEMAFULL \
              PERMISSIONS \
-               FOR select WHERE (owner != NONE AND owner = $auth.id) OR $auth.role = 'manager' \
+               FOR select WHERE {select_clause} \
                FOR create WHERE $auth.id != NONE \
                FOR update WHERE {update_clause} \
                FOR delete WHERE $auth.role = 'manager' \
@@ -1095,6 +1133,31 @@ mod tests {
         assert!(ddl.contains("FRUST:E_SINGLE_REQUIRED:title"), "{ddl}");
         assert!(ddl.contains("FRUST:E_SINGLE_REQUIRED:total"), "{ddl}");
     }
+
+    #[test]
+    fn read_capability_uses_the_permission_compilers_rollup_rule() {
+        let mut source = doctype(false, true);
+        source.name = "invoice".into();
+        source.aggregates = vec![AggregateDef {
+            kind: "counter".into(),
+            rollup: "receivable".into(),
+            key: "customer".into(),
+            metrics: Vec::new(),
+            handler: None,
+        }];
+        let mut rollup = doctype(false, false);
+        rollup.name = "receivable".into();
+        let doctypes = vec![source, rollup];
+
+        assert!(role_can_select("invoice", "clerk", &doctypes));
+        assert!(!role_can_select("receivable", "clerk", &doctypes));
+        assert!(role_can_select("receivable", "manager", &doctypes));
+        assert!(!role_can_select("missing", "manager", &doctypes));
+
+        let mut workspace = doctype(false, false);
+        workspace.name = "workspace".into();
+        let mut with_workspace = doctypes;
+        with_workspace.push(workspace);
+        assert!(role_can_select("workspace", "clerk", &with_workspace));
+    }
 }
-
-

@@ -14,6 +14,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::contract::BrokerError;
 use crate::db::Db;
 use crate::meta::{identity_ddl, meta_ddl, BOOT_LOCK_TABLE, META_SCHEMA_VERSION, META_TABLE};
+use crate::sync::{DocTypeDef, FieldDef};
 
 pub const LOCK_STALE_SECS: f64 = 60.0;
 const LOCK_WAIT_MS: u64 = 100;
@@ -186,6 +187,11 @@ fn boot_locked(db: &Db, opts: &BootOptions, sync: &dyn SchemaSync) -> Result<Boo
     // serving-compromised, not an operator judgement call.
     crate::keyguard::assert_access_key_is_not_redacted(db)?;
 
+    // Base product records use the same metadata and schema compiler as every
+    // app or runtime-created DocType. Only their initial metadata is seeded;
+    // their record tables are not part of the kernel meta-schema.
+    seed_base_doctypes(db)?;
+
     // A7 step 3: re-read meta from the DB — the kernel now trusts only what
     // the database actually holds
     let now = read_meta_version(db)?.ok_or_else(|| BootError::Db("meta version missing after sync".into()))?;
@@ -230,6 +236,74 @@ fn boot_locked(db: &Db, opts: &BootOptions, sync: &dyn SchemaSync) -> Result<Boo
         BootReport { applied_meta: applied, meta_version: now, doctypes, orphan_columns: synced.orphans };
     mark_ready(db.tenant_id(), &report);
     Ok(report)
+}
+
+/// DocTypes that every tenant can use before installing an app.
+///
+/// `workspace_item` is the embedded row shape used by `workspace.items`.
+/// Both are ordinary user DocTypes and deliberately carry no owning app.
+pub fn base_doctypes() -> Vec<DocTypeDef> {
+    let field = |fieldname: &str, fieldtype: &str, required: bool, options: &[&str]| FieldDef {
+        fieldname: fieldname.into(),
+        fieldtype: fieldtype.into(),
+        required,
+        options: options.iter().map(|s| (*s).to_string()).collect(),
+        child_storage: None,
+        depends_on: None,
+        read_only_when: None,
+        required_when: None,
+        invalid_when: None,
+        fetch_from: None,
+    };
+    vec![
+        DocTypeDef {
+            name: "workspace_item".into(),
+            app: None,
+            issingle: false,
+            submittable: false,
+            fields: vec![
+                field("label", "Data", false, &[]),
+                field("kind", "Select", true, &["doctype", "report"]),
+                field("target", "Data", true, &[]),
+            ],
+            aggregates: Vec::new(),
+        },
+        DocTypeDef {
+            name: "workspace".into(),
+            app: None,
+            issingle: false,
+            submittable: false,
+            fields: vec![
+                field("label", "Data", true, &[]),
+                field("items", "Table", false, &["workspace_item"]),
+                field("module", "Data", false, &[]),
+            ],
+            aggregates: Vec::new(),
+        },
+    ]
+}
+
+/// Seed missing base metadata without replacing a tenant's live metadata.
+pub fn seed_base_doctypes(db: &Db) -> Result<usize, BrokerError> {
+    let mut seeded = 0;
+    for dt in base_doctypes() {
+        let exists = db
+            .sql_root(&format!("SELECT name FROM doctype WHERE name = '{}' LIMIT 1;", dt.name))?
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty());
+        if exists {
+            continue;
+        }
+        let content = serde_json::to_string(&dt).map_err(|e| BrokerError::Db {
+            detail: format!("serialize base doctype '{}': {e}", dt.name),
+        })?;
+        db.sql_root(&format!("CREATE doctype:{} CONTENT {content};", dt.name))?;
+        seeded += 1;
+    }
+    if seeded > 0 {
+        crate::broker::invalidate_meta(db.tenant_id());
+    }
+    Ok(seeded)
 }
 
 // ── readiness, said out loud ────────────────────────────────────────────────
@@ -441,5 +515,25 @@ mod tests {
         assert!((duration_secs("250ms") - 0.25).abs() < 1e-9);
         assert!(duration_secs("2h") > LOCK_STALE_SECS);
         assert!(duration_secs("59s") < LOCK_STALE_SECS);
+    }
+
+    #[test]
+    fn workspace_is_an_ordinary_base_doctype() {
+        let base = base_doctypes();
+        let workspace = base.iter().find(|dt| dt.name == "workspace").unwrap();
+        assert_eq!(workspace.app, None);
+        assert!(!workspace.issingle);
+        assert!(!workspace.submittable);
+        assert_eq!(
+            workspace.fields.iter().map(|f| (f.fieldname.as_str(), f.fieldtype.as_str())).collect::<Vec<_>>(),
+            vec![("label", "Data"), ("items", "Table"), ("module", "Data")]
+        );
+        assert_eq!(workspace.fields[1].options, ["workspace_item"]);
+
+        let ddl = crate::sync::doctype_ddl(workspace).unwrap();
+        assert!(ddl.contains("DEFINE TABLE OVERWRITE workspace SCHEMAFULL"));
+        assert!(ddl.contains("FOR select WHERE $auth.id != NONE"));
+        assert!(ddl.contains("FOR create WHERE $auth.id != NONE"));
+        assert!(!ddl.contains("PERMISSIONS NONE"));
     }
 }
