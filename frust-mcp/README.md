@@ -1,85 +1,146 @@
-# frust-mcp — DocTypes as MCP tools (WO-059 probe)
+# frust-mcp
 
-A **Model Context Protocol server that is a CLIENT of the Frust REST surface.**
-It reads `GET /meta`, generates MCP tools from the DocType metadata, and
-translates `tools/call` into `/read` `/write` `/transition` — **forwarding the
-caller's bearer token** and leaving *all* permission enforcement in the kernel.
+`frust-mcp` is Frust's multi-user Model Context Protocol adapter. It is a
+client of the documented kernel REST surface: every MCP request carries a real
+Frust session token, and every read, write, workflow action, and live
+subscription runs through the same kernel permission compiler as REST and the
+Desk.
 
-That is the whole thesis: an AI agent operates the ERP through the **same
-permission compiler** as REST, the Desk, and plugins — a **fourth consumer**,
-byte-equal, **contained by construction**. A clerk-session agent *cannot*
-over-read, because the boundary is structural (in the kernel), not in this
-adapter's discipline.
+The server uses MCP Streamable HTTP at `http://127.0.0.1:8796/mcp`. One process
+serves many MCP clients. Each initialized MCP session is bound to the bearer
+token on its initialization request; all later POST, GET/SSE, and DELETE
+requests must repeat that same token. A token from another principal is
+rejected before dispatch.
 
-This is a **probe** (WO-059), not a shipped server. It gates
-[ADR-017](../frust/03%20Architecture%20Decisions/ADR-017%20MCP%20Surface.md).
+## Install and run
 
-## Layout
+Node 20+ and pnpm are required.
 
-```
-src/rest.mjs           thin HTTP+JSON client of docs/rest-api.md (zero deps)
-src/server.mjs         the MCP server: /meta -> tools, tools/call -> REST
-proof/containment.mjs  the containment proof, driven by the official MCP client
-scratch/               a runnable kernel: seed + a COPY of frust.exe + logs
-```
-
-Nothing here touches kernel or Desk source. It is an additive, standalone
-consumer — a different language, a different process, a different build target.
-
-## Design in one screen
-
-- **Auth-forwarding shape.** One server instance is bound to **one Frust
-  principal.** The credential lives in the launch config — like every MCP
-  server's API key — as `FRUST_USER`+`FRUST_PASS` (log in once, cache the
-  session token) or a pre-minted `FRUST_TOKEN`. Every `tools/call` forwards that
-  one token. The server can't forge another; the token **is** a kernel session.
-- **Writes are opt-in, OFF by default** (`FRUST_MCP_WRITES=on`). With writes off,
-  `create`/`update`/`transition` tools are **not even registered** — an agent
-  cannot call a tool that does not exist.
-- **A refused write is a typed tool error** (`isError: true`) carrying the
-  kernel's `{kind, detail}` — never a silent "created".
-- **Money** is presented to the agent as a decimal **string** and forwarded to
-  the kernel in the **typed** `{kind:"decimal","v":"…"}` form (a bare string is
-  refused on write — see the finding in the build log).
-
-## Run it
-
-The kernel binary hardcodes its SurrealDB endpoint to `127.0.0.1:8899`, so you
-need a SurrealDB 3.2.3 there (root:root). Isolation is by a uniquely-named
-database `frustmcp` + the kernel's own port `8795`.
-
-```bash
-# 1. seed the three principals (identities are write-closed — no REST door)
-surreal.exe sql --endpoint ws://127.0.0.1:8899 -u root -p root \
-  --auth-level root --multi < scratch/seed.surql
-
-# 2. start an ISOLATED kernel on port 8795, database frustmcp (a COPY of frust.exe)
-FRUST_ADDR=127.0.0.1:8795 FRUST_TENANT=frustmcp FRUST_TENANCY=database-per-tenant \
-FRUST_ARTIFACTS=D:/Dev/rust/wasm-spike/artifacts \
-FRUST_MAIL=file FRUST_MAIL_DIR=./scratch/mail-outbox \
-./scratch/frust.exe serve          # wait for GET /ready on :8795
-
-# 3. build the fixture through the REST door (app install + rows as each clerk)
-bash scratch/seed-fixture.sh
-
-# 4. install deps and run the containment proof (npm is broken on this box — pnpm)
-pnpm install
-node proof/containment.mjs         # 21/21 PASS
-
-# 5. or drive it by hand with the MCP Inspector
-FRUST_USER=clerk1 FRUST_PASS=pw-clerk1 FRUST_MCP_WRITES=off \
-  pnpm dlx @modelcontextprotocol/inspector node src/server.mjs
+```powershell
+pnpm install --frozen-lockfile
+$env:FRUST_BASE = 'http://127.0.0.1:8795'
+$env:FRUST_MCP_WRITE_EXPOSURE = '{"expense_claim":["create","update","submit"]}'
+pnpm start
 ```
 
-Point any MCP client (Claude Desktop, the Inspector, an agent) at
-`node src/server.mjs` with `FRUST_USER`/`FRUST_PASS` in the env, and it gets a
-tool per DocType verb — read-only until you opt into writes.
+Connect an MCP client to `http://127.0.0.1:8796/mcp` and set:
 
-## What the probe proved (and did not)
+```text
+Authorization: Bearer <kernel session token>
+```
 
-Proved: schema fidelity for the CRUD+transition shape; **byte-equal +
-provenance-correct** reads for a clerk (no over-read, escalation-gated);
-opt-in/typed-refusal writes through the broker with the docstatus lattice
-holding. Did **not**: MCP resources/prompts/subscriptions, realtime
-(`/subscribe`+`/events`), child tables, Link/Select fields, multi-tenant
-per-request auth. Those are WO-060 scope. See the build log and ADR-017.
+Configuration can be supplied by environment variables or a JSON file through
+`FRUST_MCP_CONFIG` (see `config.example.json`). Environment variables override
+the file.
+
+| setting | default | purpose |
+|---|---:|---|
+| `FRUST_BASE` | `http://127.0.0.1:8795` | kernel REST base |
+| `FRUST_MCP_HOST` | `127.0.0.1` | adapter bind host |
+| `FRUST_MCP_PORT` | `8796` | adapter port |
+| `FRUST_MCP_POLL_MS` | `250` | kernel event-drain interval |
+| `FRUST_MCP_WRITE_EXPOSURE` | `{}` | JSON per-DocType write allowlist |
+| `FRUST_MCP_CONFIG` | unset | path to JSON configuration |
+
+Reads are always present. Writes are absent unless individually enabled:
+
+```json
+{
+  "expense_claim": ["create", "update", "submit"],
+  "mcp_activity": { "create": true }
+}
+```
+
+`*` supplies wildcard defaults, and a DocType entry adds to those defaults.
+The recognized verbs are `create`, `update`, `submit`, and `delete`. This kernel
+revision has no delete broker verb or REST route, so requesting `delete` fails
+startup rather than registering a tool that cannot preserve containment.
+
+## Generated tools and wire fidelity
+
+`GET /meta` generates `list_<doctype>` and `get_<doctype>` for every DocType,
+including child DocTypes. Enabled writes add `create_<doctype>`,
+`update_<doctype>`, and `submit_<doctype>` where applicable.
+
+- `Table` fields are arrays of nested child objects generated from the child
+  DocType named by `options`.
+- `Link` fields are strings with `x-frust-link-doctype` schema hints and are
+  encoded as the REST `{kind:"record",v:"..."}` wire value.
+- `Select` options become JSON Schema enums.
+- `Currency` is always a decimal string, recursively through child tables.
+  JSON numbers are rejected before the REST call; outbound values use
+  `{kind:"decimal",v:"..."}`, and inbound values are asserted to remain
+  strings.
+
+The adapter sends an `X-Trace-Id` beginning with `mcp-` on kernel calls. The
+kernel adopts that ID in its `rest_request` and `broker_verb` JSON telemetry,
+making an MCP-caused write visible without a separate authority header.
+
+## Resources and subscriptions
+
+A readable DocType is listed as a collection resource:
+
+```text
+frust://doctype/expense_claim
+```
+
+Individual rows use the resource template:
+
+```text
+frust://doctype/expense_claim/expense_claim%3Aabc123
+```
+
+The subscription mapping is faithful to both contracts:
+
+1. `resources/subscribe` opens `POST /subscribe/{doctype}` with that MCP
+   session's kernel token.
+2. The adapter periodically drains `GET /events/{sub}`. Kernel ticks contain
+   only `{action,id}` and have already been row-permission filtered.
+3. A matching tick emits MCP `notifications/resources/updated` for the
+   subscribed collection or record URI. No row payload crosses the push path.
+4. The client handles the notification by reading the resource again. That
+   refetch uses `/read`, so permissions are re-applied.
+5. If the kernel reports `alive:false`, the adapter resubscribes and emits an
+   updated notification. There is deliberately no invented replay: reconnect
+   means refetch.
+
+This is invalidation semantics, which is exactly what MCP resource-updated
+notifications promise. The adapter does not claim ordered event delivery or
+put row data into notifications.
+
+## Proofs
+
+The full proof builds `frust` from this clone, starts the specified
+`D:\Dev\rust\frust-bench\surreal.exe` as an isolated in-memory store on port
+**8895**, seeds the fixture, starts one kernel and one multi-user MCP server,
+runs every proof, and cleans up its processes. The proof fixture has no server
+scripts; kernel boot uses this clone's tracked host-compatibility guest
+components from `wasm-spike/artifacts-old-world/`.
+
+```powershell
+pnpm proof
+```
+
+Runtime evidence is left under `scratch/runtime/`, including `kernel.log` for
+the trace-attribution assertion. Set `FRUST_SKIP_BUILD=1` to reuse an already
+built release binary. Individual scripts assume the fixture, kernel, and MCP
+server are already running:
+
+```powershell
+pnpm proof:unit
+pnpm proof:fidelity
+pnpm proof:containment
+pnpm proof:subscriptions
+```
+
+- `proof/fidelity.mjs` covers child Table, Link, Select, Currency, structural
+  verb exposure, and kernel trace attribution.
+- `proof/containment.mjs` holds two principals open against one server and
+  proves byte-equal REST reads plus cross-principal get/filter/update negatives
+  by row provenance.
+- `proof/subscriptions.mjs` proves a readable tick, silence for a manager-only
+  DocType under a clerk token, manager-visible provenance for the same change,
+  and reconnect-by-refetch.
+
+No kernel or Desk source is used as an adapter implementation dependency, and
+this work order does not edit either source tree.

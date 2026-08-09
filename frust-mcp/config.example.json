@@ -1,0 +1,14 @@
+{
+  "kernelBase": "http://127.0.0.1:8795",
+  "host": "127.0.0.1",
+  "port": 8796,
+  "pollMs": 250,
+  "writes": {
+    "expense_claim": {
+      "create": true,
+      "update": true,
+      "submit": true,
+      "delete": false
+    }
+  }
+}
