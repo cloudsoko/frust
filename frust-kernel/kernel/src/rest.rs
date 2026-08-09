@@ -485,18 +485,39 @@ impl Rest {
             }
 
             ["meta"] => {
-                let rows = ctx.broker.db.sql_root("SELECT * FROM doctype ORDER BY name;")?;
+                let doctypes = crate::sync::load_doctypes(&ctx.broker.db)?;
+                let mut rows = ctx.broker.db.sql_root("SELECT * FROM doctype ORDER BY name;")?;
+                if let Some(rows) = rows.as_array_mut() {
+                    for row in rows {
+                        let name = row
+                            .get("name")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        row["can_read"] = serde_json::json!(crate::sync::role_can_select(
+                            &name,
+                            &caller.role,
+                            &doctypes,
+                        ));
+                    }
+                }
                 Ok(serde_json::json!({ "doctypes": rows }))
             }
 
             ["meta", doctype] => {
                 ident(doctype)?;
+                let doctypes = crate::sync::load_doctypes(&ctx.broker.db)?;
                 let rows = ctx.broker.db.sql_root(&format!(
                     "SELECT * FROM doctype WHERE name = '{doctype}' LIMIT 1;"
                 ))?;
-                let rec = rows.as_array().and_then(|a| a.first()).cloned().ok_or_else(|| {
+                let mut rec = rows.as_array().and_then(|a| a.first()).cloned().ok_or_else(|| {
                     BrokerError::UnknownDoctype { name: (*doctype).to_string() }
                 })?;
+                rec["can_read"] = serde_json::json!(crate::sync::role_can_select(
+                    doctype,
+                    &caller.role,
+                    &doctypes,
+                ));
                 Ok(serde_json::json!({ "doctype": rec }))
             }
 
@@ -2522,7 +2543,6 @@ fn parse_metrics(v: Option<&serde_json::Value>) -> Result<Vec<(Metric, Vec<PathS
         })
         .collect()
 }
-
 
 
 

@@ -6,7 +6,7 @@
 //! changes — if a criterion needs one, that is a FINDING, recorded in the build
 //! log, not patched into the kernel to make the demo green.
 //!
-//! Requires surreal.exe on :8899 (root/root), ns frust.
+//! Requires the configured SurrealDB endpoint (root/root), ns frust.
 
 use std::sync::Arc;
 
@@ -105,6 +105,19 @@ fn seed_bundle() -> serde_json::Value {
                 { "from": "Submitted for Approval", "to": "Approved", "role": "manager", "action": "Approve" },
                 { "from": "Submitted for Approval", "to": "Rejected", "role": "manager", "action": "Reject" },
                 { "from": "Rejected", "to": "Draft", "role": "clerk", "action": "Reopen" } ]
+        } ],
+        "fixtures": [ {
+            "doctype": "workspace",
+            "key": "accounting",
+            "values": {
+                "label": "Accounting",
+                "module": "Accounting",
+                "items": [
+                    { "label": "Sales invoices", "kind": "doctype", "target": "sales_invoice" },
+                    { "label": "Payments", "kind": "doctype", "target": "payment" },
+                    { "label": "Accounts receivable", "kind": "report", "target": "ar_outstanding" }
+                ]
+            }
         } ]
     })
 }
@@ -116,6 +129,8 @@ fn setup() -> (Rest, Arc<Broker>, ResolvedTenant) {
     let db = scoped_db(&cfg);
     db.sql_root_ns(&format!("REMOVE DATABASE IF EXISTS {DB}; DEFINE DATABASE {DB};")).unwrap();
     db.sql_root(&meta_ddl()).unwrap();
+    frust_kernel::boot::seed_base_doctypes(&db).unwrap();
+    MetadataSync { base: cfg.clone() }.sync(&db).unwrap();
     db.sql_root(
         "CREATE app_user:mgr SET name = 'mgr', role = 'manager', pass = crypto::argon2::generate('pw-mgr'); \
          CREATE app_user:clerk SET name = 'clerk', role = 'clerk', pass = crypto::argon2::generate('pw-clerk');",
@@ -144,6 +159,13 @@ fn the_accounting_seed_runs_as_an_app() {
     let out = call(&rest, "/app/install", &mgr(), seed_bundle()).expect("install the seed");
     println!("installed: {out}");
     assert_eq!(out["action"], serde_json::json!("installed"));
+    let workspace = broker
+        .db
+        .sql_root("SELECT label, module, items FROM workspace:accounting;")
+        .expect("read the shipped workspace");
+    let workspace = workspace.as_array().and_then(|rows| rows.first()).unwrap();
+    assert_eq!(workspace["label"], serde_json::json!("Accounting"));
+    assert_eq!(workspace["items"].as_array().map(Vec::len), Some(3));
 
     // a fresh broker sees the installed server script via the script source
     let hooks = WasmHooks::load(artifacts()).unwrap().with_script_source();
