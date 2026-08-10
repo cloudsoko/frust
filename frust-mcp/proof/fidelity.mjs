@@ -24,9 +24,9 @@ async function main() {
     checks.check("child Select enum survives nesting", child.category?.enum?.includes("Supplies"));
     checks.check("child Currency stays string", child.amount?.type === "string");
 
-    checks.check("expense create/update/submit are exposed", names.has("create_expense_claim") && names.has("update_expense_claim") && names.has("submit_expense_claim"));
-    checks.check("expense delete is structurally absent", !names.has("delete_expense_claim"));
-    checks.check("activity only opts into create", names.has("create_mcp_activity") && !names.has("update_mcp_activity") && !names.has("submit_mcp_activity") && !names.has("delete_mcp_activity"));
+    checks.check("expense create/update/submit/delete are exposed", names.has("create_expense_claim") && names.has("update_expense_claim") && names.has("submit_expense_claim") && names.has("delete_expense_claim"));
+    checks.check("disabled activity delete is structurally absent", names.has("create_mcp_activity") && !names.has("delete_mcp_activity"));
+    checks.check("activity update and submit are structurally absent", !names.has("update_mcp_activity") && !names.has("submit_mcp_activity"));
     checks.check("child writes are structurally absent", !names.has("create_mcp_line") && !names.has("update_mcp_line"));
 
     const parties = await clerk.rest.read("mcp_party", {});

@@ -19,7 +19,7 @@ Node 20+ and pnpm are required.
 ```powershell
 pnpm install --frozen-lockfile
 $env:FRUST_BASE = 'http://127.0.0.1:8795'
-$env:FRUST_MCP_WRITE_EXPOSURE = '{"expense_claim":["create","update","submit"]}'
+$env:FRUST_MCP_WRITE_EXPOSURE = '{"expense_claim":["create","update","submit","delete"]}'
 pnpm start
 ```
 
@@ -46,21 +46,30 @@ Reads are always present. Writes are absent unless individually enabled:
 
 ```json
 {
-  "expense_claim": ["create", "update", "submit"],
+  "expense_claim": ["create", "update", "submit", "delete"],
   "mcp_activity": { "create": true }
 }
 ```
 
 `*` supplies wildcard defaults, and a DocType entry adds to those defaults.
-The recognized verbs are `create`, `update`, `submit`, and `delete`. This kernel
-revision has no delete broker verb or REST route, so requesting `delete` fails
-startup rather than registering a tool that cannot preserve containment.
+The recognized verbs are `create`, `update`, `submit`, and `delete`. Each verb
+is independently allowlisted per DocType: if a verb is disabled, its tool is
+structurally absent from `tools/list`. Enabling `delete` registers a tool backed
+only by the kernel's `DELETE /doc/{doctype}/{key}` door.
 
 ## Generated tools and wire fidelity
 
 `GET /meta` generates `list_<doctype>` and `get_<doctype>` for every DocType,
 including child DocTypes. Enabled writes add `create_<doctype>`,
-`update_<doctype>`, and `submit_<doctype>` where applicable.
+`update_<doctype>`, `submit_<doctype>` where applicable, and
+`delete_<doctype>`.
+
+Delete accepts a full record ID or bare key. The kernel remains the authority:
+compiled delete permission, the draft-only docstatus lattice, Single DocType
+permanence, and the no-row case are all enforced there. Kernel refusals are
+returned as MCP tool errors (`isError: true`) with the typed kernel `error`
+object, HTTP status, and `operation_happened: false`; they are never reported as
+successful deletes.
 
 - `Table` fields are arrays of nested child objects generated from the child
   DocType named by `options`.
@@ -112,7 +121,7 @@ put row data into notifications.
 
 The full proof builds `frust` from this clone, starts the specified
 `D:\Dev\rust\frust-bench\surreal.exe` as an isolated in-memory store on port
-**8895**, seeds the fixture, starts one kernel and one multi-user MCP server,
+**8890**, seeds the fixture, starts one kernel and one multi-user MCP server,
 runs every proof, and cleans up its processes. The proof fixture has no server
 scripts; kernel boot uses this clone's tracked host-compatibility guest
 components from `wasm-spike/artifacts-old-world/`.
@@ -135,9 +144,10 @@ pnpm proof:subscriptions
 
 - `proof/fidelity.mjs` covers child Table, Link, Select, Currency, structural
   verb exposure, and kernel trace attribution.
-- `proof/containment.mjs` holds two principals open against one server and
-  proves byte-equal REST reads plus cross-principal get/filter/update negatives
-  by row provenance.
+- `proof/containment.mjs` holds clerk and manager principals open against one
+  server and proves byte-equal REST reads, cross-principal get/filter/update
+  negatives, typed delete refusal with row survival, and a successful manager
+  draft delete followed by resource invalidation.
 - `proof/subscriptions.mjs` proves a readable tick, silence for a manager-only
   DocType under a clerk token, manager-visible provenance for the same change,
   and reconnect-by-refetch.

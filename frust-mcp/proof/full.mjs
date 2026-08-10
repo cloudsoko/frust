@@ -11,6 +11,7 @@ const KERNEL_ROOT = join(REPO, "frust-kernel");
 const RUNTIME = join(MCP_ROOT, "scratch", "runtime");
 const SURREAL = "D:\\Dev\\rust\\frust-bench\\surreal.exe";
 const KERNEL_EXE = join(KERNEL_ROOT, "target", "release", "frust.exe");
+const DB_BASE = "http://127.0.0.1:8890";
 const KERNEL_BASE = "http://127.0.0.1:8795";
 const MCP_URL = "http://127.0.0.1:8796/mcp";
 const children = [];
@@ -58,7 +59,7 @@ function start(commandName, args, options) {
 function seedIdentities() {
   const input = readFileSync(join(MCP_ROOT, "scratch", "seed.surql"), "utf8");
   const result = spawnSync(SURREAL, [
-    "sql", "--endpoint", "http://127.0.0.1:8895", "--username", "root", "--password", "root",
+    "sql", "--endpoint", DB_BASE, "--username", "root", "--password", "root",
     "--auth-level", "root", "--multi",
   ], { input, encoding: "utf8", windowsHide: true, cwd: RUNTIME });
   if (result.status !== 0) throw new Error(`identity seed failed: ${result.stderr || result.stdout}`);
@@ -74,7 +75,7 @@ function runProof(file, extraEnv = {}) {
 async function main() {
   mkdirSync(RUNTIME, { recursive: true });
   mkdirSync(join(RUNTIME, "mail"), { recursive: true });
-  await requireFree("http://127.0.0.1:8895/health", "SurrealDB port 8895");
+  await requireFree(`${DB_BASE}/health`, "SurrealDB port 8890");
   await requireFree(`${KERNEL_BASE}/ready`, "kernel port 8795");
   await requireFree("http://127.0.0.1:8796/health", "MCP port 8796");
 
@@ -83,10 +84,10 @@ async function main() {
   }
 
   const surrealLog = logDescriptor("surreal.log");
-  start(SURREAL, ["start", "--user", "root", "--pass", "root", "--bind", "127.0.0.1:8895", "memory"], {
+  start(SURREAL, ["start", "--user", "root", "--pass", "root", "--bind", "127.0.0.1:8890", "memory"], {
     cwd: RUNTIME, stdio: ["ignore", surrealLog, surrealLog],
   });
-  await waitHttp("http://127.0.0.1:8895/health");
+  await waitHttp(`${DB_BASE}/health`);
   // /health can answer just before root SQL is ready on a new in-memory store.
   await new Promise((resolve) => setTimeout(resolve, 1000));
   seedIdentities();
@@ -98,7 +99,7 @@ async function main() {
     stdio: ["ignore", kernelLog, kernelLog],
     env: {
       ...process.env,
-      FRUST_DB_ENDPOINT: "http://127.0.0.1:8895",
+      FRUST_DB_ENDPOINT: DB_BASE,
       FRUST_ADDR: "127.0.0.1:8795",
       FRUST_TENANT: "frustmcp",
       FRUST_TENANCY: "database-per-tenant",
@@ -123,7 +124,7 @@ async function main() {
       FRUST_MCP_PORT: "8796",
       FRUST_MCP_POLL_MS: "200",
       FRUST_MCP_WRITE_EXPOSURE: JSON.stringify({
-        expense_claim: ["create", "update", "submit"],
+        expense_claim: ["create", "update", "submit", "delete"],
         mcp_activity: ["create"],
       }),
     },
@@ -134,7 +135,7 @@ async function main() {
   runProof("fidelity.mjs", { FRUST_KERNEL_LOG: kernelLogPath });
   runProof("containment.mjs");
   runProof("subscriptions.mjs");
-  console.log("\nPASS  full: all WO-060 proofs passed on isolated SurrealDB port 8895");
+  console.log("\nPASS  full: all delete-exposure proofs passed on isolated SurrealDB port 8890");
 }
 
 async function cleanup() {

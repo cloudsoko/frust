@@ -49,6 +49,9 @@ export class FrustRest {
   transition(dt, key, action) {
     return this.call("POST", `/transition/${encodeURIComponent(dt)}/${encodeURIComponent(key)}`, { body: { action } });
   }
+  delete(dt, key) {
+    return this.call("DELETE", `/doc/${encodeURIComponent(dt)}/${encodeURIComponent(key)}`);
+  }
   subscribe(dt) { return this.call("POST", `/subscribe/${encodeURIComponent(dt)}`, { body: {} }); }
   events(sub) { return this.call("GET", `/events/${encodeURIComponent(sub)}`); }
   unsubscribe(sub) { return this.call("POST", `/unsubscribe/${encodeURIComponent(sub)}`, { body: {} }); }
