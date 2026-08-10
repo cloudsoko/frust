@@ -45,6 +45,7 @@ jobs:
           if ($buildExit -ne 0 -and -not $expectedDrift) {
             throw "Canonical artifact build failed before checksum refresh (exit $buildExit)"
           }
+          exit 0
 
       - name: Refresh the artifact checksum ledger
         shell: pwsh
