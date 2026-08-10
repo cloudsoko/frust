@@ -1,0 +1,83 @@
+name: Regenerate WASM artifacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: regenerate-wasm-artifacts
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    name: Regenerate canonical WASM artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup target add wasm32-wasip2 --toolchain 1.96.0
+
+      - name: Install pinned Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.17.0
+
+      - name: Activate pinned pnpm
+        run: corepack enable && corepack install --global pnpm@11.1.2
+
+      - name: Generate canonical artifacts against the previous checksums
+        shell: pwsh
+        run: |
+          & pwsh -NoProfile -File ./scripts/frust.ps1 build-artifacts 2>&1 |
+            Tee-Object -Variable buildOutput
+          $buildExit = $LASTEXITCODE
+          $expectedDrift = ($buildOutput -join "`n") -match "generated artifacts do not match wasm-spike/artifacts.lock.json"
+          if ($buildExit -ne 0 -and -not $expectedDrift) {
+            throw "Canonical artifact build failed before checksum refresh (exit $buildExit)"
+          }
+
+      - name: Refresh the artifact checksum ledger
+        shell: pwsh
+        run: |
+          $repoRoot = (Get-Location).Path
+          $lockPath = Join-Path $repoRoot "wasm-spike/artifacts.lock.json"
+          $lock = Get-Content -Raw -LiteralPath $lockPath | ConvertFrom-Json
+          foreach ($artifact in $lock.artifacts.PSObject.Properties) {
+            $path = Join-Path $repoRoot ($artifact.Name -replace "/", [IO.Path]::DirectorySeparatorChar)
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Expected artifact was not generated: $($artifact.Name)"
+            }
+            $artifact.Value = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+          }
+          $lock | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $lockPath -Encoding utf8NoBOM
+
+      - name: Rebuild and verify canonical artifacts
+        shell: pwsh
+        run: ./scripts/frust.ps1 build-artifacts
+
+      - name: Verify release metadata and regenerated checksums
+        run: python .github/scripts/release-preflight.py --require-license
+
+      - name: Upload operator review bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wasm-toolchain-regenerated-${{ github.sha }}
+          path: |
+            wasm-spike/script-engine/Cargo.lock
+            wasm-spike/pnpm-lock.yaml
+            wasm-spike/artifacts/*.wasm
+            wasm-spike/artifacts.lock.json
+            frust-desk/assets/engine/script_engine.core.wasm
+            frust-desk/assets/engine/script_engine.js
+          if-no-files-found: error
+          retention-days: 14
