@@ -15,11 +15,6 @@ function normalizeExposure(raw) {
     }
     for (const verb of enabled) {
       if (!VERBS.has(verb)) throw new Error(`unknown write exposure verb '${verb}' for '${doctype}'`);
-      if (verb === "delete") {
-        throw new Error(
-          `delete exposure requested for '${doctype}', but this kernel REST contract has no delete route; refusing to advertise a false tool`,
-        );
-      }
     }
     out.set(doctype, enabled);
   }
