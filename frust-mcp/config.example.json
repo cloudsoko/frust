@@ -8,7 +8,7 @@
       "create": true,
       "update": true,
       "submit": true,
-      "delete": false
+      "delete": true
     }
   }
 }

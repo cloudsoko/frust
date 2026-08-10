@@ -5,7 +5,7 @@
 -- kernel's REST surface, exactly as a BYO client would — the probe dogfoods it.
 --
 -- Isolation: a fresh database in the proof-owned in-memory SurrealDB process
--- on port 8895. REMOVE-then-DEFINE guarantees a clean fixture.
+-- on port 8890. REMOVE-then-DEFINE guarantees a clean fixture.
 
 DEFINE NAMESPACE IF NOT EXISTS frust;
 USE NS frust;

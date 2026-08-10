@@ -36,11 +36,12 @@ function ok(json) {
 }
 
 function refused(response, note) {
+  const error = response.json?.error ?? {
+    kind: "kernel-refusal",
+    detail: response.json?.raw ?? `kernel refused with HTTP ${response.status}`,
+  };
   return {
-    content: [{
-      type: "text",
-      text: `${note}\nThe kernel refused (HTTP ${response.status}); the operation did not happen.\n${JSON.stringify(response.json, null, 2)}`,
-    }],
+    ...ok({ error, http_status: response.status, operation_happened: false, note }),
     isError: true,
   };
 }
@@ -127,6 +128,18 @@ export function toolsForDoctype(doctype, byName, verbs) {
       },
     });
   }
+  if (verbs.has("delete")) {
+    tools.push({
+      name: `delete_${name}`,
+      description: `Delete a draft ${name} through the Frust delete door. The kernel enforces compiled delete permission, draft-only lifecycle, and Single DocType permanence.`,
+      inputSchema: {
+        type: "object",
+        properties: { record: { type: "string" } },
+        required: ["record"],
+        additionalProperties: false,
+      },
+    });
+  }
   return tools;
 }
 
@@ -192,6 +205,10 @@ export async function createAdapter({ token, config, log = () => {} }) {
       }
       if (verb === "submit") {
         const response = await rest.transition(doctype, bareKey(args.record), args.action ?? "Submit");
+        return response.ok ? ok({ ...response.json, trace: response.traceId }) : refused(response, `${name} refused.`);
+      }
+      if (verb === "delete") {
+        const response = await rest.delete(doctype, bareKey(args.record));
         return response.ok ? ok({ ...response.json, trace: response.traceId }) : refused(response, `${name} refused.`);
       }
       return { ...ok({ error: `unknown tool '${name}'` }), isError: true };

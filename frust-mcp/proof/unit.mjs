@@ -23,5 +23,6 @@ assert.deepEqual(encodeDoc("invoice", { total: "1.2300", lines: [{ target: "part
 assert.throws(() => encodeDoc("invoice", { total: 1.23 }, byName), /decimal string/);
 const config = loadConfig({ FRUST_MCP_WRITE_EXPOSURE: JSON.stringify({ invoice: ["create"], "*": ["update"] }) });
 assert.deepEqual([...enabledVerbs(config, "invoice")].sort(), ["create", "update"]);
-assert.throws(() => loadConfig({ FRUST_MCP_WRITE_EXPOSURE: JSON.stringify({ invoice: ["delete"] }) }), /no delete route/);
-console.log("PASS  unit: schema recursion, typed values, exposure merge, and delete guard");
+const deleteConfig = loadConfig({ FRUST_MCP_WRITE_EXPOSURE: JSON.stringify({ invoice: ["delete"] }) });
+assert.deepEqual([...enabledVerbs(deleteConfig, "invoice")], ["delete"]);
+console.log("PASS  unit: schema recursion, typed values, exposure merge, and delete policy");
