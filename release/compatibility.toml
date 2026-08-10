@@ -29,5 +29,5 @@ artifact_lock = "wasm-spike/artifacts.lock.json"
 
 [build]
 pnpm = "11.1.2"
-jco_transpile = "0.5.2"
+jco_transpile = "0.6.3"
 lockfiles_required = true
