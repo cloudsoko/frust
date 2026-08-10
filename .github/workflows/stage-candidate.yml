@@ -30,8 +30,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ ! "$CANDIDATE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
-            echo "candidate must be a release-candidate tag" >&2
+          if [[ ! "$CANDIDATE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "candidate must be a release-candidate or final release tag" >&2
             exit 1
           fi
           if [[ ! "$ORCHESTRATION_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
@@ -43,8 +43,9 @@ jobs:
           release_tag=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CANDIDATE_TAG}" --jq .tag_name)
           release_draft=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CANDIDATE_TAG}" --jq .draft)
           release_prerelease=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CANDIDATE_TAG}" --jq .prerelease)
-          if [[ "$release_tag" != "$CANDIDATE_TAG" || "$release_draft" != "false" || "$release_prerelease" != "true" ]]; then
-            echo "candidate must have a published prerelease" >&2
+          if [[ "$CANDIDATE_TAG" == *-rc.* ]]; then expected_prerelease=true; else expected_prerelease=false; fi
+          if [[ "$release_tag" != "$CANDIDATE_TAG" || "$release_draft" != "false" || "$release_prerelease" != "$expected_prerelease" ]]; then
+            echo "candidate must be published (prerelease for rc tags, full release for final tags)" >&2
             exit 1
           fi
           echo "sha=$candidate_sha" >> "$GITHUB_OUTPUT"

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Immutable published release-candidate tag
+        description: Immutable published release tag (rc or final)
         required: true
         type: string
 
