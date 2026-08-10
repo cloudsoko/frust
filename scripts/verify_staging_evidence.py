@@ -174,7 +174,11 @@ def verify_local(record: dict[str, Any], raw: dict[str, Any], raw_digest: str) -
     require(candidate["tag"] == raw.get("tag"), "candidate tag differs from raw report")
     require(candidate["commit"] == raw.get("commit"), "candidate commit differs from raw report")
     require(HEX_COMMIT.fullmatch(candidate["commit"]) is not None, "candidate commit is invalid")
-    require(candidate["prerelease"] is True, "candidate must be recorded as a prerelease")
+    expected_prerelease = "-rc." in str(candidate.get("tag", ""))
+    require(
+        candidate["prerelease"] is expected_prerelease,
+        "candidate prerelease flag must match its tag kind (prerelease for rc tags, full release for finals)",
+    )
     require(
         candidate["release_url"] == f"https://github.com/cloudsoko/frust/releases/tag/{candidate['tag']}",
         "release URL does not match the candidate tag",
@@ -296,7 +300,11 @@ def verify_github(record: dict[str, Any], repository: str) -> None:
 
     release = github_json(repository, f"/releases/tags/{candidate['tag']}")
     require(release.get("html_url") == candidate["release_url"], "GitHub release URL differs")
-    require(release.get("draft") is False and release.get("prerelease") is True, "GitHub release state differs")
+    expected_prerelease = "-rc." in str(candidate.get("tag", ""))
+    require(
+        release.get("draft") is False and release.get("prerelease") is expected_prerelease,
+        "GitHub release state differs",
+    )
     require(release.get("published_at") == candidate["published_at"], "GitHub release publication time differs")
     assets = {asset["name"]: asset for asset in release.get("assets", [])}
     for field, template in RELEASE_ASSET_DIGESTS.items():
