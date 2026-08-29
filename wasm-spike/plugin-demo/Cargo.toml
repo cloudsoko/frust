@@ -5,7 +5,7 @@ edition = "2021"
 license = "AGPL-3.0-only"
 
 [dependencies]
-wit-bindgen = "0.60"
+wit-bindgen = "0.61"
 
 [lib]
 crate-type = ["cdylib"]
