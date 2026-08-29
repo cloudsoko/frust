@@ -4,6 +4,6 @@
   "packageManager": "pnpm@11.1.2",
   "devDependencies": {
     "@bytecodealliance/jco-transpile": "0.6.3",
-    "@bytecodealliance/preview2-shim": "0.20.1"
+    "@bytecodealliance/preview2-shim": "0.23.0"
   }
 }
