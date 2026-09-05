@@ -6,7 +6,7 @@ license = "AGPL-3.0-only"
 
 [dependencies]
 wit-bindgen = "0.60"
-boa_engine = "0.21"
+boa_engine = "0.22"
 serde_json = "1"
 
 [lib]
